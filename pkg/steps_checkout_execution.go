@@ -19,8 +19,8 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
-	prurl "github.com/bborbe/maintainer/lib/prurl"
-	repoallowlist "github.com/bborbe/maintainer/lib/repoallowlist"
+	prurl "github.com/bborbe/maintainer/prurl"
+	repoallowlist "github.com/bborbe/maintainer/repoallowlist"
 )
 
 // githubPRURLPattern matches a GitHub PR URL in arbitrary text.

@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	prpkg "github.com/bborbe/maintainer/lib/prurl"
+	prpkg "github.com/bborbe/maintainer/prurl"
 )
 
 const (

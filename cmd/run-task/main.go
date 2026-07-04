@@ -26,8 +26,8 @@ import (
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 
-	githubapp "github.com/bborbe/maintainer/lib/githubapp"
-	repoallowlist "github.com/bborbe/maintainer/lib/repoallowlist"
+	githubapp "github.com/bborbe/maintainer/githubapp"
+	repoallowlist "github.com/bborbe/maintainer/repoallowlist"
 )
 
 func main() {

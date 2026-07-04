@@ -11,7 +11,7 @@ import (
 
 	errors "github.com/bborbe/errors"
 
-	"github.com/bborbe/maintainer/lib/maintainerconfig"
+	"github.com/bborbe/maintainer/maintainerconfig"
 )
 
 // ReadAutoApprove reads `.maintainer.yaml` from workDir and returns the

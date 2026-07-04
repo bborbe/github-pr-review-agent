@@ -7,7 +7,7 @@ package pkg
 import (
 	"context"
 
-	prurl "github.com/bborbe/maintainer/lib/prurl"
+	prurl "github.com/bborbe/maintainer/prurl"
 )
 
 //counterfeiter:generate -o ../mocks/pr-poster.go --fake-name PrPoster . PrPoster

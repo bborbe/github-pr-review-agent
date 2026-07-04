@@ -19,7 +19,7 @@ import (
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
-	prurl "github.com/bborbe/maintainer/lib/prurl"
+	prurl "github.com/bborbe/maintainer/prurl"
 )
 
 type prPoster struct {

@@ -15,7 +15,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 
-	prurl "github.com/bborbe/maintainer/lib/prurl"
+	prurl "github.com/bborbe/maintainer/prurl"
 )
 
 // verdictPayload is the parsed shape of the ## Verdict JSON the ai_review

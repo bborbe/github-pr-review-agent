@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/bborbe/github-pr-review-agent/pkg"
-	"github.com/bborbe/maintainer/lib/prurl"
+	"github.com/bborbe/maintainer/prurl"
 )
 
 type PrPoster struct {

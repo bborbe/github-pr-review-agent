@@ -32,8 +32,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 
-	githubapp "github.com/bborbe/maintainer/lib/githubapp"
-	repoallowlist "github.com/bborbe/maintainer/lib/repoallowlist"
+	githubapp "github.com/bborbe/maintainer/githubapp"
+	repoallowlist "github.com/bborbe/maintainer/repoallowlist"
 )
 
 const agentName = "pr-reviewer-agent"

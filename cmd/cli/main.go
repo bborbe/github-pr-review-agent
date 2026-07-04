@@ -18,7 +18,7 @@ import (
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
 	"github.com/bborbe/github-pr-review-agent/pkg/github"
 
-	prurl "github.com/bborbe/maintainer/lib/prurl"
+	prurl "github.com/bborbe/maintainer/prurl"
 )
 
 func main() {

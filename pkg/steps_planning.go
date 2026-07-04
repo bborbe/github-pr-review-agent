@@ -19,7 +19,7 @@ import (
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 
-	prurl "github.com/bborbe/maintainer/lib/prurl"
+	prurl "github.com/bborbe/maintainer/prurl"
 )
 
 // planningOutput is the parsed shape of the ## Plan JSON block.
