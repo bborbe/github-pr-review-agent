@@ -1,0 +1,9 @@
+/.update-logs/
+/.claude/
+/CLAUDE.md
+/.mcp-*
+/cover.out
+/pr-reviewer
+/run-task
+/vendor/
+/github-pr-review-agent
