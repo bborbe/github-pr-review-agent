@@ -259,19 +259,39 @@ func (s *planningStep) handleEmptyPRURL(
 		Message: "planning: no GitHub PR URL found — cannot post LGTM"}, nil
 }
 
-// parsePlanningConcerns extracts the concerns array from the ## Plan JSON body.
-// The JSON may be wrapped in ```json ... ``` fences. Returns an error if the
-// JSON cannot be parsed or the concerns field is absent.
-func parsePlanningConcerns(ctx context.Context, body string) ([]struct{}, error) {
-	trimmed := strings.TrimSpace(body)
-	// Strip ```json fences.
-	trimmed = strings.TrimPrefix(trimmed, "```json")
-	trimmed = strings.TrimPrefix(trimmed, "```")
-	trimmed = strings.TrimSuffix(trimmed, "```")
-	trimmed = strings.TrimSpace(trimmed)
+// fencedJSONPattern matches the first ```json … ``` (or bare ``` … ```) fenced
+// block anywhere in the text. (?s) lets . span newlines; .*? is non-greedy so
+// only the first block is captured.
+var fencedJSONPattern = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)```")
 
+// extractJSONObject pulls the JSON object out of a Claude planning response
+// that may be surrounded by conversational prose and/or ```json fences.
+// DeepSeek (vLLM) narrates before the fence ("Now I have the full picture…"),
+// whereas real Anthropic emits clean JSON — so a plain fence-trim isn't enough;
+// the JSON must be located regardless of surrounding text. Strategy, in order:
+//  1. first ```json/``` fenced block's contents,
+//  2. first '{' … last '}' span (fence-less prose-wrapped output),
+//  3. the trimmed input unchanged (let json.Unmarshal surface the error).
+func extractJSONObject(raw string) string {
+	s := strings.TrimSpace(raw)
+	if m := fencedJSONPattern.FindStringSubmatch(s); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	if start := strings.Index(s, "{"); start >= 0 {
+		if end := strings.LastIndex(s, "}"); end > start {
+			return s[start : end+1]
+		}
+	}
+	return s
+}
+
+// parsePlanningConcerns extracts the concerns array from the ## Plan JSON body.
+// The JSON may be bare, wrapped in ```json ... ``` fences, or embedded in
+// conversational prose (see extractJSONObject). Returns an error if the JSON
+// cannot be parsed or the concerns field is absent.
+func parsePlanningConcerns(ctx context.Context, body string) ([]struct{}, error) {
 	var p planningOutput
-	if err := json.Unmarshal([]byte(trimmed), &p); err != nil {
+	if err := json.Unmarshal([]byte(extractJSONObject(body)), &p); err != nil {
 		return nil, errors.Wrapf(ctx, err, "parse ## Plan JSON")
 	}
 	return p.Concerns, nil
