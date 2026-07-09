@@ -12,7 +12,6 @@ import (
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
-	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -20,25 +19,17 @@ import (
 
 var _ = Describe("planningStep", func() {
 	var (
-		ctx      context.Context
-		runner   *mocks.ClaudeRunnerMock
-		prPoster *mocks.PrPoster
-		step     agentlib.Step
-		botLogin string
+		ctx    context.Context
+		runner *mocks.ClaudeRunnerMock
+		step   agentlib.Step
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		runner = &mocks.ClaudeRunnerMock{}
-		prPoster = &mocks.PrPoster{}
-		botLogin = "ben-s-pull-request-reviewer-dev[bot]"
-		currentDateTime := libtime.NewCurrentDateTime()
 		step = pkg.NewPlanningStep(
 			runner,
 			claudelib.Instructions{},
-			prPoster,
-			botLogin,
-			currentDateTime,
 		)
 	})
 
@@ -68,7 +59,7 @@ var _ = Describe("planningStep", func() {
 		)
 	})
 
-	Describe("Run — empty concerns path (LGTM)", func() {
+	Describe("Run — empty concerns path (execution, no LGTM shortcut)", func() {
 		var md *agentlib.Markdown
 
 		BeforeEach(func() {
@@ -82,157 +73,44 @@ task_identifier: 00000000-0000-0000-0000-000000000001
 https://github.com/bborbe/maintainer/pull/14
 `)
 			Expect(err).NotTo(HaveOccurred())
+			planBody, _ := json.Marshal(map[string]interface{}{
+				"pr_url":        "https://github.com/bborbe/maintainer/pull/14",
+				"pr_title":      "test PR",
+				"base_branch":   "main",
+				"head_branch":   "feat/test",
+				"files_changed": []string{"README.md"},
+				"scope":         "docs",
+				"focus_areas":   []string{"docs"},
+				"concerns":      []interface{}{},
+			})
+			runner.RunReturns(&claudelib.ClaudeResult{
+				Result: "```json\n" + string(planBody) + "\n```",
+			}, nil)
 		})
 
-		Context("when ## Plan has concerns: [] and POST succeeds", func() {
-			BeforeEach(func() {
-				planBody, _ := json.Marshal(map[string]interface{}{
-					"pr_url":        "https://github.com/bborbe/maintainer/pull/14",
-					"pr_title":      "test PR",
-					"base_branch":   "main",
-					"head_branch":   "feat/test",
-					"files_changed": []string{"README.md"},
-					"scope":         "docs",
-					"focus_areas":   []string{"docs"},
-					"concerns":      []interface{}{},
-				})
-				runner.RunReturns(&claudelib.ClaudeResult{
-					Result: "```json\n" + string(planBody) + "\n```",
-				}, nil)
-				prPoster.PostLGTMReturns(pkg.PostResult{
-					Outcome:     "success",
-					ReviewID:    12345,
-					PostedEvent: "COMMENT",
-				})
-			})
-
-			It("calls PrPoster.PostLGTM with correct arguments", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(prPoster.PostLGTMCallCount()).To(Equal(1))
-				_, prArg, headSHAArg, workDirArg, botLoginArg := prPoster.PostLGTMArgsForCall(0)
-				Expect(prArg.Owner).To(Equal("bborbe"))
-				Expect(prArg.Repo).To(Equal("maintainer"))
-				Expect(prArg.Number).To(Equal(14))
-				Expect(headSHAArg).To(Equal("abc123"))
-				Expect(workDirArg).To(Equal(""))
-				Expect(botLoginArg).To(Equal(botLogin))
-			})
-
-			It("returns status done with NextPhase done", func() {
-				result, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
-				Expect(result.NextPhase).To(Equal("done"))
-			})
-
-			It("writes ## Plan section with the LLM output", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				planSection, exists := md.FindSection("## Plan")
-				Expect(exists).To(BeTrue())
-				Expect(planSection.Body).To(ContainSubstring("concerns"))
-			})
-
-			It("writes ## Verdict section naming review id and COMMENT", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				verdictSection, exists := md.FindSection("## Verdict")
-				Expect(exists).To(BeTrue())
-				Expect(verdictSection.Body).To(ContainSubstring("review_id: 12345"))
-				Expect(verdictSection.Body).To(ContainSubstring("event: COMMENT"))
-			})
-
-			It("appends a success diagnostics one-liner", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				diagSection, exists := md.FindSection("## Diagnostics")
-				Expect(exists).To(BeTrue())
-				Expect(diagSection.Body).To(ContainSubstring("outcome: success"))
-				Expect(diagSection.Body).To(ContainSubstring("review_id: 12345"))
-			})
+		// The LGTM shortcut is gone: a "no concerns" planning pass must NOT
+		// rubber-stamp a positive review. Empty concerns routes to the execution
+		// phase (real checkout + deep review) exactly like non-empty concerns.
+		It("routes empty concerns to execution (no LGTM shortcut)", func() {
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal(string(domain.TaskPhaseExecution)))
 		})
 
-		Context("when ## Plan has concerns: [] and POST returns failure", func() {
-			BeforeEach(func() {
-				planBody, _ := json.Marshal(map[string]interface{}{
-					"pr_url":        "https://github.com/bborbe/maintainer/pull/14",
-					"pr_title":      "test PR",
-					"base_branch":   "main",
-					"head_branch":   "feat/test",
-					"files_changed": []string{"README.md"},
-					"scope":         "docs",
-					"focus_areas":   []string{"docs"},
-					"concerns":      []interface{}{},
-				})
-				runner.RunReturns(&claudelib.ClaudeResult{
-					Result: "```json\n" + string(planBody) + "\n```",
-				}, nil)
-				prPoster.PostLGTMReturns(pkg.PostResult{
-					Outcome:      "failed",
-					FailureStep:  "POST /pulls/N/reviews",
-					Class:        pkg.ErrorClassTransient,
-					ErrorMessage: "network timeout",
-					HTTPStatus:   500,
-				})
-			})
-
-			It("returns status done with NextPhase human_review", func() {
-				result, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
-				Expect(result.NextPhase).To(Equal("human_review"))
-				Expect(result.Message).To(ContainSubstring("LGTM POST failed"))
-			})
-
-			It("appends a failure diagnostic block", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				diagSection, exists := md.FindSection("## Diagnostics")
-				Expect(exists).To(BeTrue())
-				Expect(diagSection.Body).To(ContainSubstring("outcome: failed"))
-				Expect(diagSection.Body).To(ContainSubstring("network timeout"))
-			})
-
-			It("does NOT write ## Verdict section", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				_, exists := md.FindSection("## Verdict")
-				Expect(exists).To(BeFalse())
-			})
+		It("writes ## Plan section with the LLM output", func() {
+			_, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			planSection, exists := md.FindSection("## Plan")
+			Expect(exists).To(BeTrue())
+			Expect(planSection.Body).To(ContainSubstring("concerns"))
 		})
 
-		Context("when prPoster is nil (cmd/run-task mode)", func() {
-			BeforeEach(func() {
-				currentDateTime := libtime.NewCurrentDateTime()
-				step = pkg.NewPlanningStep(
-					runner,
-					claudelib.Instructions{},
-					nil,
-					botLogin,
-					currentDateTime,
-				)
-				planBody, _ := json.Marshal(map[string]interface{}{
-					"pr_url":        "https://github.com/bborbe/maintainer/pull/14",
-					"pr_title":      "test PR",
-					"base_branch":   "main",
-					"head_branch":   "feat/test",
-					"files_changed": []string{"README.md"},
-					"scope":         "docs",
-					"focus_areas":   []string{"docs"},
-					"concerns":      []interface{}{},
-				})
-				runner.RunReturns(&claudelib.ClaudeResult{
-					Result: "```json\n" + string(planBody) + "\n```",
-				}, nil)
-			})
-
-			It("returns done without calling PostLGTM", func() {
-				result, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
-				Expect(result.NextPhase).To(Equal("done"))
-			})
+		It("does NOT write a ## Verdict section (planning never posts)", func() {
+			_, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			_, exists := md.FindSection("## Verdict")
+			Expect(exists).To(BeFalse())
 		})
 	})
 
@@ -288,12 +166,6 @@ https://github.com/bborbe/maintainer/pull/14
 					Expect(result.NextPhase).To(Equal(string(domain.TaskPhaseExecution)))
 				},
 			)
-
-			It("does NOT call PostLGTM", func() {
-				_, err := step.Run(ctx, md)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(prPoster.PostLGTMCallCount()).To(Equal(0))
-			})
 
 			It("does NOT write ## Verdict section", func() {
 				_, err := step.Run(ctx, md)
@@ -360,18 +232,12 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(result.NextPhase).To(Equal("execution"))
 		})
 
-		It("routes empty concerns to LGTM/done path from existing plan", func() {
-			prPoster.PostLGTMReturns(pkg.PostResult{
-				Outcome:     "success",
-				ReviewID:    12345,
-				PostedEvent: "COMMENT",
-			})
+		It("routes empty concerns to execution from existing plan (no LGTM shortcut)", func() {
 			md := buildMarkdownWithExistingPlan(nil)
 			result, err := step.Run(ctx, md)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
-			Expect(result.NextPhase).To(Equal("done"))
-			Expect(prPoster.PostLGTMCallCount()).To(Equal(1))
+			Expect(result.NextPhase).To(Equal("execution"))
 		})
 	})
 
@@ -407,11 +273,6 @@ https://github.com/bborbe/maintainer/pull/14
 		Context("attempt 1 succeeds", func() {
 			BeforeEach(func() {
 				runner.RunReturns(&claudelib.ClaudeResult{Result: goodPlanBody()}, nil)
-				prPoster.PostLGTMReturns(pkg.PostResult{
-					Outcome:     "success",
-					ReviewID:    12345,
-					PostedEvent: "COMMENT",
-				})
 			})
 
 			It("calls runner exactly once and returns done", func() {
@@ -440,11 +301,6 @@ https://github.com/bborbe/maintainer/pull/14
 				}, nil)
 				// Second call: valid JSON
 				runner.RunReturnsOnCall(1, &claudelib.ClaudeResult{Result: goodPlanBody()}, nil)
-				prPoster.PostLGTMReturns(pkg.PostResult{
-					Outcome:     "success",
-					ReviewID:    12345,
-					PostedEvent: "COMMENT",
-				})
 			})
 
 			It("retries and persists the second (valid) response", func() {
@@ -516,11 +372,6 @@ https://github.com/bborbe/maintainer/pull/14
 
 			It("skips the runner entirely when ## Plan already exists", func() {
 				md := buildMarkdownWithExistingPlan(nil)
-				prPoster.PostLGTMReturns(pkg.PostResult{
-					Outcome:     "success",
-					ReviewID:    12345,
-					PostedEvent: "COMMENT",
-				})
 				result, err := step.Run(ctx, md)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
@@ -629,7 +480,7 @@ https://github.com/bborbe/maintainer/pull/14
 			})
 		})
 
-		Context("when non-GitHub platform", func() {
+		Context("when non-GitHub platform (no GitHub PR URL)", func() {
 			BeforeEach(func() {
 				planBody, _ := json.Marshal(map[string]interface{}{
 					"pr_url":        "https://bitbucket.org/bborbe/maintainer/pull/14",
@@ -646,7 +497,9 @@ https://github.com/bborbe/maintainer/pull/14
 				}, nil)
 			})
 
-			It("skips posting and returns done", func() {
+			// A non-GitHub URL yields no GitHub PR URL, so the review can't run —
+			// escalate to human_review (no LGTM shortcut, no silent done).
+			It("escalates to human_review (not reviewable)", func() {
 				md, err := agentlib.ParseMarkdown(
 					ctx,
 					"# PR Review\n\nhttps://bitbucket.org/bborbe/maintainer/pull/14\n",
@@ -654,8 +507,7 @@ https://github.com/bborbe/maintainer/pull/14
 				Expect(err).NotTo(HaveOccurred())
 				result, err := step.Run(ctx, md)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result.NextPhase).To(Equal("done"))
-				Expect(prPoster.PostLGTMCallCount()).To(Equal(0))
+				Expect(result.NextPhase).To(Equal("human_review"))
 			})
 		})
 	})
@@ -708,60 +560,5 @@ https://github.com/bborbe/maintainer/pull/14
 				"empty",
 			),
 		)
-	})
-})
-
-var _ = Describe("isGitHubPRURL", func() {
-	DescribeTable(
-		"identifies GitHub PR URLs",
-		func(rawURL string, want bool) {
-			Expect(pkg.IsGitHubPRURLForTest(rawURL)).To(Equal(want))
-		},
-		Entry("github.com PR URL", "https://github.com/owner/repo/pull/123", true),
-		Entry(
-			"github.com PR URL with extra path",
-			"https://github.com/owner/repo/pull/123/head",
-			true,
-		),
-		Entry("bitbucket PR URL", "https://bitbucket.org/owner/repo/pull/123", false),
-		Entry("gitlab PR URL", "https://gitlab.com/owner/repo/-/merge_requests/123", false),
-		Entry("random URL", "https://example.com/something", false),
-		Entry("empty string", "", false),
-	)
-})
-
-var _ = Describe("hasAnyPRURL", func() {
-	It("returns true when preamble contains a PR URL", func() {
-		md, err := agentlib.ParseMarkdown(
-			context.Background(),
-			"See https://github.com/owner/repo/pull/123\n\n## Review\n\nsome content",
-		)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(pkg.HasAnyPRURLForTest(md)).To(BeTrue())
-	})
-
-	It("returns false when no PR URL is present", func() {
-		md, err := agentlib.ParseMarkdown(
-			context.Background(),
-			"No PR here, just some content\n\n## Review\n\nsome content",
-		)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(pkg.HasAnyPRURLForTest(md)).To(BeFalse())
-	})
-})
-
-var _ = Describe("writePlanningVerdict", func() {
-	It("writes verdict section with review ID and event", func() {
-		md, err := agentlib.ParseMarkdown(
-			context.Background(),
-			"---\nref: abc\n---\n\n## Plan\n\nsome plan",
-		)
-		Expect(err).NotTo(HaveOccurred())
-		pkg.WritePlanningVerdictForTest(md, 42, "APPROVE")
-		sec, exists := md.FindSection("## Verdict")
-		Expect(exists).To(BeTrue())
-		Expect(sec).NotTo(BeNil())
-		Expect(sec.Body).To(ContainSubstring("review_id: 42"))
-		Expect(sec.Body).To(ContainSubstring("event: APPROVE"))
 	})
 })

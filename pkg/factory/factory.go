@@ -172,9 +172,6 @@ func CreateAgent(
 	planningPhase := agentlib.NewPhase("planning", tokenCheck, prpkg.NewPlanningStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools),
 		prompts.BuildPlanningInstructions(),
-		prPoster,
-		botLogin,
-		currentDateTime,
 	))
 	executionStep := prpkg.NewCheckoutExecutionStep(
 		repoManager,

@@ -64,9 +64,14 @@ type postReviewResp struct {
 	ID int64 `json:"id"`
 }
 
-// PostLGTM posts a COMMENT review with body "Reviewed by <botLogin> — no concerns flagged."
-// workDir is ignored (no .maintainer.yaml lookup needed for LGTM).
-// Verdict is not applicable — always COMMENT event.
+// PostLGTM posts a COMMENT review with body "Reviewed by <botLogin> — no
+// concerns flagged." workDir is ignored.
+//
+// Deprecated: the planning step no longer posts an LGTM shortcut — every PR is
+// routed to the execution phase for a real review that posts an earned
+// APPROVE/REQUEST_CHANGES verdict (a shallow "no concerns" pass must not
+// rubber-stamp a positive review). This method is retained on the interface for
+// backward compatibility with cmd/run-task tooling and is slated for removal.
 func (p *prPoster) PostLGTM(
 	ctx context.Context,
 	pr prurl.PRInfo,
