@@ -27,11 +27,13 @@ type Hallucination struct {
 // pkg/githubposter already imports pkg for PRInfo/Verdict.
 type PrPoster interface {
 	Post(ctx context.Context, req PostRequest) PostResult
-	// PostLGTM posts an LGTM COMMENT review when planning finds no concerns.
-	// event is always "COMMENT"; body is "Reviewed by <botLogin> — no concerns flagged."
-	// workDir is optional (empty string is fine — no .maintainer.yaml lookup needed for LGTM).
-	// On success, returns a PostResult with Outcome="success" and PostedEvent="COMMENT".
-	// On failure, returns a PostResult with Outcome="failed" and ErrorClass/ErrorMessage set.
+	// PostLGTM posts a COMMENT review with body "Reviewed by <botLogin> — no
+	// concerns flagged." event is always "COMMENT"; workDir is ignored.
+	//
+	// Deprecated: planning no longer calls this — the "no concerns → LGTM"
+	// shortcut was removed so every PR gets a real execution review that posts an
+	// earned APPROVE/REQUEST_CHANGES verdict. Retained for backward compatibility
+	// with cmd/run-task tooling and slated for removal.
 	PostLGTM(ctx context.Context, pr prurl.PRInfo, headSHA, workDir, botLogin string) PostResult
 	// DismissCurrentReview dismisses the bot's APPROVED or CHANGES_REQUESTED
 	// review at the current head SHA, then posts a follow-up COMMENT review
