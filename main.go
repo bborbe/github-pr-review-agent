@@ -95,6 +95,14 @@ type application struct {
 	AnthropicAuthToken string                `required:"false" arg:"anthropic-auth-token" env:"ANTHROPIC_AUTH_TOKEN" usage:"Bearer token for ANTHROPIC_BASE_URL"                                  display:"length"`
 	AnthropicModel     claudelib.ClaudeModel `required:"false" arg:"anthropic-model"      env:"ANTHROPIC_MODEL"      usage:"Model name; also exposed to the claude subprocess as ANTHROPIC_MODEL"                  default:"sonnet"`
 
+	// Alias→model overrides forwarded to the claude subprocess so its spawned sub-agents
+	// (which request opus/sonnet/haiku) resolve to a real model. Needed against non-Anthropic
+	// endpoints (e.g. DeepSeek/vLLM) where the default aliases 404; empty = unset (no-op on Anthropic).
+	AnthropicDefaultOpusModel   string `required:"false" arg:"anthropic-default-opus-model"   env:"ANTHROPIC_DEFAULT_OPUS_MODEL"   usage:"Model the 'opus' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultSonnetModel string `required:"false" arg:"anthropic-default-sonnet-model" env:"ANTHROPIC_DEFAULT_SONNET_MODEL" usage:"Model the 'sonnet' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultHaikuModel  string `required:"false" arg:"anthropic-default-haiku-model"  env:"ANTHROPIC_DEFAULT_HAIKU_MODEL"  usage:"Model the 'haiku' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultFableModel  string `required:"false" arg:"anthropic-default-fable-model"  env:"ANTHROPIC_DEFAULT_FABLE_MODEL"  usage:"Model the 'fable' alias maps to (forwarded to the claude subprocess)"`
+
 	// Repo allowlist — comma-separated host/owner/repo entries; empty means allow-all.
 	RepoAllowlist string `required:"false" arg:"repo-allowlist" env:"REPO_ALLOWLIST" usage:"Comma-separated host-qualified repo allowlist (host/owner/repo); empty means allow-all"`
 
@@ -102,6 +110,7 @@ type application struct {
 	TaskType       string `required:"false" arg:"task-type"       env:"TASK_TYPE"       usage:"Task type label for metric grouping" default:"unknown"`
 }
 
+//nolint:funlen // wires Run from validated config into RunAgent — extracting any chunk hurts readability without reducing complexity. 82 lines, 2 over the 80-line cap.
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	registry := prometheus.NewRegistry()
 	jobMetrics := libmetrics.NewJobMetrics(registry, libtime.NewCurrentDateTime())
@@ -156,23 +165,27 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return errors.Wrap(ctx, err, "task type dispatch")
 	}
 	result, err := factory.RunAgent(ctx, factory.RunConfig{
-		ClaudeConfigDir:    a.ClaudeConfigDir,
-		AgentDir:           a.AgentDir,
-		Model:              a.AnthropicModel,
-		GHToken:            resolvedToken,
-		AnthropicBaseURL:   a.AnthropicBaseURL,
-		AnthropicAuthToken: a.AnthropicAuthToken,
-		ReposPath:          a.ReposPath,
-		WorkPath:           a.WorkPath,
-		ReviewMode:         a.ReviewMode,
-		RepoAllowlist:      repoAllowlist,
-		AuthSetup:          githubauth.NewGhAuthSetupGit(resolvedToken),
-		Phase:              a.Phase,
-		BotLogin:           a.BotLogin,
-		TaskContent:        a.TaskContent,
-		Deliverer:          deliverer,
-		Agent:              agent,
-		CurrentDateTime:    libtime.NewCurrentDateTime(),
+		ClaudeConfigDir:             a.ClaudeConfigDir,
+		AgentDir:                    a.AgentDir,
+		Model:                       a.AnthropicModel,
+		GHToken:                     resolvedToken,
+		AnthropicBaseURL:            a.AnthropicBaseURL,
+		AnthropicAuthToken:          a.AnthropicAuthToken,
+		AnthropicDefaultOpusModel:   a.AnthropicDefaultOpusModel,
+		AnthropicDefaultSonnetModel: a.AnthropicDefaultSonnetModel,
+		AnthropicDefaultHaikuModel:  a.AnthropicDefaultHaikuModel,
+		AnthropicDefaultFableModel:  a.AnthropicDefaultFableModel,
+		ReposPath:                   a.ReposPath,
+		WorkPath:                    a.WorkPath,
+		ReviewMode:                  a.ReviewMode,
+		RepoAllowlist:               repoAllowlist,
+		AuthSetup:                   githubauth.NewGhAuthSetupGit(resolvedToken),
+		Phase:                       a.Phase,
+		BotLogin:                    a.BotLogin,
+		TaskContent:                 a.TaskContent,
+		Deliverer:                   deliverer,
+		Agent:                       agent,
+		CurrentDateTime:             libtime.NewCurrentDateTime(),
 	})
 	if err != nil {
 		jobMetrics.RecordRun(agentlib.AgentStatusFailed)
@@ -205,6 +218,18 @@ func (a *application) dispatchAgent(
 	}
 	if a.AnthropicModel != "" {
 		env["ANTHROPIC_MODEL"] = a.AnthropicModel.String()
+	}
+	if a.AnthropicDefaultOpusModel != "" {
+		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = a.AnthropicDefaultOpusModel
+	}
+	if a.AnthropicDefaultSonnetModel != "" {
+		env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = a.AnthropicDefaultSonnetModel
+	}
+	if a.AnthropicDefaultHaikuModel != "" {
+		env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = a.AnthropicDefaultHaikuModel
+	}
+	if a.AnthropicDefaultFableModel != "" {
+		env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = a.AnthropicDefaultFableModel
 	}
 	if a.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = a.BotLogin

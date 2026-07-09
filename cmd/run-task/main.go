@@ -79,6 +79,13 @@ type application struct {
 	AnthropicBaseURL   string                `required:"false" arg:"anthropic-base-url"   env:"ANTHROPIC_BASE_URL"   usage:"Anthropic-compatible API base URL"`
 	AnthropicAuthToken string                `required:"false" arg:"anthropic-auth-token" env:"ANTHROPIC_AUTH_TOKEN" usage:"Bearer token for ANTHROPIC_BASE_URL"                                  display:"length"`
 	AnthropicModel     claudelib.ClaudeModel `required:"false" arg:"anthropic-model"      env:"ANTHROPIC_MODEL"      usage:"Model name; also exposed to the claude subprocess as ANTHROPIC_MODEL"                  default:"sonnet"`
+
+	// Alias→model overrides forwarded to the claude subprocess so spawned sub-agents
+	// (opus/sonnet/haiku/fable) resolve on non-Anthropic endpoints (e.g. DeepSeek/vLLM).
+	AnthropicDefaultOpusModel   string `required:"false" arg:"anthropic-default-opus-model"   env:"ANTHROPIC_DEFAULT_OPUS_MODEL"   usage:"Model the 'opus' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultSonnetModel string `required:"false" arg:"anthropic-default-sonnet-model" env:"ANTHROPIC_DEFAULT_SONNET_MODEL" usage:"Model the 'sonnet' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultHaikuModel  string `required:"false" arg:"anthropic-default-haiku-model"  env:"ANTHROPIC_DEFAULT_HAIKU_MODEL"  usage:"Model the 'haiku' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultFableModel  string `required:"false" arg:"anthropic-default-fable-model"  env:"ANTHROPIC_DEFAULT_FABLE_MODEL"  usage:"Model the 'fable' alias maps to (forwarded to the claude subprocess)"`
 }
 
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
@@ -136,21 +143,25 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 
 	authSetup := githubauth.NewNoopAuthSetup()
 	result, err := factory.RunAgent(ctx, factory.RunConfig{
-		ClaudeConfigDir:    a.ClaudeConfigDir,
-		AgentDir:           a.AgentDir,
-		Model:              a.AnthropicModel,
-		GHToken:            resolvedToken,
-		AnthropicBaseURL:   a.AnthropicBaseURL,
-		AnthropicAuthToken: a.AnthropicAuthToken,
-		ReposPath:          reposPath,
-		WorkPath:           workPath,
-		ReviewMode:         a.ReviewMode,
-		RepoAllowlist:      repoAllowlist,
-		AuthSetup:          authSetup,
-		Phase:              a.Phase,
-		TaskContent:        string(taskContent),
-		Deliverer:          deliverer,
-		BotLogin:           a.BotLogin,
+		ClaudeConfigDir:             a.ClaudeConfigDir,
+		AgentDir:                    a.AgentDir,
+		Model:                       a.AnthropicModel,
+		GHToken:                     resolvedToken,
+		AnthropicBaseURL:            a.AnthropicBaseURL,
+		AnthropicAuthToken:          a.AnthropicAuthToken,
+		AnthropicDefaultOpusModel:   a.AnthropicDefaultOpusModel,
+		AnthropicDefaultSonnetModel: a.AnthropicDefaultSonnetModel,
+		AnthropicDefaultHaikuModel:  a.AnthropicDefaultHaikuModel,
+		AnthropicDefaultFableModel:  a.AnthropicDefaultFableModel,
+		ReposPath:                   reposPath,
+		WorkPath:                    workPath,
+		ReviewMode:                  a.ReviewMode,
+		RepoAllowlist:               repoAllowlist,
+		AuthSetup:                   authSetup,
+		Phase:                       a.Phase,
+		TaskContent:                 string(taskContent),
+		Deliverer:                   deliverer,
+		BotLogin:                    a.BotLogin,
 	})
 	if err != nil {
 		return errors.Wrap(ctx, err, "agent run failed")
