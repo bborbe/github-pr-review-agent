@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: remove the planning-phase "no concerns → LGTM" shortcut. Planning is now pure triage: every GitHub PR advances to the execution phase for a real (checkout + deep) review that posts an earned `APPROVE`/`REQUEST_CHANGES` verdict. Previously a shallow planning pass with empty concerns posted a `COMMENT` "no concerns flagged" review without ever running the real review — a rubber-stamp that also failed to satisfy a required-approving-review merge gate (a COMMENT is not an approval). Tasks with no GitHub PR URL now escalate to `human_review` (subsumes the old non-GitHub-platform terminal case) instead of posting an LGTM. Removed the now-dead `postLGTMAndDone`/`handleEmptyPRURL`/`isGitHubPRURL`/`hasAnyPRURL`/`writePlanningVerdict` planning helpers and simplified `NewPlanningStep` (no longer takes a poster/botLogin/clock). `PrPoster.PostLGTM` is retained but deprecated.
+
 ## v0.1.3
 
 - fix: planning-step JSON parser now tolerates conversational prose around the `## Plan` block. `parsePlanningConcerns` previously only stripped ```json fences at the very start, so any model that narrates before the fence (DeepSeek/vLLM emits e.g. "Now I have the full picture…") produced `invalid character 'N'`, failed 3× retries, and marked the review task `failed` with no verdict posted. New `extractJSONObject` locates the JSON via the first ```json/``` fenced block, else the first `{`…last `}` span. Unblocks real-diff reviews on non-Anthropic endpoints (real Anthropic emits clean JSON, so this was latent on quant).

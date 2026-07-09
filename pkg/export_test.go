@@ -58,21 +58,6 @@ func ParsePlanningConcernsForTest(body string) ([]struct{}, error) {
 	return parsePlanningConcerns(context.Background(), body)
 }
 
-// IsGitHubPRURLForTest exposes isGitHubPRURL for unit testing.
-func IsGitHubPRURLForTest(rawURL string) bool {
-	return isGitHubPRURL(rawURL)
-}
-
-// HasAnyPRURLForTest exposes hasAnyPRURL for unit testing.
-func HasAnyPRURLForTest(md *agentlib.Markdown) bool {
-	return hasAnyPRURL(md)
-}
-
-// WritePlanningVerdictForTest exposes writePlanningVerdict for unit testing.
-func WritePlanningVerdictForTest(md *agentlib.Markdown, reviewID int64, postedEvent string) {
-	writePlanningVerdict(md, reviewID, postedEvent)
-}
-
 // AppendVerifyDiagnosticForTest exposes appendVerifyDiagnostic for unit testing.
 func AppendVerifyDiagnosticForTest(
 	ctx context.Context,
