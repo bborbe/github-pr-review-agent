@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- fix: forward `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` (new `--anthropic-default-*-model` args / env) into the claude subprocess env, so spawned review sub-agents (which request opus/sonnet/haiku) resolve to the configured model instead of the default `claude-sonnet-*`. Needed against non-Anthropic endpoints (DeepSeek/vLLM) where the default aliases 404 — the top-level `--model` worked but sub-agents crashed. Empty = unset (no-op on Anthropic).
+- fix: forward `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL` (new `--anthropic-default-*-model` args / env) into the claude subprocess env, so spawned review sub-agents (which request opus/sonnet/haiku) resolve to the configured model instead of the default `claude-sonnet-*`. Needed against non-Anthropic endpoints (DeepSeek/vLLM) where the default aliases 404 — the top-level `--model` worked but sub-agents crashed. Empty = unset (no-op on Anthropic).
 - chore: bump Go 1.26.4 → 1.26.5 (GO-2026-5856); ignore unmaintained-openpgp GO-2026-5932 in `VULNCHECK_IGNORE` + `.trivyignore`.
 
 ## v0.1.1

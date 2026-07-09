@@ -101,6 +101,7 @@ type application struct {
 	AnthropicDefaultOpusModel   string `required:"false" arg:"anthropic-default-opus-model"   env:"ANTHROPIC_DEFAULT_OPUS_MODEL"   usage:"Model the 'opus' alias maps to (forwarded to the claude subprocess)"`
 	AnthropicDefaultSonnetModel string `required:"false" arg:"anthropic-default-sonnet-model" env:"ANTHROPIC_DEFAULT_SONNET_MODEL" usage:"Model the 'sonnet' alias maps to (forwarded to the claude subprocess)"`
 	AnthropicDefaultHaikuModel  string `required:"false" arg:"anthropic-default-haiku-model"  env:"ANTHROPIC_DEFAULT_HAIKU_MODEL"  usage:"Model the 'haiku' alias maps to (forwarded to the claude subprocess)"`
+	AnthropicDefaultFableModel  string `required:"false" arg:"anthropic-default-fable-model"  env:"ANTHROPIC_DEFAULT_FABLE_MODEL"  usage:"Model the 'fable' alias maps to (forwarded to the claude subprocess)"`
 
 	// Repo allowlist — comma-separated host/owner/repo entries; empty means allow-all.
 	RepoAllowlist string `required:"false" arg:"repo-allowlist" env:"REPO_ALLOWLIST" usage:"Comma-separated host-qualified repo allowlist (host/owner/repo); empty means allow-all"`
@@ -221,6 +222,9 @@ func (a *application) dispatchAgent(
 	}
 	if a.AnthropicDefaultHaikuModel != "" {
 		env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = a.AnthropicDefaultHaikuModel
+	}
+	if a.AnthropicDefaultFableModel != "" {
+		env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = a.AnthropicDefaultFableModel
 	}
 	if a.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = a.BotLogin
