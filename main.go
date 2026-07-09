@@ -110,6 +110,7 @@ type application struct {
 	TaskType       string `required:"false" arg:"task-type"       env:"TASK_TYPE"       usage:"Task type label for metric grouping" default:"unknown"`
 }
 
+//nolint:funlen // wires Run from validated config into RunAgent — extracting any chunk hurts readability without reducing complexity. 82 lines, 2 over the 80-line cap.
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	registry := prometheus.NewRegistry()
 	jobMetrics := libmetrics.NewJobMetrics(registry, libtime.NewCurrentDateTime())
@@ -164,23 +165,27 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return errors.Wrap(ctx, err, "task type dispatch")
 	}
 	result, err := factory.RunAgent(ctx, factory.RunConfig{
-		ClaudeConfigDir:    a.ClaudeConfigDir,
-		AgentDir:           a.AgentDir,
-		Model:              a.AnthropicModel,
-		GHToken:            resolvedToken,
-		AnthropicBaseURL:   a.AnthropicBaseURL,
-		AnthropicAuthToken: a.AnthropicAuthToken,
-		ReposPath:          a.ReposPath,
-		WorkPath:           a.WorkPath,
-		ReviewMode:         a.ReviewMode,
-		RepoAllowlist:      repoAllowlist,
-		AuthSetup:          githubauth.NewGhAuthSetupGit(resolvedToken),
-		Phase:              a.Phase,
-		BotLogin:           a.BotLogin,
-		TaskContent:        a.TaskContent,
-		Deliverer:          deliverer,
-		Agent:              agent,
-		CurrentDateTime:    libtime.NewCurrentDateTime(),
+		ClaudeConfigDir:             a.ClaudeConfigDir,
+		AgentDir:                    a.AgentDir,
+		Model:                       a.AnthropicModel,
+		GHToken:                     resolvedToken,
+		AnthropicBaseURL:            a.AnthropicBaseURL,
+		AnthropicAuthToken:          a.AnthropicAuthToken,
+		AnthropicDefaultOpusModel:   a.AnthropicDefaultOpusModel,
+		AnthropicDefaultSonnetModel: a.AnthropicDefaultSonnetModel,
+		AnthropicDefaultHaikuModel:  a.AnthropicDefaultHaikuModel,
+		AnthropicDefaultFableModel:  a.AnthropicDefaultFableModel,
+		ReposPath:                   a.ReposPath,
+		WorkPath:                    a.WorkPath,
+		ReviewMode:                  a.ReviewMode,
+		RepoAllowlist:               repoAllowlist,
+		AuthSetup:                   githubauth.NewGhAuthSetupGit(resolvedToken),
+		Phase:                       a.Phase,
+		BotLogin:                    a.BotLogin,
+		TaskContent:                 a.TaskContent,
+		Deliverer:                   deliverer,
+		Agent:                       agent,
+		CurrentDateTime:             libtime.NewCurrentDateTime(),
 	})
 	if err != nil {
 		jobMetrics.RecordRun(agentlib.AgentStatusFailed)

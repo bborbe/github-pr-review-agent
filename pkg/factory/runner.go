@@ -29,14 +29,20 @@ type RunConfig struct {
 	// Model is mirrored into ANTHROPIC_MODEL there for parity with the --model flag.
 	AnthropicBaseURL   string
 	AnthropicAuthToken string
-	ReposPath          string
-	WorkPath           string
-	ReviewMode         string
-	RepoAllowlist      []string                // host-qualified repos the agent may clone
-	AuthSetup          githubauth.Configurator // pod: real gh-auth-setup; local-CLI: noop
-	Phase              domain.TaskPhase
-	TaskContent        string
-	Deliverer          agentlib.ResultDeliverer
+	// Alias→model overrides forwarded to the claude subprocess so spawned
+	// sub-agents (opus/sonnet/haiku/fable) resolve on non-Anthropic endpoints.
+	AnthropicDefaultOpusModel   string
+	AnthropicDefaultSonnetModel string
+	AnthropicDefaultHaikuModel  string
+	AnthropicDefaultFableModel  string
+	ReposPath                   string
+	WorkPath                    string
+	ReviewMode                  string
+	RepoAllowlist               []string                // host-qualified repos the agent may clone
+	AuthSetup                   githubauth.Configurator // pod: real gh-auth-setup; local-CLI: noop
+	Phase                       domain.TaskPhase
+	TaskContent                 string
+	Deliverer                   agentlib.ResultDeliverer
 	// BotLogin is the GitHub bot login used by githubposter. When non-empty it
 	// is injected into the env map as BOT_GITHUB_LOGIN so ResolveBotLogin
 	// picks it up instead of the DefaultBotLogin fallback.
@@ -90,6 +96,18 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 	}
 	if cfg.Model != "" {
 		env["ANTHROPIC_MODEL"] = cfg.Model.String()
+	}
+	if cfg.AnthropicDefaultOpusModel != "" {
+		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg.AnthropicDefaultOpusModel
+	}
+	if cfg.AnthropicDefaultSonnetModel != "" {
+		env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = cfg.AnthropicDefaultSonnetModel
+	}
+	if cfg.AnthropicDefaultHaikuModel != "" {
+		env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = cfg.AnthropicDefaultHaikuModel
+	}
+	if cfg.AnthropicDefaultFableModel != "" {
+		env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = cfg.AnthropicDefaultFableModel
 	}
 	if cfg.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = cfg.BotLogin
