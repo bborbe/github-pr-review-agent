@@ -684,6 +684,29 @@ https://github.com/bborbe/maintainer/pull/14
 				"non-empty",
 			),
 			Entry("malformed JSON", "not json at all", "error"),
+			// DeepSeek (vLLM) prepends conversational prose before the ```json
+			// fence; real Anthropic emits clean JSON. The extractor must find the
+			// JSON regardless of surrounding narration. See octopus runbook Gate 7.
+			Entry(
+				"prose before json fence (DeepSeek)",
+				"Now I have the full picture. Let me assemble the plan.\n\n```json\n{\"concerns\":[{\"area\":\"correctness\"}]}\n```",
+				"non-empty",
+			),
+			Entry(
+				"prose before json fence, empty concerns",
+				"This is a documentation-only PR. Let me assemble the plan.\n\n```json\n{\"concerns\":[]}\n```",
+				"empty",
+			),
+			Entry(
+				"prose before bare json object (no fence)",
+				"Here is the plan:\n{\"concerns\":[]}",
+				"empty",
+			),
+			Entry(
+				"prose before and after json fence",
+				"Analysis complete.\n```json\n{\"concerns\":[]}\n```\nThat's my assessment.",
+				"empty",
+			),
 		)
 	})
 })
