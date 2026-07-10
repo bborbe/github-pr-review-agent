@@ -93,6 +93,31 @@ func (p *prPoster) PostLGTM(
 	return result
 }
 
+// PostOverrideApprove posts an APPROVE review at headSHA with the given body,
+// unconditionally — no autoApprove gate, no clone/WorkDir, no prior-review
+// dismissal. A fresh bot APPROVE supersedes the bot's own prior
+// CHANGES_REQUESTED for reviewDecision, so the false-positive review no longer
+// blocks merge. Mirrors PostLGTM's post + verify shape with event "APPROVE".
+func (p *prPoster) PostOverrideApprove(
+	ctx context.Context,
+	pr prurl.PRInfo,
+	headSHA, body string,
+) prpkg.PostResult {
+	start := time.Time(p.currentDateTime.Now())
+	const event = "APPROVE"
+
+	reviewID, result, proceed := p.postReview(ctx, pr, headSHA, event, body)
+	if !proceed {
+		result.ElapsedMs = time.Since(start).Milliseconds()
+		return result
+	}
+	result = p.verifyAfterPost(ctx, pr, headSHA, event, nil)
+	result.ReviewID = reviewID
+	result.PostedEvent = event
+	result.ElapsedMs = time.Since(start).Milliseconds()
+	return result
+}
+
 func (p *prPoster) Post(ctx context.Context, req prpkg.PostRequest) prpkg.PostResult {
 	start := time.Time(p.currentDateTime.Now())
 	autoApprove, err := ReadAutoApprove(ctx, req.WorkDir)
