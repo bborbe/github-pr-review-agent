@@ -35,6 +35,12 @@ type PrPoster interface {
 	// earned APPROVE/REQUEST_CHANGES verdict. Retained for backward compatibility
 	// with cmd/run-task tooling and slated for removal.
 	PostLGTM(ctx context.Context, pr prurl.PRInfo, headSHA, workDir, botLogin string) PostResult
+	// PostOverrideApprove posts an APPROVE review at headSHA unconditionally
+	// (no autoApprove gate, no clone/WorkDir). Used by the `pr-override` task
+	// type to clear a false-positive review: a fresh bot APPROVE supersedes the
+	// bot's own prior CHANGES_REQUESTED for reviewDecision, so a trusted author
+	// who applied the override label can merge without admin.
+	PostOverrideApprove(ctx context.Context, pr prurl.PRInfo, headSHA, body string) PostResult
 	// DismissCurrentReview dismisses the bot's APPROVED or CHANGES_REQUESTED
 	// review at the current head SHA, then posts a follow-up COMMENT review
 	// citing each hallucination. A no-matching-review case is a non-error

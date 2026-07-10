@@ -239,9 +239,27 @@ func CreateAgentProvider(
 		claudelib.AllowedTools{},
 	)
 	livenessAgent := healthcheck.NewAgent(healthcheck.NewClaudeStep(healthcheckRunner))
+
+	// pr-override: a second task type on this same service. The override action
+	// is deterministic (post an APPROVE at head SHA so a false-positive review
+	// no longer blocks merge), so it is a code-only single-phase agent — no
+	// Claude, no clone — reusing the poster already built above. The phase is
+	// named "execution" (a valid domain.TaskPhase, matching the frontmatter the
+	// watcher emits — the vault-cli validator rejects unknown phase literals);
+	// task_type pr-override, not the phase name, is what routes here, so there
+	// is no collision with the review agent's execution phase.
+	overrideAgent := agentlib.NewAgent(
+		agentlib.NewPhase(
+			domain.TaskPhaseExecution,
+			prpkg.NewGHTokenCheckStep(ghToken),
+			prpkg.NewOverrideStep(poster, botLogin),
+		),
+	)
+
 	return agentlib.NewAgentProvider(serviceName, map[agentlib.TaskType]*agentlib.Agent{
 		agentlib.TaskTypePRReview:    domainAgent,
 		agentlib.TaskTypeHealthcheck: livenessAgent,
+		prpkg.TaskTypePROverride:     overrideAgent,
 	})
 }
 

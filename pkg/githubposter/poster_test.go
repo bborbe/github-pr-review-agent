@@ -162,6 +162,31 @@ var _ = Describe("PrPoster", func() {
 			pkg.VerdictRequestChanges, false, "REQUEST_CHANGES", "CHANGES_REQUESTED", ""),
 	)
 
+	Describe("PostOverrideApprove", func() {
+		It("posts APPROVE and verifies, unconditionally (no dismiss, no WorkDir)", func() {
+			// Two calls only: POST review, then verify GET. No dismiss-list GET
+			// (unlike Post), no .maintainer.yaml read.
+			fakeClient.DoStub = seqStub([]callSpec{
+				{201, postRespJSON(42), nil},
+				{200, reviewListJSON(reviewJSON(42, testBotLogin, testHeadSHA, "APPROVED")), nil},
+			})
+			result := poster.PostOverrideApprove(ctx, pr, testHeadSHA, "override body")
+			Expect(result.Outcome).To(Equal("success"))
+			Expect(result.PostedEvent).To(Equal("APPROVE"))
+			Expect(result.ReviewID).To(Equal(int64(42)))
+			Expect(fakeClient.DoCallCount()).To(Equal(2))
+		})
+
+		It("returns a failed result when the POST fails", func() {
+			fakeClient.DoStub = seqStub([]callSpec{
+				{500, `{"message":"boom"}`, nil},
+				{500, `{"message":"boom"}`, nil},
+			})
+			result := poster.PostOverrideApprove(ctx, pr, testHeadSHA, "override body")
+			Expect(result.Outcome).To(Equal("failed"))
+		})
+	})
+
 	DescribeTable("ErrorClass string values",
 		func(class pkg.ErrorClass, want string) {
 			Expect(string(class)).To(Equal(want))

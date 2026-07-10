@@ -54,6 +54,20 @@ type PrPoster struct {
 	postLGTMReturnsOnCall map[int]struct {
 		result1 pkg.PostResult
 	}
+	PostOverrideApproveStub        func(context.Context, prurl.PRInfo, string, string) pkg.PostResult
+	postOverrideApproveMutex       sync.RWMutex
+	postOverrideApproveArgsForCall []struct {
+		arg1 context.Context
+		arg2 prurl.PRInfo
+		arg3 string
+		arg4 string
+	}
+	postOverrideApproveReturns struct {
+		result1 pkg.PostResult
+	}
+	postOverrideApproveReturnsOnCall map[int]struct {
+		result1 pkg.PostResult
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -250,6 +264,70 @@ func (fake *PrPoster) PostLGTMReturnsOnCall(i int, result1 pkg.PostResult) {
 		})
 	}
 	fake.postLGTMReturnsOnCall[i] = struct {
+		result1 pkg.PostResult
+	}{result1}
+}
+
+func (fake *PrPoster) PostOverrideApprove(arg1 context.Context, arg2 prurl.PRInfo, arg3 string, arg4 string) pkg.PostResult {
+	fake.postOverrideApproveMutex.Lock()
+	ret, specificReturn := fake.postOverrideApproveReturnsOnCall[len(fake.postOverrideApproveArgsForCall)]
+	fake.postOverrideApproveArgsForCall = append(fake.postOverrideApproveArgsForCall, struct {
+		arg1 context.Context
+		arg2 prurl.PRInfo
+		arg3 string
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.PostOverrideApproveStub
+	fakeReturns := fake.postOverrideApproveReturns
+	fake.recordInvocation("PostOverrideApprove", []interface{}{arg1, arg2, arg3, arg4})
+	fake.postOverrideApproveMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *PrPoster) PostOverrideApproveCallCount() int {
+	fake.postOverrideApproveMutex.RLock()
+	defer fake.postOverrideApproveMutex.RUnlock()
+	return len(fake.postOverrideApproveArgsForCall)
+}
+
+func (fake *PrPoster) PostOverrideApproveCalls(stub func(context.Context, prurl.PRInfo, string, string) pkg.PostResult) {
+	fake.postOverrideApproveMutex.Lock()
+	defer fake.postOverrideApproveMutex.Unlock()
+	fake.PostOverrideApproveStub = stub
+}
+
+func (fake *PrPoster) PostOverrideApproveArgsForCall(i int) (context.Context, prurl.PRInfo, string, string) {
+	fake.postOverrideApproveMutex.RLock()
+	defer fake.postOverrideApproveMutex.RUnlock()
+	argsForCall := fake.postOverrideApproveArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *PrPoster) PostOverrideApproveReturns(result1 pkg.PostResult) {
+	fake.postOverrideApproveMutex.Lock()
+	defer fake.postOverrideApproveMutex.Unlock()
+	fake.PostOverrideApproveStub = nil
+	fake.postOverrideApproveReturns = struct {
+		result1 pkg.PostResult
+	}{result1}
+}
+
+func (fake *PrPoster) PostOverrideApproveReturnsOnCall(i int, result1 pkg.PostResult) {
+	fake.postOverrideApproveMutex.Lock()
+	defer fake.postOverrideApproveMutex.Unlock()
+	fake.PostOverrideApproveStub = nil
+	if fake.postOverrideApproveReturnsOnCall == nil {
+		fake.postOverrideApproveReturnsOnCall = make(map[int]struct {
+			result1 pkg.PostResult
+		})
+	}
+	fake.postOverrideApproveReturnsOnCall[i] = struct {
 		result1 pkg.PostResult
 	}{result1}
 }
