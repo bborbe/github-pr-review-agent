@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix(security): bump `golang.org/x/text` v0.38.0 → v0.40.0 to clear CVE-2026-56852 (infinite loop on invalid input) and restore a green `make precommit` baseline.
+
 ## v0.3.0
 
 - feat: add `pr-override` task type. A trusted-author PR carrying the `override-review` label (emitted by github-pr-watcher) routes to a new code-only, single-phase override agent that posts an `APPROVE` at the PR head SHA via the new `PrPoster.PostOverrideApprove` — a fresh bot APPROVE supersedes the bot's own false-positive `CHANGES_REQUESTED` for reviewDecision, so any write-access user can merge without admin. No Claude, no clone, no container. CI status checks still apply (the label clears only the review requirement). Registered as a second task type in `CreateAgentProvider` alongside `pr-review` + `healthcheck`; `PostOverrideApprove` posts unconditionally (no autoApprove gate, no WorkDir, no prior-review dismissal), mirroring `PostLGTM`.
