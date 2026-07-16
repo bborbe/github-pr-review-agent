@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: restore real reviews under selector mode. The `/coding:pr-review` default dispatcher switched to selector mode (in-session classify+adjudicate, zero sub-agent spawns) in coding v0.22.0; the execution-phase `--allowedTools` allowlist (`factory.executionTools`) still assumed the old per-owner-dispatch model (`Task` + git only), so the review could not `Read` files, run the ast-grep mechanical funnel, or shell `jq`/`git rev-parse` — and the non-interactive container stalled, posting "I need your approval to proceed" as the review with a false `CHANGES_REQUESTED`. Expand `executionTools` with `Read`/`Grep`/`Glob`, `Bash(git rev-parse:*)`, `Bash(command -v:*)`, `Bash(jq:*)`, and the ast-grep runner's literal container path — all read-only, no network tools, so the anti-injection boundary holds. The assembled execution header now steers the model to invoke the runner/guide by literal path instead of the plugin's `$RUNNER`/`$GUIDE` shell variable (which an allowlist entry cannot match).
+
 ## v0.3.1
 
 - fix(security): bump `golang.org/x/text` v0.38.0 → v0.40.0 to clear CVE-2026-56852 (infinite loop on invalid input) and restore a green `make precommit` baseline.

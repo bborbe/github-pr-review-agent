@@ -30,6 +30,28 @@ const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 	"dispatch them as written.\n\n" +
 	"---\n\n"
 
+// containerPathsSteerTemplate is prepended to the inlined /coding:pr-review
+// procedure. The review runs non-interactively under a fixed --allowedTools
+// allowlist (see factory.executionTools), so any command the allowlist can't
+// match is denied — and the model, unable to get approval, stalls and posts
+// "I need your approval to proceed" as its review. The procedure resolves its
+// mechanical-funnel runner and selector guide through `$RUNNER`/`$GUIDE` shell
+// variables with fallback chains; an allowlist entry cannot match a shell
+// variable. In THIS container the coding plugin always lives at a fixed path,
+// so steer the model to the literal path instead. %[1]s = plugin root.
+const containerPathsSteerTemplate = "## Container tool paths (non-interactive run)\n\n" +
+	"This review runs headless under a fixed tool allowlist — there is no human " +
+	"to approve extra permissions. In this container the `bborbe/coding` plugin " +
+	"is always at `%[1]s`. Where the procedure below resolves a script or guide " +
+	"via a `$RUNNER` / `$GUIDE` shell variable, IGNORE the variable and its " +
+	"fallback chain and use the literal path — a shell variable cannot be " +
+	"pre-approved and the call will be denied:\n\n" +
+	"- **ast-grep mechanical funnel** (Step 4a): run exactly\n" +
+	"  `%[1]s/scripts/ast-grep-runner.sh <REVIEW_DIR> <changed files> > /tmp/pr-review-findings.json`\n" +
+	"- **selector-mode guide** (Step 4c-sel): it is always present — skip the " +
+	"`GUIDE_OK`/`GUIDE_MISSING` probe and Read `%[1]s/docs/selector-mode-guide.md` directly.\n\n" +
+	"---\n\n"
+
 const verdictTranslationFooter = "---\n\n" +
 	"## Final step — emit verdict JSON\n\n" +
 	"After Step 7 (Manual Review) completes and the consolidated report is\n" +
@@ -80,8 +102,15 @@ func BuildExecutionInstructions(
 		return nil, errors.Wrapf(ctx, err, "read plugin command file path=%s", pluginPath)
 	}
 
+	pluginRoot := filepath.Join(
+		string(claudeConfigDir),
+		"plugins",
+		"marketplaces",
+		"coding",
+	)
 	header := fmt.Sprintf(prefilledArgsHeaderTemplate, baseRef, reviewMode)
-	assembled := header + stripFrontmatter(string(raw)) + verdictTranslationFooter
+	steer := fmt.Sprintf(containerPathsSteerTemplate, pluginRoot)
+	assembled := header + steer + stripFrontmatter(string(raw)) + verdictTranslationFooter
 	return claudelib.Instructions{
 		{Name: "workflow", Content: assembled},
 		{Name: "output-format", Content: executionOutputFormat},

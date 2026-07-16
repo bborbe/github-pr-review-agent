@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/github-pr-review-agent/pkg/prompts"
@@ -69,6 +70,34 @@ var _ = Describe("BuildExecutionInstructions", func() {
 			Expect(workflow).To(ContainSubstring("Severity map"))
 			Expect(workflow).To(ContainSubstring("Verdict roll-up"))
 		})
+	})
+
+	Describe("container-path steer (selector-mode allowlist)", func() {
+		It(
+			"steers the model to the literal runner + guide path, not the $RUNNER/$GUIDE shell var",
+			func() {
+				writePlugin(fakePlugin)
+
+				instructions, err := prompts.BuildExecutionInstructions(
+					ctx,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"selector",
+					"main",
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				workflow := instructions[0].Content
+				pluginRoot := filepath.Join(tmpDir, "plugins", "marketplaces", "coding")
+				// Runner invoked by literal path so factory.executionTools can match it.
+				Expect(workflow).To(ContainSubstring(pluginRoot + "/scripts/ast-grep-runner.sh"))
+				// Guide read by literal path (Read tool), probe skipped.
+				Expect(workflow).To(ContainSubstring(pluginRoot + "/docs/selector-mode-guide.md"))
+				// Steer lands before the inlined procedure body.
+				Expect(workflow).To(ContainSubstring("Container tool paths"))
+				Expect(strings.Index(workflow, "Container tool paths")).
+					To(BeNumerically("<", strings.Index(workflow, "Procedure body line 1.")))
+			},
+		)
 	})
 
 	Describe("frontmatter stripping", func() {
