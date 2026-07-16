@@ -10,6 +10,7 @@ package factory
 
 import (
 	"net/http"
+	"path/filepath"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -42,24 +43,41 @@ var (
 		"Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
 		"Bash(gh pr view:*)", "Bash(gh pr diff:*)", "Bash(gh pr list:*)",
 	}
-	// Sub-agent allowlist audit (spec-011 + inline-plugin fix): the inlined
-	// /coding:pr-review content (assembled per-task by the execution step)
-	// dispatches specialist sub-agents via Task. Each coding:* sub-agent
-	// declares its own read-only tools (Read, Grep, Glob, restricted Bash;
-	// no Write, Edit, curl, wget, nc). Verified by inspecting plugin agent
-	// definitions under
-	// ~/.claude/plugins/marketplaces/coding/agents/*.md. The tool set below
-	// mirrors the plugin's `allowed-tools` frontmatter so the inlined body
-	// has the same capabilities as a real /coding:pr-review invocation.
+	// Execution-phase allowlist for the inlined /coding:pr-review procedure.
+	//
+	// Selector mode (the plugin default since coding v0.22.0, commit 5ac8a60
+	// "feat!: selector mode is the default dispatcher; remove standard-mode
+	// per-owner dispatch") does classify+adjudicate IN-SESSION with zero
+	// sub-agent spawns — so the parent execution phase itself must Read files,
+	// run the ast-grep mechanical funnel, and shell jq/git rev-parse. The older
+	// per-owner-dispatch model needed only Task+git (the parent just fanned out
+	// to sub-agents, which did the reading); when the baked plugin flipped to
+	// selector-default, that allowlist stopped covering the review and the bot
+	// stalled asking for permission it can't get in a non-interactive container.
+	//
+	// Boundary preserved: everything below is read-only inspection plus ONE
+	// fixed, operator-shipped script (the ast-grep runner, appended per config
+	// dir by executionToolsFor). No Write/Edit, no network tools (curl/wget/nc),
+	// no arbitrary Bash — a malicious PR still cannot exfiltrate the GitHub App
+	// token. The runner path is derived from CLAUDE_CONFIG_DIR (/home/claude/
+	// .claude in the container, ~/.claude locally) and the assembled execution
+	// header (prompts.execution.go) steers the model to invoke it by that exact
+	// literal path rather than the plugin's `$RUNNER` shell variable, which an
+	// allowlist entry cannot match.
 	executionTools = claudelib.AllowedTools{
 		"Task",
+		"Read", "Grep", "Glob",
 		"Bash(git diff:*)",
 		"Bash(git log:*)",
+		"Bash(git show:*)",
 		"Bash(git status:*)",
 		"Bash(git ls-files:*)",
 		"Bash(git fetch:*)",
 		"Bash(git worktree:*)",
 		"Bash(git branch:*)",
+		"Bash(git rev-parse:*)",
+		"Bash(command -v:*)",
+		"Bash(jq:*)",
 		"Bash(rm -rf:*)",
 	}
 	reviewTools = claudelib.AllowedTools{
@@ -67,6 +85,22 @@ var (
 		"Bash(gh pr view:*)", "Bash(gh pr diff:*)",
 	}
 )
+
+// executionToolsFor returns the execution-phase allowlist for a given Claude
+// config dir, appending the ast-grep mechanical funnel runner at its resolved
+// literal path. The path tracks CLAUDE_CONFIG_DIR so the same code matches the
+// container (/home/claude/.claude) and a local cmd/run-task (~/.claude); the
+// assembled execution header steers the model to this exact path (see
+// prompts.execution.go — a `$RUNNER` shell variable can never match an entry).
+func executionToolsFor(claudeConfigDir claudelib.ClaudeConfigDir) claudelib.AllowedTools {
+	runner := filepath.Join(
+		string(claudeConfigDir),
+		"plugins", "marketplaces", "coding", "scripts", "ast-grep-runner.sh",
+	)
+	out := make(claudelib.AllowedTools, 0, len(executionTools)+1)
+	out = append(out, executionTools...)
+	return append(out, "Bash("+runner+":*)")
+}
 
 // CreateClaudeRunner constructs a ClaudeRunner pre-configured with tools,
 // model, working directory, and CLI environment. env is forwarded as-is
@@ -179,7 +213,7 @@ func CreateAgent(
 		agentDir,
 		model,
 		env,
-		executionTools,
+		executionToolsFor(claudeConfigDir),
 		reviewMode,
 		repoAllowlist,
 		prPoster,

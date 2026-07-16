@@ -21,6 +21,46 @@ import (
 )
 
 var _ = Describe("Factory", func() {
+	Describe("ExecutionToolsFor", func() {
+		var tools claudelib.AllowedTools
+
+		BeforeEach(func() {
+			tools = factory.ExecutionToolsFor("/home/claude/.claude")
+		})
+
+		It("grants selector-mode in-session review tools", func() {
+			Expect(tools).To(ContainElement("Read"))
+			Expect(tools).To(ContainElement("Grep"))
+			Expect(tools).To(ContainElement("Glob"))
+			Expect(tools).To(ContainElement("Bash(git rev-parse:*)"))
+			Expect(tools).To(ContainElement("Bash(command -v:*)"))
+			Expect(tools).To(ContainElement("Bash(jq:*)"))
+		})
+
+		It("pins the ast-grep runner to the config-dir-relative literal path", func() {
+			Expect(tools).To(ContainElement(
+				"Bash(/home/claude/.claude/plugins/marketplaces/coding/scripts/ast-grep-runner.sh:*)",
+			))
+		})
+
+		It("derives the runner path from the given config dir", func() {
+			local := factory.ExecutionToolsFor("/tmp/x/.claude")
+			Expect(local).To(ContainElement(
+				"Bash(/tmp/x/.claude/plugins/marketplaces/coding/scripts/ast-grep-runner.sh:*)",
+			))
+		})
+
+		It("keeps the anti-injection boundary — no write or network tools", func() {
+			for _, tool := range tools {
+				Expect(tool).NotTo(Equal("Write"))
+				Expect(tool).NotTo(Equal("Edit"))
+				Expect(tool).NotTo(ContainSubstring("curl"))
+				Expect(tool).NotTo(ContainSubstring("wget"))
+				Expect(tool).NotTo(ContainSubstring("Bash(bash:"))
+			}
+		})
+	})
+
 	Describe("CreateClaudeRunner", func() {
 		It("returns a non-nil runner with empty env", func() {
 			runner := factory.CreateClaudeRunner(
