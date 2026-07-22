@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.3
 
 - fix: install `python3` and `jq` in the Dockerfile alpine stage so the ast-grep mechanical funnel (`scripts/ast-grep-runner.sh`, Step 4a of `/coding:pr-review`) can run. The image shipped `ast-grep` but neither `python3` (the runner shells `python3 -c` for millisecond timestamps at lines 82/254, unconditionally under `set -euo pipefail`) nor `jq` (used throughout for JSON assembly) — so the runner died at line 82 with `python3: command not found` (exit 127) before any scan, silently skipping the entire MUST-tier mechanical rule pass on every review while judgment-tier coverage still completed. Reproduced end-to-end in an alpine:3.23 container mirroring the image packages: current state → exit 127, zero findings; `+python3 +jq` → exit 0, 66 YAMLs run, real MUST findings, `errors: []`. Surfaced on octopus dev during v0.3.2 selector-allowlist verification (`Seibert-Data/test-dev#1`).
 
