@@ -7,9 +7,11 @@ package pkg
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +19,10 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 )
+
+// codeFenceRegexp matches a run of three or more backticks — a markdown code
+// fence — used to neutralise fence sequences in PR-author-controlled finding text.
+var codeFenceRegexp = regexp.MustCompile("`{3,}")
 
 // FunnelResult is the outcome of running the ast-grep mechanical funnel.
 type FunnelResult struct {
@@ -140,7 +146,26 @@ func (r *funnelRunner) Run(
 	if out == "" {
 		return FunnelResult{Ran: false, FailDetail: "ast-grep runner produced no output"}, nil
 	}
-	return FunnelResult{Ran: true, FindingsJSON: out}, nil
+	// Defense-in-depth: the runner's findings carry PR-author-controlled strings
+	// (matched_text / message copied from the diff), and the caller embeds this
+	// JSON into the review prompt. Reject non-JSON output (a compromised or broken
+	// runner) fail-closed, and neutralise code-fence sequences so a crafted PR
+	// cannot break out of the prompt's ```json block and inject directives.
+	if !json.Valid([]byte(out)) {
+		return FunnelResult{
+			Ran:        false,
+			FailDetail: "ast-grep runner output was not valid JSON",
+		}, nil
+	}
+	return FunnelResult{Ran: true, FindingsJSON: neutralizeCodeFences(out)}, nil
+}
+
+// neutralizeCodeFences replaces any run of three-or-more backticks with a
+// visually-similar sequence that cannot close a markdown code fence, so
+// PR-author-controlled finding text embedded in the execution prompt cannot
+// escape its ```json block.
+func neutralizeCodeFences(s string) string {
+	return codeFenceRegexp.ReplaceAllString(s, "[code-fence]")
 }
 
 // changedFiles returns the PR's changed file paths (relative to worktreePath) by
