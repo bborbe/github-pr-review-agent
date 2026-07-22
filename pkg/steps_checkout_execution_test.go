@@ -447,11 +447,47 @@ prior review body
 		Context("when poster is nil", func() {
 			It("advances to ai_review without calling any poster", func() {
 				md := buildMD(ctx, reviewBody)
-				result, err := pkg.PostAndRouteForTest(ctx, nil, md, prURL, "", fixedTime)
+				result, err := pkg.PostAndRouteForTest(ctx, nil, md, prURL, "", fixedTime, true)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).NotTo(BeNil())
 				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
 				Expect(result.NextPhase).To(Equal("ai_review"))
+			})
+		})
+
+		Context("fail-closed gate when the mechanical funnel did not run", func() {
+			It("overrides an approve verdict to request-changes (funnelRan=false)", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 7})
+
+				md := buildMD(ctx, reviewBody) // reviewBody parses to approve
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					false,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
+
+			It("leaves an approve verdict untouched when the funnel ran (funnelRan=true)", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 8})
+
+				md := buildMD(ctx, reviewBody)
+				_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime, true)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
 			})
 		})
 
@@ -461,7 +497,15 @@ prior review body
 				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 42})
 
 				md := buildMD(ctx, reviewBody)
-				result, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime)
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.NextPhase).To(Equal("ai_review"))
 				Expect(fakePoster.PostCallCount()).To(Equal(1))
@@ -484,7 +528,15 @@ prior review body
 				})
 
 				md := buildMD(ctx, reviewBody)
-				result, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime)
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.NextPhase).To(Equal("human_review"))
 				Expect(result.Message).To(ContainSubstring("posting failed"))
@@ -504,7 +556,15 @@ prior review body
 				})
 
 				md := buildMD(ctx, reviewBody)
-				result, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime)
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.NextPhase).To(Equal("ai_review"))
 			})
@@ -524,7 +584,15 @@ prior review body
 					fakePoster.PostReturns(postResult)
 
 					md := buildMD(ctx, reviewBody)
-					_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime)
+					_, err := pkg.PostAndRouteForTest(
+						ctx,
+						fakePoster,
+						md,
+						prURL,
+						"",
+						fixedTime,
+						true,
+					)
 					Expect(err).NotTo(HaveOccurred())
 
 					reviewSection, ok := md.FindSection("## Review")
@@ -547,7 +615,7 @@ prior review body
 				md := buildMD(ctx, reviewBody)
 
 				// First posting attempt.
-				_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime)
+				_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime, true)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Second posting attempt (simulate controller re-spawn).
@@ -559,6 +627,7 @@ prior review body
 					prURL,
 					"",
 					fixedTime.Add(time.Minute),
+					true,
 				)
 				Expect(err).NotTo(HaveOccurred())
 

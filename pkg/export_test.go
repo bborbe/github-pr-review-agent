@@ -48,9 +48,10 @@ func PostAndRouteForTest(
 	prURLStr string,
 	worktreePath string,
 	jobRunTime time.Time,
+	funnelRan bool,
 ) (*agentlib.Result, error) {
 	s := &checkoutExecutionStep{prPoster: prPoster}
-	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime)
+	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan)
 }
 
 // ParsePlanningConcernsForTest exposes parsePlanningConcerns for unit testing.
