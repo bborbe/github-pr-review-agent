@@ -191,7 +191,7 @@ func (s *checkoutExecutionStep) Run(
 		)
 	}
 
-	return s.runClaude(ctx, md, worktreePath, instructions)
+	return s.runClaude(ctx, md, worktreePath, instructions, funnel.Ran)
 }
 
 // checkAllowlist returns a non-nil Result if the cloneURL is blocked by the
@@ -258,6 +258,7 @@ func (s *checkoutExecutionStep) runClaude(
 	md *agentlib.Markdown,
 	worktreePath string,
 	instructions claudelib.Instructions,
+	funnelRan bool,
 ) (*agentlib.Result, error) {
 	// Cache PR URL BEFORE any md mutations to avoid matching URLs that Claude
 	// writes inside the ## Review section body.
@@ -291,7 +292,14 @@ func (s *checkoutExecutionStep) runClaude(
 		Body:    runResult.Result,
 	})
 
-	return s.postAndRoute(ctx, md, prURLStr, worktreePath, time.Time(s.currentDateTime.Now()))
+	return s.postAndRoute(
+		ctx,
+		md,
+		prURLStr,
+		worktreePath,
+		time.Time(s.currentDateTime.Now()),
+		funnelRan,
+	)
 }
 
 // postAndRoute handles the posting sequence after ## Review has been written to
@@ -302,6 +310,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 	prURLStr string,
 	worktreePath string,
 	jobRunTime time.Time,
+	funnelRan bool,
 ) (*agentlib.Result, error) {
 	// nil poster = skip posting (backward-compatible for cmd/run-task).
 	if s.prPoster == nil {
@@ -318,6 +327,17 @@ func (s *checkoutExecutionStep) postAndRoute(
 	}
 	verdict := ParseVerdict(reviewBody)
 	summary := StripJSONVerdict(reviewBody)
+
+	// Fail-closed gate: the Go-side mechanical funnel could not run, so the model
+	// had NO machine-verified MUST-tier result. An `approve` here is unverified —
+	// override it to request-changes in code rather than trust the model to have
+	// self-gated per the funnel-failed prompt (self-gating on a weak model is the
+	// exact silent-approve this agent's Go-side funnel exists to prevent). Mirrors
+	// the unparseable-verdict fail-close below; request-changes verdicts already
+	// produced by the model are left untouched.
+	if !funnelRan && verdict.Verdict == VerdictApprove {
+		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonFunnelDidNotRun}
+	}
 
 	// Diagnostic for the recurring false-CHANGES_REQUESTED symptom: a
 	// request-changes verdict produced by ParseVerdict fail-closing (empty /
