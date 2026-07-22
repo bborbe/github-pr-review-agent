@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.6
 
 - fix: code-level fail-closed gate on the funnel-failed path. When the Go-side mechanical funnel could not run (`funnel.Ran == false`) and the review model still returns `approve`, `postAndRoute` now overrides the verdict to `request-changes` (reason `mechanical funnel did not run`, recognised by `isFailClosedReason`) instead of trusting the prompt-only "you MUST NOT approve" instruction — which leaned on the same weak model this fix exists to work around. Mirrors the existing unparseable-verdict fail-close. `funnel.Ran` is threaded through `runClaude` → `postAndRoute`; tests cover both directions (funnelRan=false approve→request-changes, funnelRan=true approve preserved).
 
