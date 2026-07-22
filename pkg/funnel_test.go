@@ -105,6 +105,39 @@ var _ = Describe("FunnelRunner", func() {
 		})
 	})
 
+	Describe("no changed files", func() {
+		It("short-circuits to Ran=true with an empty findings object", func() {
+			cfg := writeRunner("#!/usr/bin/env bash\necho 'SHOULD NOT RUN' >&2\nexit 1\n")
+			// base == HEAD: feature branch has no commits beyond main, so the
+			// diff is empty and the runner must not be invoked.
+			work := filepath.Join(tmpDir, "work")
+			Expect(os.MkdirAll(work, 0750)).To(Succeed())
+			run := func(args ...string) {
+				// #nosec G204 -- test helper; git args are hardcoded literals in this file.
+				cmd := exec.CommandContext(ctx, "git", append([]string{"-C", work}, args...)...)
+				cmd.Env = append(os.Environ(),
+					"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+					"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+				)
+				out, err := cmd.CombinedOutput()
+				Expect(err).NotTo(HaveOccurred(), string(out))
+			}
+			run("init", "-q")
+			run("checkout", "-q", "-b", "main")
+			Expect(
+				os.WriteFile(filepath.Join(work, "base.go"), []byte("package p\n"), 0600),
+			).To(Succeed())
+			run("add", "-A")
+			run("commit", "-q", "-m", "base")
+			run("checkout", "-q", "-b", "feature")
+
+			result, err := pkg.NewFunnelRunner(cfg).Run(ctx, work, "main")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Ran).To(BeTrue())
+			Expect(result.FindingsJSON).To(ContainSubstring(`"findings_count":0`))
+		})
+	})
+
 	Describe("runner exits non-zero", func() {
 		It("fail-closes with the runner's stderr detail", func() {
 			cfg := writeRunner("#!/usr/bin/env bash\necho 'ast-grep missing' >&2\nexit 2\n")
