@@ -30,26 +30,43 @@ const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 	"dispatch them as written.\n\n" +
 	"---\n\n"
 
-// containerPathsSteerTemplate is prepended to the inlined /coding:pr-review
-// procedure. The review runs non-interactively under a fixed --allowedTools
-// allowlist (see factory.executionTools), so any command the allowlist can't
-// match is denied — and the model, unable to get approval, stalls and posts
-// "I need your approval to proceed" as its review. The procedure resolves its
-// mechanical-funnel runner and selector guide through `$RUNNER`/`$GUIDE` shell
-// variables with fallback chains; an allowlist entry cannot match a shell
-// variable. In THIS container the coding plugin always lives at a fixed path,
-// so steer the model to the literal path instead. %[1]s = plugin root.
-const containerPathsSteerTemplate = "## Container tool paths (non-interactive run)\n\n" +
-	"This review runs headless under a fixed tool allowlist — there is no human " +
-	"to approve extra permissions. In this container the `bborbe/coding` plugin " +
-	"is always at `%[1]s`. Where the procedure below resolves a script or guide " +
-	"via a `$RUNNER` / `$GUIDE` shell variable, IGNORE the variable and its " +
-	"fallback chain and use the literal path — a shell variable cannot be " +
-	"pre-approved and the call will be denied:\n\n" +
-	"- **ast-grep mechanical funnel** (Step 4a): run exactly\n" +
-	"  `%[1]s/scripts/ast-grep-runner.sh <REVIEW_DIR> <changed files> > /tmp/pr-review-findings.json`\n" +
-	"- **selector-mode guide** (Step 4c-sel): it is always present — skip the " +
+// funnelInjectSteerTemplate is prepended to the inlined /coding:pr-review
+// procedure when the agent has ALREADY run the mechanical funnel (the normal
+// path). The review runs non-interactively under a fixed --allowedTools
+// allowlist (see factory.executionTools); the funnel runner is deliberately NOT
+// on it — a weak model wraps the invocation in forms the allowlist can't match
+// (`> redirect`, `bash -c`, `$RUNNER`), gets denied, and silently drops the
+// mechanical MUST-tier pass. So the agent runs the funnel in Go and injects its
+// authoritative JSON here; the model must consume it, not re-run the runner.
+// %[1]s = plugin root, %[2]s = funnel findings JSON.
+const funnelInjectSteerTemplate = "## Pre-computed mechanical funnel + tool paths (non-interactive run)\n\n" +
+	"This review runs headless under a fixed tool allowlist. Two things are handled for you:\n\n" +
+	"1. **Mechanical funnel (Step 4a) — ALREADY RUN.** The agent executed the ast-grep " +
+	"mechanical funnel over this PR's changed files before invoking you; its authoritative " +
+	"JSON output is below. Do NOT run `ast-grep-runner.sh` yourself — it is not on the " +
+	"allowlist and the call will be denied. Treat every finding below as a confirmed " +
+	"MUST-tier mechanical finding and fold it into your report at the mapped severity; do " +
+	"NOT re-derive, re-run, or second-guess them.\n\n" +
+	"```json\n%[2]s\n```\n\n" +
+	"2. **Selector-mode guide (Step 4c-sel)** is always present — skip the " +
 	"`GUIDE_OK`/`GUIDE_MISSING` probe and Read `%[1]s/docs/selector-mode-guide.md` directly.\n\n" +
+	"---\n\n"
+
+// funnelFailedSteerTemplate is used when the agent's own funnel run failed
+// (runner missing, tooling exit, or changed-file computation failed). Fail
+// closed: the model must surface the gap and must NOT approve as though the
+// mechanical pass had succeeded. %[1]s = plugin root, %[2]s = failure detail.
+const funnelFailedSteerTemplate = "## Mechanical funnel status + tool paths (non-interactive run)\n\n" +
+	"This review runs headless under a fixed tool allowlist. Note:\n\n" +
+	"1. **Mechanical funnel (Step 4a) — COULD NOT RUN.** The agent attempted the ast-grep " +
+	"mechanical funnel before invoking you, but it failed: %[2]s. You have NO machine-" +
+	"verified MUST-tier result, and you must NOT run the runner yourself (not on the " +
+	"allowlist). You MUST state prominently in your review `summary` that the mechanical " +
+	"MUST-tier check was UNAVAILABLE, and you MUST NOT post a clean `approve` as though it " +
+	"had passed — treat the missing mechanical pass as a blocking gap (verdict " +
+	"`request-changes`) unless the diff is trivially safe (e.g. docs-only).\n\n" +
+	"2. **Selector-mode guide (Step 4c-sel)** is always present — skip the probe and Read " +
+	"`%[1]s/docs/selector-mode-guide.md` directly.\n\n" +
 	"---\n\n"
 
 const verdictTranslationFooter = "---\n\n" +
@@ -76,11 +93,19 @@ const verdictTranslationFooter = "---\n\n" +
 // the /coding:pr-review plugin file at runtime, stripping its YAML frontmatter,
 // prepending a pre-filled-arguments header, and appending a verdict-translation
 // footer so the inlined plugin procedure runs as native instructions.
+//
+// The agent runs the mechanical funnel itself and passes its outcome in:
+// funnelRan true injects the authoritative findings JSON (model must consume,
+// not re-run); funnelRan false injects a fail-closed status carrying
+// funnelFailDetail so the review surfaces the gap instead of silently approving.
 func BuildExecutionInstructions(
 	ctx context.Context,
 	claudeConfigDir claudelib.ClaudeConfigDir,
 	reviewMode string,
 	baseRef string,
+	funnelRan bool,
+	funnelFindings string,
+	funnelFailDetail string,
 ) (claudelib.Instructions, error) {
 	if baseRef == "" {
 		return nil, errors.New(ctx, "base_ref is empty")
@@ -109,7 +134,12 @@ func BuildExecutionInstructions(
 		"coding",
 	)
 	header := fmt.Sprintf(prefilledArgsHeaderTemplate, baseRef, reviewMode)
-	steer := fmt.Sprintf(containerPathsSteerTemplate, pluginRoot)
+	var steer string
+	if funnelRan {
+		steer = fmt.Sprintf(funnelInjectSteerTemplate, pluginRoot, funnelFindings)
+	} else {
+		steer = fmt.Sprintf(funnelFailedSteerTemplate, pluginRoot, funnelFailDetail)
+	}
 	assembled := header + steer + stripFrontmatter(string(raw)) + verdictTranslationFooter
 	return claudelib.Instructions{
 		{Name: "workflow", Content: assembled},

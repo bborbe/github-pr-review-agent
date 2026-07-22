@@ -39,6 +39,7 @@ var _ = Describe("checkoutExecutionStep", func() {
 			"standard",
 			nil,
 			nil,
+			nil,
 			currentDateTime,
 		)
 	})
@@ -292,6 +293,7 @@ prior review body
 						"standard",
 						nil,
 						nil,
+						nil,
 						currentDateTime,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
@@ -317,6 +319,7 @@ prior review body
 						"standard",
 						[]string{"github.com/bborbe/maintainer"},
 						nil,
+						nil,
 						currentDateTime,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
@@ -341,6 +344,7 @@ prior review body
 						claudelib.AllowedTools{"Read"},
 						"standard",
 						[]string{"github.com/bborbe/other-repo"},
+						nil,
 						nil,
 						currentDateTime,
 					)
@@ -369,6 +373,7 @@ prior review body
 						claudelib.AllowedTools{"Read"},
 						"standard",
 						[]string{"github.com/bborbe/*"},
+						nil,
 						nil,
 						currentDateTime,
 					)
@@ -399,6 +404,7 @@ prior review body
 						claudelib.AllowedTools{"Read"},
 						"standard",
 						[]string{"github.com/bborbe/maintainer"},
+						nil,
 						nil,
 						currentDateTime,
 					)
