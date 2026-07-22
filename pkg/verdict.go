@@ -6,6 +6,7 @@ package pkg
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -29,28 +30,83 @@ type jsonVerdict struct {
 	Reason  string `json:"reason"`
 }
 
-// findLastJSONVerdictBlock returns the LAST JSON object (string content) in
-// reviewText that contains a "verdict" field. Handles single-line objects and
-// multi-line fenced ```json blocks. Returns empty + false if none found.
+// verdictFieldRegexp extracts the literal value of a "verdict" field from a
+// JSON-ish block. Used as a last-resort recovery when a FENCED verdict block is
+// well-delimited but not valid JSON (e.g. the model emitted unescaped
+// double-quotes inside a string value). It surfaces only a value the model
+// actually wrote — it can never invent one — so it cannot turn a genuine
+// request-changes into an approve.
+var verdictFieldRegexp = regexp.MustCompile(`"verdict"\s*:\s*"([^"]*)"`)
+
+// findVerdictBlock locates the verdict JSON block, preferring a fenced ```json
+// block (fence-delimited, so immune to brace/quote content) and falling back to
+// the end-anchored brace walk for bare, unfenced JSON. The bool `fenced` reports
+// whether the block came from a fence, which gates malformed-JSON recovery in
+// ParseVerdict — a fence is a strong "this is THE verdict block" signal; a
+// brace-matched blob is not.
+func findVerdictBlock(reviewText string) (block string, fenced, ok bool) {
+	if b, found := findFencedJSONVerdictBlock(reviewText); found {
+		return b, true, true
+	}
+	if b, found := findLastJSONVerdictBlock(reviewText); found {
+		return b, false, true
+	}
+	return "", false, false
+}
+
+// findFencedJSONVerdictBlock returns the body of the LAST ```json fenced block
+// that contains a "verdict" field. Because the block is delimited by the fence
+// markers — not by brace matching — stray/unbalanced braces and unescaped quotes
+// inside string values do not corrupt extraction. This is exactly what the
+// byte-level brace walker in findLastJSONVerdictBlock cannot do: a lone '}' in a
+// string value inflates its depth count and makes it latch onto a '{' up in the
+// prose, extracting a non-JSON blob that then fail-closes to request-changes
+// (observed on bborbe/github-update-go-agent#5, 2026-07-21). Returns empty +
+// false when no such fenced block exists (bare JSON → brace-walk fallback).
+func findFencedJSONVerdictBlock(reviewText string) (string, bool) {
+	lines := strings.Split(reviewText, "\n")
+	var best string
+	found := false
+	inFence := false
+	var buf []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case !inFence && trimmed == "```json":
+			inFence = true
+			buf = buf[:0]
+		case inFence && trimmed == "```":
+			inFence = false
+			if block := strings.Join(buf, "\n"); strings.Contains(block, `"verdict"`) {
+				best = block
+				found = true
+			}
+		case inFence:
+			buf = append(buf, line)
+		}
+	}
+	return best, found
+}
+
+// findLastJSONVerdictBlock is the fallback extractor for BARE (unfenced) verdict
+// JSON, used only when findFencedJSONVerdictBlock finds no fenced block.
 //
-// The block is anchored on its CLOSING brace: the last '}' within the trailing
-// 50-line window is treated as the end of the verdict block, and we walk back
-// (with no distance limit) to its matching '{'. Anchoring on the close — not on
-// the "verdict" key — fixes the false-negative where a long, well-formed block
-// (e.g. an "approve" with a multi-line "comments" array) put its "verdict" key
-// dozens of lines above the close, outside the old key-line window, and the
-// whole block was silently dropped → fail-closed to request-changes. The window
-// still keeps the verdict block anchored to the END of the review (per the
-// execution output-format spec: the JSON fence is last with no trailing prose),
-// so JSON examples quoted earlier in prose are still ignored.
+// It returns the LAST JSON object (string content) in reviewText that contains a
+// "verdict" field. The block is anchored on its CLOSING brace: the last '}'
+// within the trailing 50-line window is treated as the end of the verdict block,
+// and we walk back (with no distance limit) to its matching '{'. Anchoring on
+// the close — not on the "verdict" key — fixes the false-negative where a long,
+// well-formed block put its "verdict" key dozens of lines above the close,
+// outside the old key-line window. The window keeps the block anchored to the
+// END of the review, so JSON examples quoted earlier in prose are still ignored.
 //
-// Limitation: brace matching is byte-level, not string-aware. Balanced braces
-// inside a JSON string value (e.g. "reason": "use {} here") net depth-zero and
-// match correctly; only UNbalanced braces inside a string (e.g. "see }") could
-// mis-match. That mis-match makes json.Unmarshal of the extracted block fail,
-// which fail-closes to request-changes — the safe direction, never a false
-// approve. This blind spot pre-dates this change; a string-aware tokenizer is
-// unwarranted in front of json.Unmarshal.
+// Limitation (now covered by the fenced path for fenced blocks): brace matching
+// is byte-level, not string-aware. Balanced braces inside a JSON string value
+// (e.g. "reason": "use {} here") net depth-zero and match correctly; only
+// UNbalanced braces inside a string (e.g. "see }") could mis-match and fail the
+// subsequent json.Unmarshal. Since real reviews emit the verdict inside a ```json
+// fence, that blind spot no longer reaches production output — this fallback
+// only runs for bare JSON, where such blocks are short single-line objects.
 func findLastJSONVerdictBlock(reviewText string) (string, bool) {
 	lines := strings.Split(reviewText, "\n")
 	startIdx := 0
@@ -127,6 +183,24 @@ func extractBlock(lines []string, start, end charPos) string {
 	return b.String()
 }
 
+// recoverFencedVerdict salvages the literal "verdict" field from a block that
+// failed json.Unmarshal, but ONLY for a fenced block — a fence is a strong
+// "this is THE verdict block" signal, so recovering an approve the model clearly
+// stated (past unescaped quotes / unbalanced braces in a string value) beats
+// fail-closing it to request-changes. It reads the stated value verbatim and can
+// never invent one, so it cannot flip a genuine request-changes to approve.
+// Returns the raw verdict value + true on success.
+func recoverFencedVerdict(block string, fenced bool) (string, bool) {
+	if !fenced {
+		return "", false
+	}
+	m := verdictFieldRegexp.FindStringSubmatch(block)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
 // ParseVerdict analyzes Claude review output and determines the appropriate verdict.
 // The verdict is binary: approve or request-changes. No other value is returned.
 // Fail-closed: empty or unparseable output returns request-changes.
@@ -138,7 +212,7 @@ func ParseVerdict(reviewText string) Result {
 		}
 	}
 
-	block, ok := findLastJSONVerdictBlock(reviewText)
+	block, fenced, ok := findVerdictBlock(reviewText)
 	if !ok {
 		return Result{
 			Verdict: VerdictRequestChanges,
@@ -148,10 +222,14 @@ func ParseVerdict(reviewText string) Result {
 
 	var jv jsonVerdict
 	if err := json.Unmarshal([]byte(block), &jv); err != nil {
-		return Result{
-			Verdict: VerdictRequestChanges,
-			Reason:  "malformed JSON: " + err.Error(),
+		recovered, ok := recoverFencedVerdict(block, fenced)
+		if !ok {
+			return Result{
+				Verdict: VerdictRequestChanges,
+				Reason:  "malformed JSON: " + err.Error(),
+			}
 		}
+		jv.Verdict = recovered
 	}
 
 	// Normalise: lowercase + replace underscores with hyphens
