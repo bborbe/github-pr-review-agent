@@ -38,6 +38,7 @@ type checkoutExecutionStep struct {
 	reviewMode      string
 	repoAllowlist   []string
 	prPoster        PrPoster // nil = skip posting
+	funnelRunner    FunnelRunner
 	currentDateTime libtime.CurrentDateTimeGetter
 }
 
@@ -53,6 +54,7 @@ func NewCheckoutExecutionStep(
 	reviewMode string,
 	repoAllowlist []string,
 	prPoster PrPoster,
+	funnelRunner FunnelRunner,
 	currentDateTime libtime.CurrentDateTimeGetter,
 ) agentlib.Step {
 	return &checkoutExecutionStep{
@@ -65,6 +67,7 @@ func NewCheckoutExecutionStep(
 		reviewMode:      reviewMode,
 		repoAllowlist:   repoAllowlist,
 		prPoster:        prPoster,
+		funnelRunner:    funnelRunner,
 		currentDateTime: currentDateTime,
 	}
 }
@@ -157,11 +160,26 @@ func (s *checkoutExecutionStep) Run(
 		)
 	}
 
+	// Run the deterministic mechanical funnel ourselves and inject its findings
+	// into the execution prompt. The review model must never be relied on to
+	// invoke the funnel — under the fixed allowlist it wraps the runner in
+	// non-matching forms, gets denied, and silently drops the MUST-tier pass.
+	var funnel FunnelResult
+	if s.funnelRunner != nil {
+		funnel, err = s.funnelRunner.Run(ctx, worktreePath, baseRef)
+		if err != nil {
+			return nil, errors.Wrapf(ctx, err, "run mechanical funnel base_ref=%s", baseRef)
+		}
+	}
+
 	instructions, err := prompts.BuildExecutionInstructions(
 		ctx,
 		s.claudeConfigDir,
 		s.reviewMode,
 		baseRef,
+		funnel.Ran,
+		funnel.FindingsJSON,
+		funnel.FailDetail,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(

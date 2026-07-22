@@ -16,6 +16,9 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const sampleFindings = `{"stats":{"yamls_run":66,"findings_count":1,"elapsed_ms":10},` +
+	`"findings_by_owner":{"go-error-assistant":[{"rule_id":"go-errors/no-fmt-errorf"}]},"errors":[]}`
+
 var _ = Describe("BuildExecutionInstructions", func() {
 	var (
 		ctx        context.Context
@@ -55,6 +58,9 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				claudelib.ClaudeConfigDir(tmpDir),
 				"standard",
 				"main",
+				true,
+				sampleFindings,
+				"",
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instructions).To(HaveLen(2))
@@ -72,32 +78,61 @@ var _ = Describe("BuildExecutionInstructions", func() {
 		})
 	})
 
-	Describe("container-path steer (selector-mode allowlist)", func() {
-		It(
-			"steers the model to the literal runner + guide path, not the $RUNNER/$GUIDE shell var",
-			func() {
-				writePlugin(fakePlugin)
+	Describe("funnel injected (agent ran the funnel)", func() {
+		It("injects the findings JSON and forbids re-running the runner", func() {
+			writePlugin(fakePlugin)
 
-				instructions, err := prompts.BuildExecutionInstructions(
-					ctx,
-					claudelib.ClaudeConfigDir(tmpDir),
-					"selector",
-					"main",
-				)
-				Expect(err).NotTo(HaveOccurred())
+			instructions, err := prompts.BuildExecutionInstructions(
+				ctx,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"selector",
+				"main",
+				true,
+				sampleFindings,
+				"",
+			)
+			Expect(err).NotTo(HaveOccurred())
 
-				workflow := instructions[0].Content
-				pluginRoot := filepath.Join(tmpDir, "plugins", "marketplaces", "coding")
-				// Runner invoked by literal path so factory.executionTools can match it.
-				Expect(workflow).To(ContainSubstring(pluginRoot + "/scripts/ast-grep-runner.sh"))
-				// Guide read by literal path (Read tool), probe skipped.
-				Expect(workflow).To(ContainSubstring(pluginRoot + "/docs/selector-mode-guide.md"))
-				// Steer lands before the inlined procedure body.
-				Expect(workflow).To(ContainSubstring("Container tool paths"))
-				Expect(strings.Index(workflow, "Container tool paths")).
-					To(BeNumerically("<", strings.Index(workflow, "Procedure body line 1.")))
-			},
-		)
+			workflow := instructions[0].Content
+			pluginRoot := filepath.Join(tmpDir, "plugins", "marketplaces", "coding")
+			// Authoritative funnel JSON is embedded for the model to consume.
+			Expect(workflow).To(ContainSubstring("ALREADY RUN"))
+			Expect(workflow).To(ContainSubstring("go-errors/no-fmt-errorf"))
+			// Guide read by literal path (Read tool), probe skipped.
+			Expect(workflow).To(ContainSubstring(pluginRoot + "/docs/selector-mode-guide.md"))
+			// The model must NOT be told to run the runner or redirect to a temp file
+			// (the old prescribed form the allowlist could never match).
+			Expect(workflow).NotTo(ContainSubstring("> /tmp/pr-review-findings.json"))
+			Expect(workflow).NotTo(ContainSubstring("run exactly"))
+			// Steer lands before the inlined procedure body.
+			Expect(strings.Index(workflow, "Pre-computed mechanical funnel")).
+				To(BeNumerically("<", strings.Index(workflow, "Procedure body line 1.")))
+		})
+	})
+
+	Describe("funnel failed (agent could not run the funnel)", func() {
+		It("injects a fail-closed status and forbids a silent approve", func() {
+			writePlugin(fakePlugin)
+
+			instructions, err := prompts.BuildExecutionInstructions(
+				ctx,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"selector",
+				"main",
+				false,
+				"",
+				"ast-grep runner script not found",
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			workflow := instructions[0].Content
+			Expect(workflow).To(ContainSubstring("COULD NOT RUN"))
+			Expect(workflow).To(ContainSubstring("ast-grep runner script not found"))
+			Expect(workflow).To(ContainSubstring("request-changes"))
+			Expect(workflow).To(ContainSubstring("UNAVAILABLE"))
+			// No stale findings block when the funnel did not run.
+			Expect(workflow).NotTo(ContainSubstring("ALREADY RUN"))
+		})
 	})
 
 	Describe("frontmatter stripping", func() {
@@ -109,6 +144,9 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				claudelib.ClaudeConfigDir(tmpDir),
 				"standard",
 				"main",
+				true,
+				"{}",
+				"",
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -130,6 +168,9 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				claudelib.ClaudeConfigDir(tmpDir),
 				"standard",
 				"main",
+				true,
+				"{}",
+				"",
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -146,6 +187,9 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				claudelib.ClaudeConfigDir(tmpDir),
 				"standard",
 				"main",
+				true,
+				"{}",
+				"",
 			)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("read plugin command file"))
@@ -158,6 +202,9 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				ctx,
 				claudelib.ClaudeConfigDir(tmpDir),
 				"standard",
+				"",
+				true,
+				"{}",
 				"",
 			)
 			Expect(err).To(HaveOccurred())
@@ -172,6 +219,9 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				claudelib.ClaudeConfigDir(tmpDir),
 				"",
 				"main",
+				true,
+				"{}",
+				"",
 			)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("reviewMode"))

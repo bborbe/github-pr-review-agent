@@ -21,12 +21,8 @@ import (
 )
 
 var _ = Describe("Factory", func() {
-	Describe("ExecutionToolsFor", func() {
-		var tools claudelib.AllowedTools
-
-		BeforeEach(func() {
-			tools = factory.ExecutionToolsFor("/home/claude/.claude")
-		})
+	Describe("ExecutionTools", func() {
+		tools := factory.ExecutionTools
 
 		It("grants selector-mode in-session review tools", func() {
 			Expect(tools).To(ContainElement("Read"))
@@ -37,17 +33,10 @@ var _ = Describe("Factory", func() {
 			Expect(tools).To(ContainElement("Bash(jq:*)"))
 		})
 
-		It("pins the ast-grep runner to the config-dir-relative literal path", func() {
-			Expect(tools).To(ContainElement(
-				"Bash(/home/claude/.claude/plugins/marketplaces/coding/scripts/ast-grep-runner.sh:*)",
-			))
-		})
-
-		It("derives the runner path from the given config dir", func() {
-			local := factory.ExecutionToolsFor("/tmp/x/.claude")
-			Expect(local).To(ContainElement(
-				"Bash(/tmp/x/.claude/plugins/marketplaces/coding/scripts/ast-grep-runner.sh:*)",
-			))
+		It("does NOT grant the ast-grep runner — the agent runs the funnel itself", func() {
+			for _, tool := range tools {
+				Expect(tool).NotTo(ContainSubstring("ast-grep-runner.sh"))
+			}
 		})
 
 		It("keeps the anti-injection boundary — no write or network tools", func() {

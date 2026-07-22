@@ -9,7 +9,8 @@ package factory
 // the bborbe/coding plugin into CLAUDE_CONFIG_DIR — heavy + flaky in tests).
 var DeliverStartupFailure = deliverStartupFailure
 
-// ExecutionToolsFor exposes the package-private execution-phase allowlist
-// builder so tests can assert the selector-mode tool scope + anti-injection
-// boundary.
-var ExecutionToolsFor = executionToolsFor
+// ExecutionTools exposes the package-private execution-phase allowlist so
+// tests can assert the selector-mode tool scope, the anti-injection boundary,
+// and that the ast-grep runner is NOT granted (the agent runs the funnel
+// itself in Go — see pkg.FunnelRunner).
+var ExecutionTools = executionTools
