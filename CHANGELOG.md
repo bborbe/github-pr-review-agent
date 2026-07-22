@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: install `python3` and `jq` in the Dockerfile alpine stage so the ast-grep mechanical funnel (`scripts/ast-grep-runner.sh`, Step 4a of `/coding:pr-review`) can run. The image shipped `ast-grep` but neither `python3` (the runner shells `python3 -c` for millisecond timestamps at lines 82/254, unconditionally under `set -euo pipefail`) nor `jq` (used throughout for JSON assembly) — so the runner died at line 82 with `python3: command not found` (exit 127) before any scan, silently skipping the entire MUST-tier mechanical rule pass on every review while judgment-tier coverage still completed. Reproduced end-to-end in an alpine:3.23 container mirroring the image packages: current state → exit 127, zero findings; `+python3 +jq` → exit 0, 66 YAMLs run, real MUST findings, `errors: []`. Surfaced on octopus dev during v0.3.2 selector-allowlist verification (`Seibert-Data/test-dev#1`).
+
 ## v0.3.2
 
 - fix: restore real reviews under selector mode. The `/coding:pr-review` default dispatcher switched to selector mode (in-session classify+adjudicate, zero sub-agent spawns) in coding v0.22.0; the execution-phase `--allowedTools` allowlist (`factory.executionTools`) still assumed the old per-owner-dispatch model (`Task` + git only), so the review could not `Read` files, run the ast-grep mechanical funnel, or shell `jq`/`git rev-parse` — and the non-interactive container stalled, posting "I need your approval to proceed" as the review with a false `CHANGES_REQUESTED`. Expand `executionTools` with `Read`/`Grep`/`Glob`, `Bash(git rev-parse:*)`, `Bash(command -v:*)`, `Bash(jq:*)`, and the ast-grep runner's literal container path — all read-only, no network tools, so the anti-injection boundary holds. The assembled execution header now steers the model to invoke the runner/guide by literal path instead of the plugin's `$RUNNER`/`$GUIDE` shell variable (which an allowlist entry cannot match).
