@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.4
 
 - fix: extract the verdict JSON by ```json fence boundaries instead of byte-level brace matching. `findLastJSONVerdictBlock` walked braces without string-awareness, so a stray brace or unescaped quote inside a JSON string *value* — common when the review prose describes parser code — mis-extracted the block, failed `json.Unmarshal`, and fail-closed an `approve` verdict to `request-changes` → GitHub state `CHANGES_REQUESTED` → blocked auto-merge and forced admin overrides. Observed on bborbe/github-update-go-agent#5 (valid JSON, a lone `'}'` in a string fooled the brace walker into grabbing prose) and #3 (unescaped inner `"` made the fenced block invalid JSON). New `findFencedJSONVerdictBlock` extracts the last ```json fenced block containing a `verdict` field (fence-delimited → immune to braces/quotes in string values); the brace walk survives only as a fallback for bare, unfenced JSON. When a fenced block is still invalid JSON, `recoverFencedVerdict` reads the literal `verdict` field verbatim — it can surface only the value the model actually wrote, never invent one, so it cannot flip a genuine `request-changes` to `approve`. Regression fixtures are the real #3/#5/#6 review bodies captured from the GitHub API (`pkg/testdata/`). The counter-example #6 (Dockerfile review, no braces/quotes in string values) already worked and stays `approve`.
 
