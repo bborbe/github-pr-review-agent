@@ -245,6 +245,12 @@ func ParseVerdict(reviewText string) Result {
 	}
 }
 
+// ReasonFunnelDidNotRun is the fail-closed Result.Reason set when the Go-side
+// mechanical funnel could not run and the model nonetheless produced `approve`.
+// The verdict is overridden to request-changes so an unverified MUST-tier pass
+// never posts as a clean approve. Recognized by isFailClosedReason for logging.
+const ReasonFunnelDidNotRun = "mechanical funnel did not run"
+
 // isFailClosedReason reports whether a request-changes Result.Reason came from
 // ParseVerdict fail-closing (empty / unparseable / no-verdict-block / unknown
 // verdict) rather than from a model-authored reason on a genuine request-changes
@@ -256,6 +262,7 @@ func ParseVerdict(reviewText string) Result {
 func isFailClosedReason(reason string) bool {
 	return reason == "empty review text" ||
 		reason == "no verdict block" ||
+		reason == ReasonFunnelDidNotRun ||
 		strings.HasPrefix(reason, "malformed JSON:") ||
 		strings.HasPrefix(reason, "unknown verdict:")
 }
