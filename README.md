@@ -31,7 +31,7 @@ former `bborbe/maintainer` monorepo (`agent/pr-reviewer`).
 
 ```bash
 go run ./cmd/run-task --task-file=/path/to/task.md --phase=execution --skip-post
-go run ./cmd/cli https://github.com/owner/repo/pull/42 --comment-only
+go run ./cmd/cli --comment-only https://github.com/owner/repo/pull/42
 ```
 
 ## Configuration
