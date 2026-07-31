@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - fix: bump `github.com/klauspost/compress` v1.18.6 → v1.18.7 (GO-2026-5841, out-of-bounds read in `compress/s2`). `make vulncheck` failed on master, which blocked the dark-factory preflight baseline.
+- feat: add `--skip-post` flag to `cmd/run-task` that suppresses all GitHub write calls, allowing safe local review runs against third-party PRs. Findings are still written to the task file. Also adds the required nil-poster guard in `pkg/steps_review.go`'s `tryDismissHallucinated` and corrects mis-attributed CLI documentation in `CLAUDE.md`, `README.md`, and `docs/pr-post-back.md`.
 
 ## v0.3.6
 

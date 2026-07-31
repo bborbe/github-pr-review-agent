@@ -10,6 +10,7 @@ import (
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/errors"
+	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
 	"github.com/bborbe/github-pr-review-agent/pkg/githubauth"
 	libtime "github.com/bborbe/time"
@@ -53,6 +54,22 @@ type RunConfig struct {
 	Agent *agentlib.Agent
 	// CurrentDateTime is the time source injected into step structs and poster/verifier.
 	CurrentDateTime libtime.CurrentDateTimeGetter
+	// SkipPost suppresses all GitHub write calls. Intended for local runs against
+	// repositories the operator does not own; review findings are still written
+	// to the task file.
+	SkipPost bool
+}
+
+// resolvePosters returns nil interfaces when cfg.SkipPost is true, otherwise
+// the result of CreatePrPoster and CreateReviewVerifier. Wiring selection only;
+// no I/O is performed in this helper.
+func resolvePosters(cfg RunConfig, botLogin string) (prpkg.PrPoster, prpkg.ReviewVerifier) {
+	if cfg.SkipPost {
+		return nil, nil
+	}
+	poster := CreatePrPoster(cfg.GHToken, botLogin, cfg.CurrentDateTime)
+	verifier := CreateReviewVerifier(cfg.GHToken, botLogin, cfg.CurrentDateTime)
+	return poster, verifier
 }
 
 // RunAgent performs the shared startup + execution flow for the maintainer-agent-pr-reviewer binary.
@@ -116,8 +133,7 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 	agent := cfg.Agent
 	if agent == nil {
 		botLogin := ResolveBotLogin(env)
-		poster := CreatePrPoster(cfg.GHToken, botLogin, cfg.CurrentDateTime)
-		verifier := CreateReviewVerifier(cfg.GHToken, botLogin, cfg.CurrentDateTime)
+		poster, verifier := resolvePosters(cfg, botLogin)
 		agent = CreateAgent(
 			cfg.ClaudeConfigDir,
 			cfg.AgentDir,

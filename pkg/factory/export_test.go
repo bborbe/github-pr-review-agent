@@ -14,3 +14,6 @@ var DeliverStartupFailure = deliverStartupFailure
 // and that the ast-grep runner is NOT granted (the agent runs the funnel
 // itself in Go — see pkg.FunnelRunner).
 var ExecutionTools = executionTools
+
+// ResolvePosters exposes the package-private resolvePosters helper for unit testing.
+var ResolvePosters = resolvePosters

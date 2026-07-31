@@ -11,9 +11,42 @@ import (
 	agentlib "github.com/bborbe/agent"
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	"github.com/bborbe/github-pr-review-agent/pkg/factory"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+var _ = Describe("ResolvePosters", func() {
+	var (
+		botLogin string
+	)
+
+	BeforeEach(func() {
+		botLogin = "ben-s-pull-request-reviewer[bot]"
+	})
+
+	Describe("SkipPost: true", func() {
+		It("returns nil interfaces", func() {
+			cfg := factory.RunConfig{SkipPost: true}
+			poster, verifier := factory.ResolvePosters(cfg, botLogin)
+			Expect(poster).To(BeNil())
+			Expect(verifier).To(BeNil())
+		})
+	})
+
+	Describe("SkipPost: false", func() {
+		It("returns non-nil interfaces", func() {
+			cfg := factory.RunConfig{
+				SkipPost:        false,
+				GHToken:         "ghp_testtoken",
+				CurrentDateTime: libtime.NewCurrentDateTime(),
+			}
+			poster, verifier := factory.ResolvePosters(cfg, botLogin)
+			Expect(poster).NotTo(BeNil())
+			Expect(verifier).NotTo(BeNil())
+		})
+	})
+})
 
 var _ = Describe("DeliverStartupFailure", func() {
 	var (

@@ -72,6 +72,9 @@ type application struct {
 	// Repo allowlist — comma-separated host/owner/repo entries; empty means allow-all.
 	RepoAllowlist string `required:"false" arg:"repo-allowlist" env:"REPO_ALLOWLIST" usage:"Comma-separated host-qualified repo allowlist (host/owner/repo); empty means allow-all"`
 
+	// SkipPost suppresses all GitHub write calls; review is written to the task file only.
+	SkipPost bool `required:"false" arg:"skip-post" env:"SKIP_POST" usage:"Suppress all GitHub write calls; review is written to the task file only" default:"false"`
+
 	// Anthropic-compatible provider routing. Setting AnthropicBaseURL + AnthropicAuthToken
 	// routes the claude CLI to an alt-provider (e.g. MiniMax via https://api.minimax.io/anthropic).
 	// AnthropicModel drives both the `--model` CLI flag and the ANTHROPIC_MODEL env var seen by
@@ -140,6 +143,9 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		"pr-reviewer auth mode=github-app app_id=%d installation_id=%d",
 		a.AppID, a.InstallationID,
 	)
+	if a.SkipPost {
+		glog.V(2).Infof("pr-reviewer skip-post enabled — GitHub writes suppressed")
+	}
 
 	authSetup := githubauth.NewNoopAuthSetup()
 	result, err := factory.RunAgent(ctx, factory.RunConfig{
@@ -162,6 +168,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		TaskContent:                 string(taskContent),
 		Deliverer:                   deliverer,
 		BotLogin:                    a.BotLogin,
+		SkipPost:                    a.SkipPost,
 	})
 	if err != nil {
 		return errors.Wrap(ctx, err, "agent run failed")

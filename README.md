@@ -26,11 +26,12 @@ former `bborbe/maintainer` monorepo (`agent/pr-reviewer`).
 | Mode | Entry | Use |
 |---|---|---|
 | Kubernetes Job | `main.go` (`/main` in the image) | Env-driven; spawned by the agent-task-executor from a Kafka task. This is how it runs in production. |
-| Local CLI | `cmd/run-task` | Takes a PR URL as a positional arg; flag-based config. For local runs / debugging. |
+| Local CLI | `cmd/run-task` | Reads a task file (`--task-file`), runs `--phase`, writes result back to the same file. `--skip-post` suppresses GitHub writes. |
+| Local review | `cmd/cli` | Takes a PR URL positional arg; `--comment-only` posts a COMMENT without auto-approve gate. For local runs / debugging. |
 
 ```bash
-go run ./cmd/run-task https://github.com/owner/repo/pull/42
-go run ./cmd/run-task -v --comment-only https://github.com/owner/repo/pull/42
+go run ./cmd/run-task --task-file=/path/to/task.md --phase=execution --skip-post
+go run ./cmd/cli https://github.com/owner/repo/pull/42 --comment-only
 ```
 
 ## Configuration
@@ -73,8 +74,8 @@ Permanent test fixture (trivial diff). Use it for any local or k8s smoke test.
 .                    lib imported from github.com/bborbe/maintainer
 ├── main.go          Kubernetes Job entry (env-driven; /main in the image)
 ├── cmd/
-│   ├── run-task/    local CLI (PR URL as positional arg)
-│   ├── cli/         supporting CLI
+│   ├── run-task/    local CLI (task-file driven, --skip-post available)
+│   ├── cli/         PR URL driven local review CLI
 │   └── mint-iat/    GitHub App installation-token smoke tool
 ├── pkg/             URL parse, config, git clone, GitHub/Bitbucket clients,
 │                    App auth, review runner, verdict parser, posters

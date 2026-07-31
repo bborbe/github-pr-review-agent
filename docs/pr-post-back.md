@@ -125,7 +125,7 @@ reason: <meta-verdict reason>
 
 ## nil Poster — Local / Backward-Compatible Mode
 
-`prPoster` is `nil` when using `cmd/run-task` (local test runner). A nil poster skips the entire posting flow and advances directly to `ai_review` without writing any diagnostic. This preserves backward compatibility with the local CLI mode.
+`prPoster` is `nil` when `--skip-post` is set on `cmd/run-task`. A nil poster skips the entire posting flow and advances directly to `ai_review` without writing any diagnostic. This preserves backward compatibility with the local CLI mode.
 
 ## Dismissal Contract
 
