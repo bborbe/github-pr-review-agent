@@ -84,8 +84,8 @@ Follows the [coding-guidelines](https://github.com/bborbe/coding-guidelines). Go
 Standalone binary; the shared lib is imported from `github.com/bborbe/maintainer` (Helm chart + deploy model live there). Tasks are produced by `github-pr-watcher` and dispatched by the agent-task-executor.
 
 - `main.go` — Kubernetes Job entry (env-driven; `/main` in the image). Production path, Kafka/CQRS.
-- `cmd/run-task/` — local CLI entry, takes a PR URL positional arg (`-v`, `--comment-only`).
-- `cmd/cli/`, `cmd/mint-iat/` — auxiliary local tools (mint-iat = GitHub App installation token).
+- `cmd/run-task/` — local CLI entry, reads a task file (`--task-file`), runs a given `--phase`, and writes the result back to the same file. Use `--skip-post` to suppress GitHub writes for local runs against third-party PRs.
+- `cmd/cli/` — auxiliary local tool, takes a PR URL positional arg and optional `--comment-only` flag for local review runs. `cmd/mint-iat/` — GitHub App installation-token smoke tool.
 - `pkg/steps_planning.go` — parse PR URL → platform/owner/repo/number, fetch PR metadata.
 - `pkg/steps_checkout_execution.go` — clone at PR head into scratch, run the `/pr-review` container.
 - `pkg/steps_review.go` — parse the JSON verdict from review output.

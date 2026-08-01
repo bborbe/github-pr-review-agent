@@ -312,7 +312,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 	jobRunTime time.Time,
 	funnelRan bool,
 ) (*agentlib.Result, error) {
-	// nil poster = skip posting (backward-compatible for cmd/run-task).
+	// nil poster = skip posting (cmd/run-task with --skip-post).
 	if s.prPoster == nil {
 		return &agentlib.Result{
 			Status:    agentlib.AgentStatusDone,

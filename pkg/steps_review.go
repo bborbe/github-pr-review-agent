@@ -33,7 +33,7 @@ type verdictPayload struct {
 // pass → done, fail (or unparseable) → human_review.
 type reviewStep struct {
 	runner       claudelib.ClaudeRunner
-	poster       PrPoster
+	poster       PrPoster // nil = skip posting
 	instructions claudelib.Instructions
 	verifier     ReviewVerifier // nil = skip verification
 	ghToken      string
@@ -275,6 +275,10 @@ func (s *reviewStep) tryDismissHallucinated(
 	md *agentlib.Markdown,
 	hallucinations []Hallucination,
 ) {
+	if s.poster == nil {
+		glog.V(2).Infof("ai_review dismiss: poster is nil — skipping")
+		return
+	}
 	prURLStr := githubPRURLPattern.FindString(md.Preamble)
 	if prURLStr == "" {
 		glog.V(2).Infof("ai_review dismiss: no GitHub PR URL — skipping")

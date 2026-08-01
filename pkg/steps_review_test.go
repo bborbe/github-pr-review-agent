@@ -611,6 +611,25 @@ var _ = Describe("dismiss-and-comment routing", func() {
 		})
 	})
 
+	Describe(
+		"case (j): nil poster + verdict=fail with hallucinations → routes to human_review without panic",
+		func() {
+			It("does not call DismissCurrentReview and routes to human_review", func() {
+				verdictJSON := `{"verdict":"fail","reason":"hallucinated","hallucinations":[{"file":"x.go","line":1,"issue":"nothere"}]}`
+				runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
+				// nil poster — SkipPost mode
+				step = pkg.NewReviewStep(runner, nil, instructions, nil, "", botLogin)
+				md, err := agentlib.ParseMarkdown(ctx,
+					"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content")
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := step.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("human_review"))
+			})
+		},
+	)
+
 	// Note: the "regex matches but ParsePRURL fails" branch in tryDismissHallucinated
 	// is defensive — any string that matches githubPRURLPattern
 	// (`https://github\.com/[^/\s]+/[^/\s]+/pull/\d+`) is by construction parseable

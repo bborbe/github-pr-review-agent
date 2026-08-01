@@ -121,11 +121,11 @@ reason: <meta-verdict reason>
 
 **Non-GitHub platforms:** If the PR URL resolves to a non-GitHub platform, the LGTM path skips posting and returns `done` immediately. No `human_review` escalation for platform mismatches.
 
-**nil poster (cmd/run-task):** When `prPoster` is nil (local CLI mode), the LGTM path skips posting and returns `done` without writing `## Verdict` or `## Diagnostics`. This preserves backward compatibility with the local test runner.
+**nil poster:** When `prPoster` is nil, the LGTM path skips posting and returns `done` without writing `## Verdict` or `## Diagnostics`. (Note: `PostLGTM` itself is deprecated and has no non-test callers.)
 
 ## nil Poster — Local / Backward-Compatible Mode
 
-`prPoster` is `nil` when using `cmd/run-task` (local test runner). A nil poster skips the entire posting flow and advances directly to `ai_review` without writing any diagnostic. This preserves backward compatibility with the local CLI mode.
+`prPoster` is `nil` when `--skip-post` is set on `cmd/run-task`. A nil poster skips the entire posting flow and advances directly to `ai_review` without writing any diagnostic. This preserves backward compatibility with the local CLI mode.
 
 ## Dismissal Contract
 
