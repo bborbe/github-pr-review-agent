@@ -12,7 +12,7 @@ package pkg_test
 // run would either re-enable GitHub posting or issue a live API read --
 // neither of which the flag is supposed to allow.
 //
-// The two functions under test (resolvePosters -> ResolvePosters) live in
+// The function under test (ResolvePosters) lives in
 // pkg/factory; all three consumers live in pkg.  Because the seam is
 // cross-package, pkg_test imports both pkg and pkg/factory and drives the
 // helper's return values through the real consumer functions.
@@ -50,10 +50,10 @@ var _ = Describe("skip-post nil contract", func() {
 				ctx,
 				poster,
 				md,
-				"",     // prURLStr -- not read when poster is nil
-				"",     // worktreePath -- not read when poster is nil
+				"",          // prURLStr -- not read when poster is nil
+				"",          // worktreePath -- not read when poster is nil
 				time.Time{}, // jobRunTime -- not read when poster is nil
-				false,  // funnelRan -- not read when poster is nil
+				false,       // funnelRan -- not read when poster is nil
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
@@ -78,9 +78,19 @@ var _ = Describe("skip-post nil contract", func() {
 				nil,
 			)
 
-			step := pkg.NewReviewStep(fakeRunner, poster, claudelib.Instructions{}, nil, "", botLogin)
+			step := pkg.NewReviewStep(
+				fakeRunner,
+				poster,
+				claudelib.Instructions{},
+				nil,
+				"",
+				botLogin,
+			)
 
-			md, err := agentlib.ParseMarkdown(ctx, "---\nref: abc123\n---\nReview the PR at https://github.com/bborbe/maintainer/pull/2\n\nsome content")
+			md, err := agentlib.ParseMarkdown(
+				ctx,
+				"---\nref: abc123\n---\nReview the PR at https://github.com/bborbe/maintainer/pull/2\n\nsome content",
+			)
 			Expect(err).NotTo(HaveOccurred())
 
 			result, err := step.Run(ctx, md)
@@ -115,7 +125,9 @@ var _ = Describe("skip-post nil contract", func() {
 
 			fakeRunner := &mocks.ClaudeRunnerMock{}
 			fakeRunner.RunReturns(
-				&claudelib.ClaudeResult{Result: "{\"verdict\":\"pass\",\"reason\":\"all checks pass\"}"},
+				&claudelib.ClaudeResult{
+					Result: "{\"verdict\":\"pass\",\"reason\":\"all checks pass\"}",
+				},
 				nil,
 			)
 
@@ -136,7 +148,14 @@ var _ = Describe("skip-post nil contract", func() {
 			md, err := agentlib.ParseMarkdown(ctx, content)
 			Expect(err).NotTo(HaveOccurred())
 
-			step := pkg.NewReviewStep(fakeRunner, poster, claudelib.Instructions{}, fakeVerifier, "test-token", botLogin)
+			step := pkg.NewReviewStep(
+				fakeRunner,
+				poster,
+				claudelib.Instructions{},
+				fakeVerifier,
+				"test-token",
+				botLogin,
+			)
 
 			result, err := step.Run(ctx, md)
 			Expect(err).NotTo(HaveOccurred())
@@ -144,6 +163,60 @@ var _ = Describe("skip-post nil contract", func() {
 			Expect(fakeVerifier.VerifyReviewCallCount()).To(Equal(1))
 			// pass verdict + verifier found -> done
 			Expect(result.NextPhase).To(Equal("done"))
+		})
+	})
+
+	Describe("case 4: reviewStep with suppressed verifier (nil interface from ResolvePosters)", func() {
+		// Protects against a regression where the nil concrete pointer stored
+		// inside the ReviewVerifier interface satisfies `s.verifier != nil`,
+		// reaches callVerifier, and turns a no-posting run into a live GitHub
+		// read.  Both poster and verifier are the real values returned by
+		// ResolvePosters so the interface-typed nil contract is exercised end-
+		// to-end.
+		//
+		// Same three short-circuits as case 3 are cleared so the verify guard
+		// is evaluated.  The pass verdict routes to done whether or not the
+		// verify block ran, so the negative signal is: no ai_review verify line
+		// appears in ## Diagnostics.
+		It("completes without error and does not append a verify diagnostic", func() {
+			ctx := context.Background()
+			poster, verifier := factory.ResolvePosters(factory.RunConfig{SkipPost: true}, botLogin)
+
+			fakeRunner := &mocks.ClaudeRunnerMock{}
+			fakeRunner.RunReturns(
+				&claudelib.ClaudeResult{
+					Result: "{\"verdict\":\"pass\",\"reason\":\"all checks pass\"}",
+				},
+				nil,
+			)
+
+			diagBody := "```yaml\nclass: transient\n```\n"
+			content := "---\nref: abc123\n---\n\n" +
+				"Review the PR at https://github.com/bborbe/maintainer/pull/2\n\n" +
+				"## Review\n\nsome content\n\n" +
+				"## Diagnostics\n\n" + diagBody
+			md, err := agentlib.ParseMarkdown(ctx, content)
+			Expect(err).NotTo(HaveOccurred())
+
+			step := pkg.NewReviewStep(
+				fakeRunner,
+				poster,
+				claudelib.Instructions{},
+				verifier,
+				"test-token",
+				botLogin,
+			)
+
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("done"))
+
+			// No ai_review verify line must be present — if callVerifier were
+			// reached despite the suppressed verifier, it would have appended one.
+			diagSection, exists := md.FindSection("## Diagnostics")
+			Expect(exists).To(BeTrue())
+			Expect(diagSection.Body).NotTo(ContainSubstring("ai_review verify:"))
 		})
 	})
 })
