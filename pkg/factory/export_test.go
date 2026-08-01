@@ -15,5 +15,3 @@ var DeliverStartupFailure = deliverStartupFailure
 // itself in Go — see pkg.FunnelRunner).
 var ExecutionTools = executionTools
 
-// ResolvePosters exposes the package-private resolvePosters helper for unit testing.
-var ResolvePosters = resolvePosters

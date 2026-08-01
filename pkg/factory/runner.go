@@ -60,10 +60,10 @@ type RunConfig struct {
 	SkipPost bool
 }
 
-// resolvePosters returns nil interfaces when cfg.SkipPost is true, otherwise
+// ResolvePosters returns nil interfaces when cfg.SkipPost is true, otherwise
 // the result of CreatePrPoster and CreateReviewVerifier. Wiring selection only;
 // no I/O is performed in this helper.
-func resolvePosters(cfg RunConfig, botLogin string) (prpkg.PrPoster, prpkg.ReviewVerifier) {
+func ResolvePosters(cfg RunConfig, botLogin string) (prpkg.PrPoster, prpkg.ReviewVerifier) {
 	if cfg.SkipPost {
 		return nil, nil
 	}
@@ -133,7 +133,7 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 	agent := cfg.Agent
 	if agent == nil {
 		botLogin := ResolveBotLogin(env)
-		poster, verifier := resolvePosters(cfg, botLogin)
+		poster, verifier := ResolvePosters(cfg, botLogin)
 		agent = CreateAgent(
 			cfg.ClaudeConfigDir,
 			cfg.AgentDir,
