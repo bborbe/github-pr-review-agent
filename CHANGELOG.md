@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: rebuild to pick up `bborbe/coding` v0.42.3, which gates the two `go-licensing` MUST rules on real repo visibility. The plugin is baked at image build time and frozen for the life of the tag (see `.chart-maintainer` spec 054), so a plugin fix only reaches the reviewer through a new agent image — no code change here, the rebuild *is* the delivery mechanism. Without it the bot keeps emitting `go-licensing/license-file-required` on private repos: 69 of 73 non-archived `Seibert-Data` repos carry no LICENSE by design, and one PR had to be admin-merged to get past the false positive.
+
 ## v0.4.0
 
 - fix: bump `github.com/klauspost/compress` v1.18.6 → v1.18.7 (GO-2026-5841, out-of-bounds read in `compress/s2`). `make vulncheck` failed on master, which blocked the dark-factory preflight baseline.
