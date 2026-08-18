@@ -24,7 +24,9 @@ const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 	"`<target-branch>` and a mode argument. Those arguments have already been\n" +
 	"resolved for this run — do NOT prompt for them, do NOT re-derive them:\n\n" +
 	"- **TARGET_BRANCH**: %s\n" +
-	"- **mode**: %s\n\n" +
+	"- **mode**: %s\n" +
+	"- **Working directory**: your cwd is already the cloned worktree at the PR head — " +
+	"run plain `git` from it, never `git -C <path>`; `git -C` is not needed.\n\n" +
 	"Now follow the procedure below as if the slash command had been invoked with\n" +
 	"those arguments. The procedure references sub-agents via the `Task` tool;\n" +
 	"dispatch them as written.\n\n" +

@@ -78,6 +78,30 @@ var _ = Describe("BuildExecutionInstructions", func() {
 		})
 	})
 
+	Describe("worktree cwd guidance", func() {
+		It(
+			"tells the model its cwd is the worktree and to use plain git, never `git -C <path>`",
+			func() {
+				writePlugin(fakePlugin)
+
+				instructions, err := prompts.BuildExecutionInstructions(
+					ctx,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"standard",
+					"main",
+					true,
+					sampleFindings,
+					"",
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				workflow := instructions[0].Content
+				Expect(workflow).To(ContainSubstring("Working directory"))
+				Expect(workflow).To(ContainSubstring("never `git -C <path>`"))
+			},
+		)
+	})
+
 	Describe("funnel injected (agent ran the funnel)", func() {
 		It("injects the findings JSON and forbids re-running the runner", func() {
 			writePlugin(fakePlugin)
