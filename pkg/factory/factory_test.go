@@ -7,6 +7,8 @@ package factory_test
 import (
 	"context"
 	"reflect"
+	"regexp"
+	"strings"
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
@@ -48,6 +50,84 @@ var _ = Describe("Factory", func() {
 				Expect(tool).NotTo(ContainSubstring("Bash(bash:"))
 			}
 		})
+
+		It(
+			"permits read-only `git -C <workdir>` forms and keeps the write/network boundary",
+			func() {
+				const workdir = "/work/32d9ce02-d843-5ed5-9104-552c3ac37aa7"
+				const sha = "3762333d68eed6fba2fc5208ec8bbac407532108"
+				const bareDiff = "git diff " + sha + "...HEAD -- file.go"
+				readOnly := []string{
+					// with-args forms — matched by the scoped Bash(git -C * <subcmd> *) entries
+					"git -C " + workdir + " diff " + sha +
+						"...HEAD -- export/append/pkg/message-handler-event.go",
+					"git -C " + workdir + " log --oneline -5",
+					"git -C " + workdir + " show --stat",
+					"git -C " + workdir + " status --short",
+					"git -C " + workdir + " ls-files --others",
+					"git -C " + workdir + " fetch origin main",
+					"git -C " + workdir + " worktree list",
+					"git -C " + workdir + " branch -a",
+					"git -C " + workdir + " rev-parse --abbrev-ref HEAD",
+					// no-arg forms — matched by the bare Bash(git -C * <subcmd>) entries
+					"git -C " + workdir + " status",
+					"git -C " + workdir + " branch",
+				}
+				denied := []string{
+					// write/network boundary — no scoped -C entry exists for these subcommands
+					"git -C " + workdir + " push origin main",
+					"git -C " + workdir + " clean -fd",
+					"git -C " + workdir + " checkout -b feature",
+					"git -C " + workdir + " reset --hard",
+					"git -C " + workdir + " merge main",
+				}
+				for _, command := range readOnly {
+					Expect(allowedBy(factory.ExecutionTools, "Bash", command)).To(BeTrue())
+				}
+				Expect(allowedBy(factory.ExecutionTools, "Bash", bareDiff)).To(BeTrue())
+				for _, command := range denied {
+					Expect(allowedBy(factory.ExecutionTools, "Bash", command)).To(BeFalse())
+				}
+
+				// Each scoped -C entry is present; the bare catch-all must not exist.
+				for _, entry := range []string{
+					"Bash(git -C * diff *)",
+					"Bash(git -C * log *)",
+					"Bash(git -C * show *)",
+					"Bash(git -C * status *)",
+					"Bash(git -C * ls-files *)",
+					"Bash(git -C * fetch *)",
+					"Bash(git -C * worktree *)",
+					"Bash(git -C * branch *)",
+					"Bash(git -C * rev-parse *)",
+					"Bash(git -C * diff)",
+					"Bash(git -C * log)",
+					"Bash(git -C * show)",
+					"Bash(git -C * status)",
+					"Bash(git -C * ls-files)",
+					"Bash(git -C * fetch)",
+					"Bash(git -C * worktree)",
+					"Bash(git -C * branch)",
+					"Bash(git -C * rev-parse)",
+				} {
+					Expect(factory.ExecutionTools).To(ContainElement(entry))
+				}
+				Expect(factory.ExecutionTools).NotTo(ContainElement("Bash(git -C:*)"))
+
+				// Regression lock: without the scoped -C entries the -C read-only
+				// forms flip to denied while the bare git diff form stays allowed.
+				var baseline claudelib.AllowedTools
+				for _, entry := range factory.ExecutionTools {
+					if !strings.Contains(entry, "git -C") {
+						baseline = append(baseline, entry)
+					}
+				}
+				for _, command := range readOnly {
+					Expect(allowedBy(baseline, "Bash", command)).To(BeFalse())
+				}
+				Expect(allowedBy(baseline, "Bash", bareDiff)).To(BeTrue())
+			},
+		)
 	})
 
 	Describe("CreateClaudeRunner", func() {
@@ -275,3 +355,44 @@ var _ = Describe("Factory", func() {
 		})
 	})
 })
+
+// allowedBy reports whether command would be permitted for toolName by the
+// given Claude-Code --allowedTools entries. It models the CLI's semantics for
+// the three forms this suite uses: "Tool" (bare tool grant), "Tool(prefix:*)"
+// (literal command prefix), and "Tool(pattern)" (glob where * matches any
+// characters, including spaces). Test-only — the real matcher lives inside the
+// Claude CLI, which a unit test cannot invoke.
+func allowedBy(tools claudelib.AllowedTools, toolName, command string) bool {
+	for _, entry := range tools {
+		if entry == toolName {
+			return true
+		}
+		if !strings.HasPrefix(entry, toolName+"(") || !strings.HasSuffix(entry, ")") {
+			continue
+		}
+		pattern := strings.TrimSuffix(strings.TrimPrefix(entry, toolName+"("), ")")
+		if rest, ok := strings.CutSuffix(pattern, ":*"); ok {
+			if strings.HasPrefix(command, rest) {
+				return true
+			}
+			continue
+		}
+		re := regexp.MustCompile("^" + globToRegexp(pattern) + "$")
+		if re.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+// globToRegexp converts a Claude-Code tool pattern to an anchored regexp body,
+// treating '*' as zero-or-more of any character and every other byte as
+// literal.
+func globToRegexp(pattern string) string {
+	var b strings.Builder
+	for _, part := range strings.Split(pattern, "*") {
+		b.WriteString(regexp.QuoteMeta(part))
+		b.WriteString(".*")
+	}
+	return strings.TrimSuffix(b.String(), ".*")
+}
