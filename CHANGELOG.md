@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update dependencies
+
 ## v0.4.3
 
 - fix: allow read-only `git -C <workdir>` forms (`diff`, `log`, `show`, `status`, `ls-files`, `fetch`, `worktree`, `branch`, `rev-parse`) in the execution-phase allowlist (`pkg/factory`) so reviews that target the worktree with `-C` no longer die on `permission_denied`, and steer the execution prompt (`pkg/prompts`) to run plain `git` from the worktree cwd
