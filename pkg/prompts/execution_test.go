@@ -122,6 +122,14 @@ var _ = Describe("BuildExecutionInstructions", func() {
 			// Authoritative funnel JSON is embedded for the model to consume.
 			Expect(workflow).To(ContainSubstring("ALREADY RUN"))
 			Expect(workflow).To(ContainSubstring("go-errors/no-fmt-errorf"))
+			// The funnel is over-inclusive by design: the model must verify each
+			// finding against the actual file before reporting it, and must NOT be
+			// told to treat findings as pre-confirmed (regression guard for the
+			// github-pr-reviewer false-positive incident, 2026-08-19).
+			Expect(workflow).To(ContainSubstring("OVER-INCLUSIVE"))
+			Expect(workflow).To(ContainSubstring("VERIFY EACH FINDING"))
+			Expect(workflow).NotTo(ContainSubstring("confirmed MUST-tier"))
+			Expect(workflow).NotTo(ContainSubstring("do NOT re-derive, re-run, or second-guess"))
 			// Guide read by literal path (Read tool), probe skipped.
 			Expect(workflow).To(ContainSubstring(pluginRoot + "/docs/selector-mode-guide.md"))
 			// The model must NOT be told to run the runner or redirect to a temp file

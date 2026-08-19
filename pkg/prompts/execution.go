@@ -39,16 +39,33 @@ const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 // on it — a weak model wraps the invocation in forms the allowlist can't match
 // (`> redirect`, `bash -c`, `$RUNNER`), gets denied, and silently drops the
 // mechanical MUST-tier pass. So the agent runs the funnel in Go and injects its
-// authoritative JSON here; the model must consume it, not re-run the runner.
+// JSON here; the model must consume it, not re-run the runner.
+//
+// IMPORTANT (2026-08-19, github-pr-reviewer false-positive incident): the
+// funnel output is deliberately OVER-INCLUSIVE — several rules (main-test-with-
+// compiles, secret-fields-need-display-length, slog-not-glog-in-new-projects,
+// external-call-logs-response, counterfeiter-directive-on-interface) fire on
+// every candidate and rely on the adjudicator to confirm the actual condition
+// (file exists, tag present, directive present, project age). Earlier wording
+// ("treat every finding as a confirmed MUST-tier finding, do NOT second-guess")
+// suppressed that adjudication and caused present code to be re-reported as
+// missing every round. The model MUST verify each finding against the actual
+// file content in the worktree before reporting it; findings it cannot confirm
+// are dropped, not escalated.
 // %[1]s = plugin root, %[2]s = funnel findings JSON.
 const funnelInjectSteerTemplate = "## Pre-computed mechanical funnel + tool paths (non-interactive run)\n\n" +
 	"This review runs headless under a fixed tool allowlist. Two things are handled for you:\n\n" +
 	"1. **Mechanical funnel (Step 4a) — ALREADY RUN.** The agent executed the ast-grep " +
-	"mechanical funnel over this PR's changed files before invoking you; its authoritative " +
-	"JSON output is below. Do NOT run `ast-grep-runner.sh` yourself — it is not on the " +
-	"allowlist and the call will be denied. Treat every finding below as a confirmed " +
-	"MUST-tier mechanical finding and fold it into your report at the mapped severity; do " +
-	"NOT re-derive, re-run, or second-guess them.\n\n" +
+	"mechanical funnel over this PR's changed files before invoking you; its JSON output " +
+	"is below. Do NOT run `ast-grep-runner.sh` yourself — it is not on the allowlist and " +
+	"the call will be denied. The funnel is intentionally OVER-INCLUSIVE: it flags every " +
+	"candidate so nothing is missed, and the ast-grep relation layer cannot see comment " +
+	"blocks above an interface or whether a companion file exists. VERIFY EACH FINDING " +
+	"against the actual file in the checked-out worktree (you have read access) before " +
+	"reporting it: confirm the flagged code really is present and the claimed condition " +
+	"really is missing (directive absent, main_test.go absent, display:length tag absent, " +
+	"log line absent, project genuinely new). Report ONLY findings you have confirmed; " +
+	"drop any finding the real file refutes. Never escalate a finding you did not verify.\n\n" +
 	"```json\n%[2]s\n```\n\n" +
 	"2. **Selector-mode guide (Step 4c-sel)** is always present — skip the " +
 	"`GUIDE_OK`/`GUIDE_MISSING` probe and Read `%[1]s/docs/selector-mode-guide.md` directly.\n\n" +
