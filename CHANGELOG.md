@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.4.5
 
 - fix: require verification of funnel findings against the actual worktree file before reporting (execution-phase prompt no longer treats over-inclusive mechanical findings as pre-confirmed)
 
