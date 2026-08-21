@@ -7,7 +7,7 @@ replace (
 )
 
 require (
-	github.com/bborbe/agent v0.81.3
+	github.com/bborbe/agent v0.82.0
 	github.com/bborbe/argument/v2 v2.12.35
 	github.com/bborbe/cqrs v0.6.7
 	github.com/bborbe/errors v1.5.18

@@ -1,9 +1,17 @@
 ---
-status: approved
+status: rejected
+originalStatus: failed
 spec: [002-pr-reviewer-soft-time-budget-and-salvage]
+execution_id: github-pr-review-agent-salvage-exec-008-spec-002-salvage
+dark-factory-version: dev
 created: "2026-08-21T08:07:20Z"
 queued: "2026-08-21T10:14:18Z"
+started: "2026-08-21T11:04:09Z"
+completed: "2026-08-21T13:01:58Z"
 branch: dark-factory/pr-reviewer-soft-time-budget-and-salvage
+lastFailReason: 'setup workflow: git merge origin default branch: merge origin/master: : git merge origin/master failed: exit status 1'
+rejected: "2026-08-21T13:04:49Z"
+rejectedReason: 'Superseded: core write needs ExtractBudgetPartial from dep-bump (009) which was numbered after this prompt; idempotency lock already shipped as commit b870ccc. Rejected to unblock the dependency ordering; salvage will be re-created after 009.'
 ---
 
 # Salvage the streamed partial review into a ## Salvage task section on budget expiry

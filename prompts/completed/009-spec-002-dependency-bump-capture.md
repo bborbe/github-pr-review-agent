@@ -1,7 +1,13 @@
 ---
-status: draft
+status: completed
 spec: [002-pr-reviewer-soft-time-budget-and-salvage]
+summary: Bumped github.com/bborbe/agent to v0.82.0 (grep-verified ClaudeResult.Partial streamed-partial capture) and added pkg.ExtractBudgetPartial reading the captured partial with Ginkgo tests + CHANGELOG entry
+execution_id: github-pr-review-agent-salvage-exec-009-spec-002-dependency-bump-capture
+dark-factory-version: dev
 created: "2026-08-21T08:07:20Z"
+queued: "2026-08-21T13:01:51Z"
+started: "2026-08-21T13:43:41Z"
+completed: "2026-08-21T13:47:27Z"
 branch: dark-factory/pr-reviewer-soft-time-budget-and-salvage
 ---
 
