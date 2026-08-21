@@ -776,6 +776,152 @@ https://github.com/bborbe/maintainer/pull/14
 			_, exists = md.FindSection("## Diagnostics")
 			Expect(exists).To(BeFalse())
 		})
+
+		Context("salvage", func() {
+			// AC 5: a budget-terminated execution run with a captured streamed
+			// partial persists it under the distinct ## Salvage heading (never
+			// ## Review) and never posts — the budget path returns BEFORE
+			// postAndRoute (AC 6 never-posts).
+			It("persists the captured partial under ## Salvage and never posts", func() {
+				tmpDir, err := os.MkdirTemp("", "exec-salvage-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer func() {
+					Expect(os.RemoveAll(tmpDir)).To(Succeed())
+				}()
+
+				cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+				Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+				Expect(os.WriteFile(
+					filepath.Join(cmdDir, "pr-review.md"),
+					[]byte(
+						"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+					),
+					0600,
+				)).To(Succeed())
+
+				fakeRunner := &mocks.ClaudeRunnerMock{}
+				fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					// A killed run returns the bounded streamed partial alongside the
+					// fired-deadline error — the capture shape ExtractBudgetPartial reads.
+					return &claudelib.ClaudeResult{Partial: "partial review output"}, runCtx.Err()
+				}
+				fakePoster := &mocks.PrPoster{}
+
+				repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+				currentDateTime := libtime.NewCurrentDateTime()
+				budgetStep := pkg.NewCheckoutExecutionStep(
+					repoManager,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"agent",
+					"sonnet",
+					map[string]string{},
+					claudelib.AllowedTools{"Read"},
+					"standard",
+					nil,
+					fakePoster,
+					nil,
+					currentDateTime,
+					fakeRunner,
+					libtime.Duration(20*time.Millisecond),
+				)
+
+				md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				// The partial is persisted under ## Salvage, clearly marked incomplete.
+				section, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeTrue())
+				Expect(section.Body).To(ContainSubstring("Incomplete"))
+				Expect(section.Body).To(ContainSubstring("partial review output"))
+				// ## Review is never written and nothing is ever posted on the budget path.
+				_, exists = md.FindSection("## Review")
+				Expect(exists).To(BeFalse())
+				Expect(fakePoster.PostCallCount()).To(Equal(0))
+			})
+
+			// AC 5 negative: an empty capture must not produce a ## Salvage section —
+			// the salvage write is a no-op, yet the run still routes to human_review.
+			It("writes no ## Salvage when the run captured nothing", func() {
+				tmpDir, err := os.MkdirTemp("", "exec-salvage-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer func() {
+					Expect(os.RemoveAll(tmpDir)).To(Succeed())
+				}()
+
+				cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+				Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+				Expect(os.WriteFile(
+					filepath.Join(cmdDir, "pr-review.md"),
+					[]byte(
+						"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+					),
+					0600,
+				)).To(Succeed())
+
+				fakeRunner := &mocks.ClaudeRunnerMock{}
+				fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					return nil, runCtx.Err()
+				}
+				fakePoster := &mocks.PrPoster{}
+
+				repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+				currentDateTime := libtime.NewCurrentDateTime()
+				budgetStep := pkg.NewCheckoutExecutionStep(
+					repoManager,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"agent",
+					"sonnet",
+					map[string]string{},
+					claudelib.AllowedTools{"Read"},
+					"standard",
+					nil,
+					fakePoster,
+					nil,
+					currentDateTime,
+					fakeRunner,
+					libtime.Duration(20*time.Millisecond),
+				)
+
+				md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(result.Message).To(ContainSubstring("soft time budget"))
+				// Empty capture → salvage is a no-op.
+				_, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeFalse())
+				Expect(fakePoster.PostCallCount()).To(Equal(0))
+			})
+		})
 	})
 
 	Describe("advanceIfAlreadyReviewed with a salvaged partial", func() {

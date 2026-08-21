@@ -45,7 +45,7 @@ Env-driven (Kubernetes) — key variables:
 | `REPO_ALLOWLIST` | Repos the agent may review (e.g. `github.com/bborbe/*,!github.com/bborbe/go-skeleton`) |
 | `BOT_GITHUB_LOGIN` | The App's bot login, used to detect its own prior reviews |
 | `REVIEW_MODE` | Review depth (e.g. `selector`) |
-| `REVIEW_MAX_DURATION` | Soft time budget per Claude phase run (default `25m`, floor `60s`); an overrun routes the phase to `human_review` with a budget-naming message (never a retry, never a partial posted); keep below the K8s Job `ActiveDeadlineSeconds` |
+| `REVIEW_MAX_DURATION` | Soft time budget per Claude phase run (default `25m`, floor `60s`); an overrun routes the phase to `human_review` with a budget-naming message and salvages any streamed partial into the task's `## Salvage` section (never a retry, never posted to GitHub); keep below the K8s Job `ActiveDeadlineSeconds` |
 | `BITBUCKET_TOKEN` | Bitbucket Server bearer token (Bitbucket PRs only) |
 
 Per-repo behavior is driven by the target repo's `.maintainer.yaml`

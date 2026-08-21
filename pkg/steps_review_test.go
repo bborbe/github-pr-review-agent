@@ -432,6 +432,73 @@ prior verdict body
 			Expect(exists).To(BeFalse())
 			Expect(poster.PostCallCount()).To(Equal(0))
 		})
+
+		Context("salvage", func() {
+			// AC 5: a budget-terminated ai_review run with a captured streamed
+			// partial persists it under the distinct ## Salvage heading (never
+			// ## Verdict) and never posts.
+			It("persists the captured partial under ## Salvage and never posts", func() {
+				runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					// A killed run returns the bounded streamed partial alongside the
+					// fired-deadline error — the capture shape ExtractBudgetPartial reads.
+					return &claudelib.ClaudeResult{Partial: "partial verdict output"}, runCtx.Err()
+				}
+				budgetStep := pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					"",
+					libtime.Duration(20*time.Millisecond),
+				)
+				md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				// The partial is persisted under ## Salvage, clearly marked incomplete.
+				section, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeTrue())
+				Expect(section.Body).To(ContainSubstring("Incomplete"))
+				Expect(section.Body).To(ContainSubstring("partial verdict output"))
+				// ## Verdict is never written and nothing is ever posted on the budget path.
+				_, exists = md.FindSection("## Verdict")
+				Expect(exists).To(BeFalse())
+				Expect(poster.PostCallCount()).To(Equal(0))
+			})
+
+			// AC 5 negative: an empty capture must not produce a ## Salvage section —
+			// the salvage write is a no-op, yet the run still routes to human_review.
+			It("writes no ## Salvage when the run captured nothing", func() {
+				runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					return nil, runCtx.Err()
+				}
+				budgetStep := pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					"",
+					libtime.Duration(20*time.Millisecond),
+				)
+				md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(result.Message).To(ContainSubstring("soft time budget"))
+				_, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeFalse())
+			})
+		})
 	})
 })
 

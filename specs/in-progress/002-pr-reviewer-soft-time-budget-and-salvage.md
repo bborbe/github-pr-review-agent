@@ -1,11 +1,12 @@
 ---
-status: prompted
+status: verifying
 tags:
     - dark-factory
     - spec
 approved: "2026-08-21T07:51:45Z"
 generating: "2026-08-21T07:52:58Z"
 prompted: "2026-08-21T08:30:55Z"
+verifying: "2026-08-21T13:47:27Z"
 branch: dark-factory/pr-reviewer-soft-time-budget-and-salvage
 ---
 

@@ -295,9 +295,12 @@ func (s *checkoutExecutionStep) runClaude(
 	if runErr != nil {
 		// Budget expiry (a FIRED run-context deadline) routes to human_review
 		// BEFORE ## Review is written or the review posted — never retried here.
+		// The streamed partial (if any) is salvaged under ## Salvage so the run
+		// never dies with a blank task; a salvaged partial is never posted.
 		if budgetExpired {
 			glog.V(2).
 				Infof("execution: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
 			return budgetExpiredResult("execution", s.maxDuration), nil
 		}
 		return &agentlib.Result{

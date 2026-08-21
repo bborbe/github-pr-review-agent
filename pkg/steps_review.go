@@ -84,7 +84,7 @@ func (s *reviewStep) ShouldRun(_ context.Context, _ *agentlib.Markdown) (bool, e
 //   - ## Verdict missing → call claude with planning + review context,
 //     write ## Verdict, verify the in_progress post, parse + route.
 //
-//nolint:funlen // the soft-budget expiry branch is required per-phase routing; extracting it hides the human_review-before-##-Verdict ordering AC 2 asserts. 81 lines, 1 over the cap.
+//nolint:funlen // the soft-budget expiry branch (incl. the salvage write) is required per-phase routing; extracting it hides the human_review-before-##-Verdict ordering AC 2 asserts. 83 lines, 3 over the cap.
 func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.Result, error) {
 	if _, exists := md.FindSection("## Verdict"); exists {
 		glog.V(2).Infof("ai-review: ## Verdict already present — advancing to done")
@@ -104,9 +104,11 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 	runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
 	if runErr != nil {
 		// Budget expiry (fired deadline) → human_review before ## Verdict/post; never retried.
+		// The streamed partial (if any) is salvaged under ## Salvage; never written to ## Verdict.
 		if budgetExpired {
 			glog.V(2).
 				Infof("ai-review: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
 			return budgetExpiredResult("ai-review", s.maxDuration), nil
 		}
 		return &agentlib.Result{

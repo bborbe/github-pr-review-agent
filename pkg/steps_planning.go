@@ -102,10 +102,12 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 		runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
 		if runErr != nil {
 			// Budget expiry (a FIRED run-context deadline) routes to human_review
-			// and is never retried, never written to ## Plan.
+			// and is never retried, never written to ## Plan. The streamed partial
+			// (if any) is salvaged under ## Salvage before the budget result returns.
 			if budgetExpired {
 				glog.V(2).
 					Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+				writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
 				return budgetExpiredResult("planning", s.maxDuration), nil
 			}
 			// Transport error (nil result + err) is NOT retried — controller territory.
