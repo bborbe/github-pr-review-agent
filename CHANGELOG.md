@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.5.0
 
 - feat: persist a budget-terminated run's streamed partial review into a `## Salvage` task section (marked incomplete, distinct from `## Review`, never posted) so every budget overrun ends in a human-reviewable partial
 - feat: add the time-budget wrap-up contract to the execution prompt (stop at the budget, disposition every `## Plan` concern, flag unexamined ones as `not verified`) and fail-close an `approve` that carries any unverified concern to `request-changes`
