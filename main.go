@@ -264,6 +264,7 @@ func (a *application) dispatchAgent(
 		a.ReviewMode,
 		repoAllowlist,
 		libtime.NewCurrentDateTime(),
+		a.MaxReviewDuration,
 	)
 	agent, err := provider.Get(ctx, agentlib.TaskType(a.TaskType))
 	if err != nil {

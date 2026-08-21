@@ -7,6 +7,8 @@ package pkg_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -41,6 +43,8 @@ var _ = Describe("checkoutExecutionStep", func() {
 			nil,
 			nil,
 			currentDateTime,
+			nil,
+			libtime.Duration(25*time.Minute),
 		)
 	})
 
@@ -295,6 +299,8 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -321,6 +327,8 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -347,6 +355,8 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
 					)
 					const nonMatchingTask = "---\nclone_url: https://github.com/bborbe/maintainer.git\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -376,6 +386,8 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -407,6 +419,8 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
 					)
 					const badURLTask = "---\nclone_url: not-a-url\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -636,6 +650,79 @@ prior review body
 				Expect(diagSection.Body).To(ContainSubstring("review_id: 1"))
 				Expect(diagSection.Body).To(ContainSubstring("review_id: 2"))
 			})
+		})
+	})
+
+	Describe("soft time budget expiry", func() {
+		// AC 2: a budget-terminated execution run routes to human_review with a
+		// budget-naming message BEFORE writing ## Review or posting — never to
+		// the failed/controller-retry path.
+		It("routes to human_review without writing ## Review or posting", func() {
+			tmpDir, err := os.MkdirTemp("", "exec-budget-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				Expect(os.RemoveAll(tmpDir)).To(Succeed())
+			}()
+
+			cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+			Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(cmdDir, "pr-review.md"),
+				[]byte(
+					"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+				),
+				0600,
+			)).To(Succeed())
+
+			fakeRunner := &mocks.ClaudeRunnerMock{}
+			fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return nil, runCtx.Err()
+			}
+
+			repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+			currentDateTime := libtime.NewCurrentDateTime()
+			budgetStep := pkg.NewCheckoutExecutionStep(
+				repoManager,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"agent",
+				"sonnet",
+				map[string]string{},
+				claudelib.AllowedTools{"Read"},
+				"standard",
+				nil,
+				nil,
+				nil,
+				currentDateTime,
+				fakeRunner,
+				libtime.Duration(20*time.Millisecond),
+			)
+
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+			Expect(result.Message).To(ContainSubstring("soft time budget"))
+			Expect(result.Message).To(ContainSubstring("20ms"))
+			Expect(repoManager.EnsureWorktreeCallCount()).To(Equal(1))
+			// Budget-terminated runs never write ## Review and never post.
+			_, exists := md.FindSection("## Review")
+			Expect(exists).To(BeFalse())
+			_, exists = md.FindSection("## Diagnostics")
+			Expect(exists).To(BeFalse())
 		})
 	})
 

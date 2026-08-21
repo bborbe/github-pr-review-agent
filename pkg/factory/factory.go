@@ -189,6 +189,9 @@ func CreateReviewVerifier(
 //   - ai_review: minimal read-only fresh-context verifier → ## Verdict (JSON);
 //     verdict=pass → done, otherwise → human_review; verifier confirms review
 //     persisted on GitHub (nil verifier skips verification)
+//
+// maxDuration is the soft REVIEW_MAX_DURATION budget threaded into every phase
+// step. The execution step gets a nil runner (runClaude builds a fresh one).
 func CreateAgent(
 	claudeConfigDir claudelib.ClaudeConfigDir,
 	agentDir claudelib.AgentDir,
@@ -201,12 +204,14 @@ func CreateAgent(
 	prPoster prpkg.PrPoster,
 	verifier prpkg.ReviewVerifier,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	maxDuration libtime.Duration,
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
 	planningPhase := agentlib.NewPhase("planning", tokenCheck, prpkg.NewPlanningStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools),
 		prompts.BuildPlanningInstructions(),
+		maxDuration,
 	))
 	executionStep := prpkg.NewCheckoutExecutionStep(
 		repoManager,
@@ -220,6 +225,8 @@ func CreateAgent(
 		prPoster,
 		prpkg.NewFunnelRunner(claudeConfigDir),
 		currentDateTime,
+		nil, // runner — production builds a fresh ClaudeRunner in runClaude
+		maxDuration,
 	)
 	reviewStep := prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools),
@@ -228,6 +235,7 @@ func CreateAgent(
 		verifier,
 		ghToken,
 		botLogin,
+		maxDuration,
 	)
 	return agentlib.NewAgent(
 		planningPhase,
@@ -250,6 +258,7 @@ func CreateAgentProvider(
 	reviewMode string,
 	repoAllowlist []string,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	maxDuration libtime.Duration,
 ) agentlib.AgentProvider {
 	botLogin := ResolveBotLogin(env)
 	poster := CreatePrPoster(ghToken, botLogin, currentDateTime)
@@ -266,6 +275,7 @@ func CreateAgentProvider(
 		poster,
 		verifier,
 		currentDateTime,
+		maxDuration,
 	)
 	healthcheckRunner := CreateClaudeRunner(
 		claudeConfigDir,

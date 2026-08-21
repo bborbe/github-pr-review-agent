@@ -149,6 +149,7 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 			poster,
 			verifier,
 			cfg.CurrentDateTime,
+			cfg.MaxReviewDuration,
 		)
 	}
 	return agent.Run(ctx, cfg.Phase, cfg.TaskContent, cfg.Deliverer)

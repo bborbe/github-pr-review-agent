@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [002-pr-reviewer-soft-time-budget-and-salvage]
+summary: Enforced the REVIEW_MAX_DURATION soft time budget on all three Claude phase steps via a shared runWithSoftBudget helper with precise fired-deadline detection, routing budget overruns to human_review with a budget-naming message (never a retry or partial post), threading the budget through factory/main wiring, and adding per-phase budget-expiry tests plus a negative detection test
+execution_id: github-pr-review-agent-salvage-exec-006-spec-002-budget-kill-routing
+dark-factory-version: dev
 created: "2026-08-21T08:07:20Z"
 queued: "2026-08-21T10:14:18Z"
+started: "2026-08-21T10:21:32Z"
+completed: "2026-08-21T10:30:55Z"
 branch: dark-factory/pr-reviewer-soft-time-budget-and-salvage
 ---
 
