@@ -778,6 +778,76 @@ https://github.com/bborbe/maintainer/pull/14
 		})
 	})
 
+	Describe("advanceIfAlreadyReviewed with a salvaged partial", func() {
+		// AC 6: the ## Review-present idempotency guard must NEVER fire on a
+		// salvaged partial. A budget-terminated run persists its partial under
+		// ## Salvage (a heading deliberately distinct from ## Review), so a
+		// partial can never advance into ai_review on a later trigger.
+		It("returns nil when the task holds only a ## Salvage section (no ## Review)", func() {
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+## Salvage
+
+_Incomplete: this run was terminated at the soft time budget before producing a final result._
+
+partial review text
+`)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pkg.AdvanceIfAlreadyReviewedForTest(md)).To(BeNil())
+		})
+
+		It("returns the done/ai_review result when ## Review is present (regression)", func() {
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+## Review
+
+complete review body
+`)
+			Expect(err).NotTo(HaveOccurred())
+			result := pkg.AdvanceIfAlreadyReviewedForTest(md)
+			Expect(result).NotTo(BeNil())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("ai_review"))
+		})
+
+		It(
+			"returns the done/ai_review result when both ## Salvage and ## Review are present",
+			func() {
+				// A stale salvage from an earlier budget-terminated trigger must not
+				// block a completed ## Review from advancing.
+				md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+## Salvage
+
+_Incomplete: partial output._
+
+partial review text
+
+## Review
+
+complete review body
+`)
+				Expect(err).NotTo(HaveOccurred())
+				result := pkg.AdvanceIfAlreadyReviewedForTest(md)
+				Expect(result).NotTo(BeNil())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("ai_review"))
+			},
+		)
+	})
+
 	Describe("ExtractPRURL", func() {
 		DescribeTable("extracts PR URL from markdown",
 			func(body string, expected string) {
