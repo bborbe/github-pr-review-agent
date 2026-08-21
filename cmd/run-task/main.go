@@ -23,6 +23,7 @@ import (
 	"github.com/bborbe/github-pr-review-agent/pkg/githubauth"
 	libsentry "github.com/bborbe/sentry"
 	"github.com/bborbe/service"
+	libtime "github.com/bborbe/time"
 	"github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 
@@ -51,6 +52,14 @@ type application struct {
 
 	// Review depth passed to /coding:pr-review (short | standard | full)
 	ReviewMode string `required:"false" arg:"review-mode" env:"REVIEW_MODE" usage:"Review depth: short | standard | full" default:"standard"`
+
+	// MaxReviewDuration is the soft time budget for each Claude phase run
+	// (planning, execution, ai_review), applied below the K8s Job hard deadline.
+	// REVIEW_MAX_DURATION is validated at startup: it must parse as a duration
+	// and be >= 60s. The default 25m sits below the executor's default
+	// ZombieJobTimeoutSeconds (1800s) with headroom for salvage + Kafka delivery;
+	// operators who lower zombieJobTimeoutSeconds must keep this below it.
+	MaxReviewDuration libtime.Duration `required:"false" arg:"review-max-duration" env:"REVIEW_MAX_DURATION" usage:"Soft time budget per Claude phase run; keep below the K8s Job ActiveDeadlineSeconds / ZombieJobTimeoutSeconds (default 1800s) with headroom for salvage + Kafka delivery; must be >= 60s" default:"25m"`
 
 	// Environment
 	Branch base.Branch `required:"true" arg:"branch" env:"BRANCH" usage:"branch" default:"dev"`
@@ -92,6 +101,11 @@ type application struct {
 }
 
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
+	if err := prpkg.ValidateReviewMaxDuration(ctx, a.MaxReviewDuration); err != nil {
+		return err
+	}
+	glog.V(2).Infof("review max duration=%s", a.MaxReviewDuration)
+
 	repoAllowlist, err := prpkg.ParseRepoAllowlist(ctx, a.RepoAllowlist)
 	if err != nil {
 		return err
@@ -119,30 +133,10 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 
 	deliverer := factory.CreateFileResultDeliverer(a.TaskFilePath)
 
-	// Resolve auth: mint the GitHub App IAT before factory.RunAgent reads the resolved token.
-	hasPEMFile := a.PEMKeyFile != ""
-	hasPEMContent := a.PEMKey != ""
-	useGitHubApp := a.AppID != 0 && a.InstallationID != 0 && (hasPEMFile || hasPEMContent)
-	if !useGitHubApp {
-		return errors.Errorf(
-			ctx,
-			"pr-reviewer auth: GitHub App credentials not configured — set APP_ID, INSTALLATION_ID, and PEM_KEY_FILE (or PEM_KEY)",
-		)
-	}
-	appCfg := githubapp.Config{AppID: a.AppID, InstallationID: a.InstallationID}
-	if hasPEMFile {
-		appCfg.PEMPath = a.PEMKeyFile
-	} else {
-		appCfg.PEM = []byte(a.PEMKey)
-	}
-	resolvedToken, err := githubapp.MintIAT(ctx, appCfg)
+	resolvedToken, err := a.resolveAuth(ctx)
 	if err != nil {
-		return errors.Wrap(ctx, err, "mint github app iat")
+		return err
 	}
-	glog.V(2).Infof(
-		"pr-reviewer auth mode=github-app app_id=%d installation_id=%d",
-		a.AppID, a.InstallationID,
-	)
 	if a.SkipPost {
 		glog.V(2).Infof("pr-reviewer skip-post enabled — GitHub writes suppressed")
 	}
@@ -162,6 +156,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		ReposPath:                   reposPath,
 		WorkPath:                    workPath,
 		ReviewMode:                  a.ReviewMode,
+		MaxReviewDuration:           a.MaxReviewDuration,
 		RepoAllowlist:               repoAllowlist,
 		AuthSetup:                   authSetup,
 		Phase:                       a.Phase,
@@ -174,6 +169,36 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return errors.Wrap(ctx, err, "agent run failed")
 	}
 	return agentlib.PrintResult(ctx, result)
+}
+
+// resolveAuth mints a GitHub App installation token and returns it. The token
+// is a runtime value (not a config input), so it is returned to the caller
+// rather than stored on the argument-parsed application struct.
+func (a *application) resolveAuth(ctx context.Context) (string, error) {
+	hasPEMFile := a.PEMKeyFile != ""
+	hasPEMContent := a.PEMKey != ""
+	useGitHubApp := a.AppID != 0 && a.InstallationID != 0 && (hasPEMFile || hasPEMContent)
+	if !useGitHubApp {
+		return "", errors.Errorf(
+			ctx,
+			"pr-reviewer auth: GitHub App credentials not configured — set APP_ID, INSTALLATION_ID, and PEM_KEY_FILE (or PEM_KEY)",
+		)
+	}
+	appCfg := githubapp.Config{AppID: a.AppID, InstallationID: a.InstallationID}
+	if hasPEMFile {
+		appCfg.PEMPath = a.PEMKeyFile
+	} else {
+		appCfg.PEM = []byte(a.PEMKey)
+	}
+	iat, err := githubapp.MintIAT(ctx, appCfg)
+	if err != nil {
+		return "", errors.Wrap(ctx, err, "mint github app iat")
+	}
+	glog.V(2).Infof(
+		"pr-reviewer auth mode=github-app app_id=%d installation_id=%d",
+		a.AppID, a.InstallationID,
+	)
+	return iat, nil
 }
 
 // resolveCachePaths fills in defaults for ReposPath/WorkPath when unset

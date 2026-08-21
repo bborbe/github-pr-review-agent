@@ -14,6 +14,7 @@ import (
 
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/errors"
+	libtime "github.com/bborbe/time"
 )
 
 //go:embed execution_output-format.md
@@ -108,6 +109,23 @@ const verdictTranslationFooter = "---\n\n" +
 	"un-pinned comment. Preserve the plugin's bucket label verbatim in the\n" +
 	"comment `message` for traceability.\n"
 
+// timeBudgetFooter is appended to the assembled execution instructions when the
+// agent enforces the soft REVIEW_MAX_DURATION budget. It tells the model to stop
+// investigating at the budget and write the verdict from what it already knows,
+// explicitly flagging every ## Plan concern it could not examine. %s = budget.
+const timeBudgetFooter = "---\n\n" +
+	"## Time budget\n\n" +
+	"This run has a soft time budget of %s. When the budget is reached, STOP " +
+	"investigating immediately and write the verdict from what you already know — " +
+	"do not keep going until the job kills the run.\n\n" +
+	"Disposition EVERY concern in `## Plan` inside `concerns_addressed` with one of:\n" +
+	"- `addressed` — a code change or a comment resolves it\n" +
+	"- `not an issue` — you examined it and confirmed it is a non-issue\n" +
+	"- `not verified` — the time budget stopped you before you could examine it\n\n" +
+	"A concern listed as `not verified` means the review is incomplete: the verdict " +
+	"will be fail-closed to request-changes and the partial output is salvaged for a " +
+	"human. Never silently drop a concern because investigation ended.\n\n"
+
 // BuildExecutionInstructions assembles the execution-phase prompt by reading
 // the /coding:pr-review plugin file at runtime, stripping its YAML frontmatter,
 // prepending a pre-filled-arguments header, and appending a verdict-translation
@@ -117,6 +135,9 @@ const verdictTranslationFooter = "---\n\n" +
 // funnelRan true injects the authoritative findings JSON (model must consume,
 // not re-run); funnelRan false injects a fail-closed status carrying
 // funnelFailDetail so the review surfaces the gap instead of silently approving.
+// maxDuration is the soft REVIEW_MAX_DURATION budget appended as the time-budget
+// wrap-up contract so the model stops investigating at the budget and flags any
+// ## Plan concern it could not examine as `not verified`.
 func BuildExecutionInstructions(
 	ctx context.Context,
 	claudeConfigDir claudelib.ClaudeConfigDir,
@@ -125,6 +146,7 @@ func BuildExecutionInstructions(
 	funnelRan bool,
 	funnelFindings string,
 	funnelFailDetail string,
+	maxDuration libtime.Duration,
 ) (claudelib.Instructions, error) {
 	if baseRef == "" {
 		return nil, errors.New(ctx, "base_ref is empty")
@@ -159,7 +181,8 @@ func BuildExecutionInstructions(
 	} else {
 		steer = fmt.Sprintf(funnelFailedSteerTemplate, pluginRoot, funnelFailDetail)
 	}
-	assembled := header + steer + stripFrontmatter(string(raw)) + verdictTranslationFooter
+	assembled := header + steer + stripFrontmatter(string(raw)) + verdictTranslationFooter +
+		fmt.Sprintf(timeBudgetFooter, maxDuration)
 	return claudelib.Instructions{
 		{Name: "workflow", Content: assembled},
 		{Name: "output-format", Content: executionOutputFormat},

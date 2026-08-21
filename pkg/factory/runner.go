@@ -39,11 +39,14 @@ type RunConfig struct {
 	ReposPath                   string
 	WorkPath                    string
 	ReviewMode                  string
-	RepoAllowlist               []string                // host-qualified repos the agent may clone
-	AuthSetup                   githubauth.Configurator // pod: real gh-auth-setup; local-CLI: noop
-	Phase                       domain.TaskPhase
-	TaskContent                 string
-	Deliverer                   agentlib.ResultDeliverer
+	// MaxReviewDuration is the soft time budget for each Claude phase run,
+	// applied below the K8s Job hard deadline. Default 25m (REVIEW_MAX_DURATION).
+	MaxReviewDuration libtime.Duration
+	RepoAllowlist     []string                // host-qualified repos the agent may clone
+	AuthSetup         githubauth.Configurator // pod: real gh-auth-setup; local-CLI: noop
+	Phase             domain.TaskPhase
+	TaskContent       string
+	Deliverer         agentlib.ResultDeliverer
 	// BotLogin is the GitHub bot login used by githubposter. When non-empty it
 	// is injected into the env map as BOT_GITHUB_LOGIN so ResolveBotLogin
 	// picks it up instead of the DefaultBotLogin fallback.
@@ -146,6 +149,7 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 			poster,
 			verifier,
 			cfg.CurrentDateTime,
+			cfg.MaxReviewDuration,
 		)
 	}
 	return agent.Run(ctx, cfg.Phase, cfg.TaskContent, cfg.Deliverer)

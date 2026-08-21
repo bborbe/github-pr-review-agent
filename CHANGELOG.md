@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: persist a budget-terminated run's streamed partial review into a `## Salvage` task section (marked incomplete, distinct from `## Review`, never posted) so every budget overrun ends in a human-reviewable partial
+- feat: add the time-budget wrap-up contract to the execution prompt (stop at the budget, disposition every `## Plan` concern, flag unexamined ones as `not verified`) and fail-close an `approve` that carries any unverified concern to `request-changes`
+- feat: enforce the `REVIEW_MAX_DURATION` soft time budget on every Claude phase run and route budget overruns to `human_review` with a budget-naming message — never a blank `needs_input`, never a retry, never a partial posted
+- feat: add `REVIEW_MAX_DURATION` soft time budget env (default `25m`, floor `60s`) to both entry points, validated at startup, and thread it through `RunConfig`
+- test: lock the `## Review`-present idempotency guard against a `## Salvage` section — a salvaged partial (a distinct, clearly-incomplete heading) can never advance to `ai_review` on a later trigger, and a stale salvage never blocks a completed review
+- feat: bump `github.com/bborbe/agent` to the release that captures the streamed partial review text when a claude run is terminated, and add `pkg.ExtractBudgetPartial` so budget-terminated runs can salvage what the model wrote
+
 ## v0.4.6
 
 - chore: Fix `make precommit` on the Go 1.27 toolchain — run `gofmt -w` last in the `format` target (after golines) so its wrapping is normalized before the gofmt lint check, and bump `GOLANGCI_LINT_VERSION` v2.12.2 → v2.13.1 (fixes staticcheck `buildir` panic on Go 1.27 AST) + `ERRCHECK_VERSION` v1.10.0 → v1.20.0 (fixes `package "context" without types`) in `tools.env`

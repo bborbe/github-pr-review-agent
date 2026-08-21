@@ -7,11 +7,13 @@ package pkg_test
 import (
 	"context"
 	"fmt"
+	"time"
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -111,7 +113,15 @@ var _ = Describe("reviewStep", func() {
 		runner = &mocks.ClaudeRunnerMock{}
 		poster = &mocks.PrPoster{}
 		instructions = claudelib.Instructions{}
-		step = pkg.NewReviewStep(runner, poster, instructions, nil, "", "")
+		step = pkg.NewReviewStep(
+			runner,
+			poster,
+			instructions,
+			nil,
+			"",
+			"",
+			libtime.Duration(25*time.Minute),
+		)
 	})
 
 	Describe("Name", func() {
@@ -249,6 +259,7 @@ prior verdict body
 				verifier,
 				"test-token",
 				"test-bot",
+				libtime.Duration(25*time.Minute),
 			)
 			runner.RunReturns(&claudelib.ClaudeResult{Result: passVerdict}, nil)
 		})
@@ -368,7 +379,15 @@ prior verdict body
 
 		Context("nil verifier skips verification without panic", func() {
 			It("routes normally", func() {
-				step = pkg.NewReviewStep(runner, poster, instructions, nil, "", "")
+				step = pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					"",
+					libtime.Duration(25*time.Minute),
+				)
 				content := "---\nref: abc123\n---\n\nReview the PR at " + prURL + "\n\n" +
 					"## Review\n\nsome content\n"
 				md, err := agentlib.ParseMarkdown(ctx, content)
@@ -377,6 +396,107 @@ prior verdict body
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).NotTo(BeNil())
 				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			})
+		})
+	})
+
+	Describe("soft time budget expiry", func() {
+		// AC 2: a budget-terminated ai_review run routes to human_review with a
+		// budget-naming message BEFORE writing ## Verdict or posting — never to
+		// the failed/controller-retry path.
+		It("routes to human_review without writing ## Verdict or posting", func() {
+			runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return nil, runCtx.Err()
+			}
+			budgetStep := pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				"",
+				libtime.Duration(20*time.Millisecond),
+			)
+			md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+			Expect(result.Message).To(ContainSubstring("soft time budget"))
+			Expect(result.Message).To(ContainSubstring("20ms"))
+			// Budget-terminated runs never write ## Verdict and never post.
+			_, exists := md.FindSection("## Verdict")
+			Expect(exists).To(BeFalse())
+			Expect(poster.PostCallCount()).To(Equal(0))
+		})
+
+		Context("salvage", func() {
+			// AC 5: a budget-terminated ai_review run with a captured streamed
+			// partial persists it under the distinct ## Salvage heading (never
+			// ## Verdict) and never posts.
+			It("persists the captured partial under ## Salvage and never posts", func() {
+				runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					// A killed run returns the bounded streamed partial alongside the
+					// fired-deadline error — the capture shape ExtractBudgetPartial reads.
+					return &claudelib.ClaudeResult{Partial: "partial verdict output"}, runCtx.Err()
+				}
+				budgetStep := pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					"",
+					libtime.Duration(20*time.Millisecond),
+				)
+				md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				// The partial is persisted under ## Salvage, clearly marked incomplete.
+				section, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeTrue())
+				Expect(section.Body).To(ContainSubstring("Incomplete"))
+				Expect(section.Body).To(ContainSubstring("partial verdict output"))
+				// ## Verdict is never written and nothing is ever posted on the budget path.
+				_, exists = md.FindSection("## Verdict")
+				Expect(exists).To(BeFalse())
+				Expect(poster.PostCallCount()).To(Equal(0))
+			})
+
+			// AC 5 negative: an empty capture must not produce a ## Salvage section —
+			// the salvage write is a no-op, yet the run still routes to human_review.
+			It("writes no ## Salvage when the run captured nothing", func() {
+				runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					return nil, runCtx.Err()
+				}
+				budgetStep := pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					"",
+					libtime.Duration(20*time.Millisecond),
+				)
+				md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(result.Message).To(ContainSubstring("soft time budget"))
+				_, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeFalse())
 			})
 		})
 	})
@@ -415,7 +535,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 					FailureStep: "",
 					HTTPStatus:  200,
 				})
-				step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+				step = pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					botLogin,
+					libtime.Duration(25*time.Minute),
+				)
 				md, err := agentlib.ParseMarkdown(
 					ctx,
 					"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content",
@@ -450,7 +578,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				FailureStep: "PUT /pulls/2/reviews/77/dismissals",
 				HTTPStatus:  404,
 			})
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
 				"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content",
@@ -476,7 +612,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				FailureStep: "PUT /pulls/2/reviews/77/dismissals",
 				HTTPStatus:  422,
 			})
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
 				"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content",
@@ -503,7 +647,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 					FailureStep: "POST /pulls/2/reviews (comment-after-dismiss)",
 					HTTPStatus:  500,
 				})
-				step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+				step = pkg.NewReviewStep(
+					runner,
+					poster,
+					instructions,
+					nil,
+					"",
+					botLogin,
+					libtime.Duration(25*time.Minute),
+				)
 				md, err := agentlib.ParseMarkdown(
 					ctx,
 					"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content",
@@ -524,7 +676,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 		It("does not call DismissCurrentReview and routes to human_review", func() {
 			verdictJSON := `{"verdict":"fail","reason":"inconsistent","hallucinations":[]}`
 			runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
 				"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content",
@@ -545,7 +705,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 		It("routes to done, poster never called", func() {
 			verdictJSON := `{"verdict":"pass","reason":"looks good","hallucinations":[]}`
 			runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
 				"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content",
@@ -563,7 +731,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 		It("does not call DismissCurrentReview", func() {
 			verdictJSON := `{"verdict":"fail","reason":"issues","hallucinations":[{"file":"x.go","line":1,"issue":"a"}]}`
 			runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			// Bitbucket URL in preamble
 			md, err := agentlib.ParseMarkdown(
 				ctx,
@@ -582,7 +758,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 		It("does not call DismissCurrentReview", func() {
 			verdictJSON := `{"verdict":"fail","reason":"issues","hallucinations":[{"file":"x.go","line":1,"issue":"a"}]}`
 			runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			md, err := agentlib.ParseMarkdown(ctx,
 				"---\n---\n\nReview the PR at "+prURL+"\n\nsome content")
 			Expect(err).NotTo(HaveOccurred())
@@ -598,7 +782,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 		It("does not call DismissCurrentReview", func() {
 			verdictJSON := `{"verdict":"fail","reason":"issues","hallucinations":[{"file":"x.go","line":1,"issue":"a"}]}`
 			runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
-			step = pkg.NewReviewStep(runner, poster, instructions, nil, "", botLogin)
+			step = pkg.NewReviewStep(
+				runner,
+				poster,
+				instructions,
+				nil,
+				"",
+				botLogin,
+				libtime.Duration(25*time.Minute),
+			)
 			// Preamble has no GitHub PR URL at all — neither GitHub nor Bitbucket
 			md, err := agentlib.ParseMarkdown(ctx,
 				"---\nref: "+headSHA+"\n---\n\nReview this PR — link missing\n\nsome content")
@@ -618,7 +810,15 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				verdictJSON := `{"verdict":"fail","reason":"hallucinated","hallucinations":[{"file":"x.go","line":1,"issue":"nothere"}]}`
 				runner.RunReturns(&claudelib.ClaudeResult{Result: verdictJSON}, nil)
 				// nil poster — SkipPost mode
-				step = pkg.NewReviewStep(runner, nil, instructions, nil, "", botLogin)
+				step = pkg.NewReviewStep(
+					runner,
+					nil,
+					instructions,
+					nil,
+					"",
+					botLogin,
+					libtime.Duration(25*time.Minute),
+				)
 				md, err := agentlib.ParseMarkdown(ctx,
 					"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content")
 				Expect(err).NotTo(HaveOccurred())

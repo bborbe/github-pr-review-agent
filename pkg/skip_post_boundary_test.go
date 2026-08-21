@@ -26,6 +26,7 @@ import (
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/factory"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -85,6 +86,7 @@ var _ = Describe("skip-post nil contract", func() {
 				nil,
 				"",
 				botLogin,
+				libtime.Duration(25*time.Minute),
 			)
 
 			md, err := agentlib.ParseMarkdown(
@@ -155,6 +157,7 @@ var _ = Describe("skip-post nil contract", func() {
 				fakeVerifier,
 				"test-token",
 				botLogin,
+				libtime.Duration(25*time.Minute),
 			)
 
 			result, err := step.Run(ctx, md)
@@ -210,6 +213,7 @@ var _ = Describe("skip-post nil contract", func() {
 					verifier,
 					"test-token",
 					botLogin,
+					libtime.Duration(25*time.Minute),
 				)
 
 				result, err := step.Run(ctx, md)

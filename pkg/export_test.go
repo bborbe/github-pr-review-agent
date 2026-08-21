@@ -88,3 +88,10 @@ func LastCharsForTest(s string, n int) string {
 func AppendDismissDiagnosticForTest(md *agentlib.Markdown, result PostResult) {
 	appendDismissDiagnostic(md, result)
 }
+
+// AdvanceIfAlreadyReviewedForTest exposes advanceIfAlreadyReviewed for unit
+// testing (the ## Review-present idempotency guard).
+func AdvanceIfAlreadyReviewedForTest(md *agentlib.Markdown) *agentlib.Result {
+	s := &checkoutExecutionStep{}
+	return s.advanceIfAlreadyReviewed(md)
+}

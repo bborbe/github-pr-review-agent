@@ -40,10 +40,15 @@ type checkoutExecutionStep struct {
 	prPoster        PrPoster // nil = skip posting
 	funnelRunner    FunnelRunner
 	currentDateTime libtime.CurrentDateTimeGetter
+	runner          claudelib.ClaudeRunner // nil = build a fresh runner in runClaude (production)
+	maxDuration     libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
 }
 
 // NewCheckoutExecutionStep constructs the execution-phase step that wires
-// RepoManager checkout into the Claude runner working directory.
+// RepoManager checkout into the Claude runner working directory. runner is
+// nil in production (runClaude builds a fresh ClaudeRunner); tests inject a
+// fake. maxDuration is the soft REVIEW_MAX_DURATION budget enforced on the
+// claude run; expiry routes to human_review.
 func NewCheckoutExecutionStep(
 	repoManager git.RepoManager,
 	claudeConfigDir claudelib.ClaudeConfigDir,
@@ -56,6 +61,8 @@ func NewCheckoutExecutionStep(
 	prPoster PrPoster,
 	funnelRunner FunnelRunner,
 	currentDateTime libtime.CurrentDateTimeGetter,
+	runner claudelib.ClaudeRunner,
+	maxDuration libtime.Duration,
 ) agentlib.Step {
 	return &checkoutExecutionStep{
 		repoManager:     repoManager,
@@ -69,6 +76,8 @@ func NewCheckoutExecutionStep(
 		prPoster:        prPoster,
 		funnelRunner:    funnelRunner,
 		currentDateTime: currentDateTime,
+		runner:          runner,
+		maxDuration:     maxDuration,
 	}
 }
 
@@ -180,6 +189,7 @@ func (s *checkoutExecutionStep) Run(
 		funnel.Ran,
 		funnel.FindingsJSON,
 		funnel.FailDetail,
+		s.maxDuration,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(
@@ -264,13 +274,16 @@ func (s *checkoutExecutionStep) runClaude(
 	// writes inside the ## Review section body.
 	prURLStr := ExtractPRURL(md)
 
-	runner := claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
-		ClaudeConfigDir:  s.claudeConfigDir,
-		AllowedTools:     s.allowedTools,
-		Model:            s.model,
-		WorkingDirectory: claudelib.AgentDir(worktreePath),
-		Env:              s.env,
-	})
+	runner := s.runner
+	if runner == nil {
+		runner = claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
+			ClaudeConfigDir:  s.claudeConfigDir,
+			AllowedTools:     s.allowedTools,
+			Model:            s.model,
+			WorkingDirectory: claudelib.AgentDir(worktreePath),
+			Env:              s.env,
+		})
+	}
 
 	taskContent, err := md.Marshal(ctx)
 	if err != nil {
@@ -278,8 +291,18 @@ func (s *checkoutExecutionStep) runClaude(
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
-	runResult, runErr := runner.Run(ctx, prompt)
+	runResult, runErr, budgetExpired := runWithSoftBudget(ctx, runner, prompt, s.maxDuration)
 	if runErr != nil {
+		// Budget expiry (a FIRED run-context deadline) routes to human_review
+		// BEFORE ## Review is written or the review posted — never retried here.
+		// The streamed partial (if any) is salvaged under ## Salvage so the run
+		// never dies with a blank task; a salvaged partial is never posted.
+		if budgetExpired {
+			glog.V(2).
+				Infof("execution: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
+			return budgetExpiredResult("execution", s.maxDuration), nil
+		}
 		return &agentlib.Result{
 			Status:  agentlib.AgentStatusFailed,
 			Message: fmt.Sprintf("execution claude run failed: %v", runErr),
@@ -337,6 +360,16 @@ func (s *checkoutExecutionStep) postAndRoute(
 	// produced by the model are left untouched.
 	if !funnelRan && verdict.Verdict == VerdictApprove {
 		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonFunnelDidNotRun}
+	}
+	// Fail-closed gate: the review flags one or more ## Plan concerns as
+	// `not verified` — the model stopped investigating at the soft time budget
+	// before examining them — yet still emits approve. Override to
+	// request-changes so an incomplete review can never green-light a PR; the
+	// partial output is salvaged for a human. Fires only when the funnel gate
+	// above did not already demote the verdict (i.e. the funnel ran) — an
+	// unverified concern is the more specific diagnosis and keeps its reason.
+	if verdict.Verdict == VerdictApprove && HasUnverifiedConcerns(reviewBody) {
+		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
 	}
 
 	// Diagnostic for the recurring false-CHANGES_REQUESTED symptom: a

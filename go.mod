@@ -7,7 +7,8 @@ replace (
 )
 
 require (
-	github.com/bborbe/agent v0.81.3
+	github.com/bborbe/agent v0.82.0
+	github.com/bborbe/argument/v2 v2.12.35
 	github.com/bborbe/cqrs v0.6.7
 	github.com/bborbe/errors v1.5.18
 	github.com/bborbe/kafka v1.25.8
@@ -26,7 +27,6 @@ require (
 require (
 	github.com/IBM/sarama v1.60.1 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
-	github.com/bborbe/argument/v2 v2.12.35 // indirect
 	github.com/bborbe/collection v1.20.22 // indirect
 	github.com/bborbe/http v1.26.22 // indirect
 	github.com/bborbe/k8s v1.14.10 // indirect
