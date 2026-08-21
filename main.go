@@ -60,6 +60,14 @@ type application struct {
 	// Review depth passed to /coding:pr-review (short | standard | full)
 	ReviewMode string `required:"false" arg:"review-mode" env:"REVIEW_MODE" usage:"Review depth: short | standard | full" default:"standard"`
 
+	// MaxReviewDuration is the soft time budget for each Claude phase run
+	// (planning, execution, ai_review), applied below the K8s Job hard deadline.
+	// REVIEW_MAX_DURATION is validated at startup: it must parse as a duration
+	// and be >= 60s. The default 25m sits below the executor's default
+	// ZombieJobTimeoutSeconds (1800s) with headroom for salvage + Kafka delivery;
+	// operators who lower zombieJobTimeoutSeconds must keep this below it.
+	MaxReviewDuration libtime.Duration `required:"false" arg:"review-max-duration" env:"REVIEW_MAX_DURATION" usage:"Soft time budget per Claude phase run; keep below the K8s Job ActiveDeadlineSeconds / ZombieJobTimeoutSeconds (default 1800s) with headroom for salvage + Kafka delivery; must be >= 60s" default:"25m"`
+
 	// Task content from agent pipeline
 	TaskContent string `required:"true" arg:"task-content" env:"TASK_CONTENT" usage:"Raw task markdown from vault"`
 
@@ -128,6 +136,13 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	start := libtime.NewCurrentDateTime().Now().Time()
 	glog.V(2).Infof("maintainer-agent-pr-reviewer started phase=%s", a.Phase)
 
+	if err := prpkg.ValidateReviewMaxDuration(ctx, a.MaxReviewDuration); err != nil {
+		jobMetrics.RecordRun(agentlib.AgentStatusFailed)
+		jobMetrics.RecordDuration(time.Since(start))
+		return err
+	}
+	glog.V(2).Infof("review max duration=%s", a.MaxReviewDuration)
+
 	resolvedToken, err := a.resolveAuth(ctx)
 	if err != nil {
 		jobMetrics.RecordRun(agentlib.AgentStatusFailed)
@@ -178,6 +193,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		ReposPath:                   a.ReposPath,
 		WorkPath:                    a.WorkPath,
 		ReviewMode:                  a.ReviewMode,
+		MaxReviewDuration:           a.MaxReviewDuration,
 		RepoAllowlist:               repoAllowlist,
 		AuthSetup:                   githubauth.NewGhAuthSetupGit(resolvedToken),
 		Phase:                       a.Phase,

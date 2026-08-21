@@ -1,8 +1,12 @@
 ---
-status: draft
+status: prompted
 tags:
-  - dark-factory
-  - spec
+    - dark-factory
+    - spec
+approved: "2026-08-21T07:51:45Z"
+generating: "2026-08-21T07:52:58Z"
+prompted: "2026-08-21T08:30:55Z"
+branch: dark-factory/pr-reviewer-soft-time-budget-and-salvage
 ---
 
 ## Summary
