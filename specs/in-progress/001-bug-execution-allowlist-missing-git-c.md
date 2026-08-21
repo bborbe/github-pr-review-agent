@@ -3,7 +3,7 @@ status: verifying
 approved: "2026-08-18T11:53:45Z"
 generating: "2026-08-18T11:56:18Z"
 prompted: "2026-08-18T13:01:23Z"
-verifying: "2026-08-21T07:52:58Z"
+verifying: "2026-08-21T12:02:46Z"
 branch: dark-factory/bug-execution-allowlist-missing-git-c
 ---
 

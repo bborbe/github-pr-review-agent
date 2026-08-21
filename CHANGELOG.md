@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - feat: add `REVIEW_MAX_DURATION` soft time budget env (default `25m`, floor `60s`) to both entry points, validated at startup, and thread it through `RunConfig`
 - test: lock the `## Review`-present idempotency guard against a `## Salvage` section — a salvaged partial (a distinct, clearly-incomplete heading) can never advance to `ai_review` on a later trigger, and a stale salvage never blocks a completed review
 
+## v0.4.6
+
+- chore: Fix `make precommit` on the Go 1.27 toolchain — run `gofmt -w` last in the `format` target (after golines) so its wrapping is normalized before the gofmt lint check, and bump `GOLANGCI_LINT_VERSION` v2.12.2 → v2.13.1 (fixes staticcheck `buildir` panic on Go 1.27 AST) + `ERRCHECK_VERSION` v1.10.0 → v1.20.0 (fixes `package "context" without types`) in `tools.env`
+
 ## v0.4.5
 
 - fix: require verification of funnel findings against the actual worktree file before reporting (execution-phase prompt no longer treats over-inclusive mechanical findings as pre-confirmed)
