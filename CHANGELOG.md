@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: Fix `make precommit` on the Go 1.27 toolchain — run `gofmt -w` last in the `format` target (after golines) so its wrapping is normalized before the gofmt lint check, and bump `GOLANGCI_LINT_VERSION` v2.12.2 → v2.13.1 (fixes staticcheck `buildir` panic on Go 1.27 AST) + `ERRCHECK_VERSION` v1.10.0 → v1.20.0 (fixes `package "context" without types`) in `tools.env`
+
 ## v0.4.5
 
 - fix: require verification of funnel findings against the actual worktree file before reporting (execution-phase prompt no longer treats over-inclusive mechanical findings as pre-confirmed)
