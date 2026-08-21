@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [002-pr-reviewer-soft-time-budget-and-salvage]
+summary: 'Added the time-budget wrap-up contract to the assembled execution prompt (stop at the budget, disposition every ## Plan concern with a not-verified flag) and fail-closed any approve carrying an unverified concern to request-changes in postAndRoute, with full unit and posting-boundary test coverage'
+execution_id: github-pr-review-agent-salvage-exec-007-spec-002-execution-wrap-up-contract
+dark-factory-version: dev
 created: "2026-08-21T08:07:20Z"
 queued: "2026-08-21T10:14:18Z"
+started: "2026-08-21T10:30:56Z"
+completed: "2026-08-21T10:35:21Z"
 branch: dark-factory/pr-reviewer-soft-time-budget-and-salvage
 ---
 

@@ -505,6 +505,58 @@ prior review body
 			})
 		})
 
+		Context("fail-closed gate when a concern is flagged not verified", func() {
+			// funnelRan=true so the funnel gate does not interfere — the unverified-
+			// concerns gate must be what demotes the approve.
+			It("fail-closes an approve carrying an unverified concern to request-changes", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 9})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"looks ok","concerns_addressed":["security: rate-limit not verified — stopped at the time budget"]}`+
+						"\n```\n")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
+
+			It("leaves an approve with no unverified concerns untouched (no over-trigger)", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 10})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"clean","concerns_addressed":["security: rate-limit addressed in handler.go:45"]}`+
+						"\n```\n")
+				_, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+			})
+		})
+
 		Context("when post succeeds", func() {
 			It("advances to ai_review and writes a success diagnostic", func() {
 				fakePoster := &mocks.PrPoster{}

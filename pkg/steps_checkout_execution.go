@@ -189,6 +189,7 @@ func (s *checkoutExecutionStep) Run(
 		funnel.Ran,
 		funnel.FindingsJSON,
 		funnel.FailDetail,
+		s.maxDuration,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(
@@ -356,6 +357,16 @@ func (s *checkoutExecutionStep) postAndRoute(
 	// produced by the model are left untouched.
 	if !funnelRan && verdict.Verdict == VerdictApprove {
 		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonFunnelDidNotRun}
+	}
+	// Fail-closed gate: the review flags one or more ## Plan concerns as
+	// `not verified` — the model stopped investigating at the soft time budget
+	// before examining them — yet still emits approve. Override to
+	// request-changes so an incomplete review can never green-light a PR; the
+	// partial output is salvaged for a human. Fires only when the funnel gate
+	// above did not already demote the verdict (i.e. the funnel ran) — an
+	// unverified concern is the more specific diagnosis and keeps its reason.
+	if verdict.Verdict == VerdictApprove && HasUnverifiedConcerns(reviewBody) {
+		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
 	}
 
 	// Diagnostic for the recurring false-CHANGES_REQUESTED symptom: a
