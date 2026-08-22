@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.0
 
 - feat: check the live GitHub PR state (`gh pr view --json state,mergedAt,headRefOid`) at the head of every phase and before routing a fail verdict to `human_review` — a merged/closed/superseded PR now closes the review task with a `## Resolution` verdict (`merged`/`closed_unmerged` → completed, `superseded` → aborted) instead of parking it in the human triage pile
 
