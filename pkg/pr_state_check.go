@@ -16,6 +16,8 @@ import (
 // narrow interface — not a reference to pkg/github — because pkg/github
 // already imports pkg (for Verdict), so the steps in pkg cannot import
 // the concrete client without an import cycle.
+//
+//counterfeiter:generate -o ../mocks/pr-state-client.go --fake-name PRStateClient . PRStateClient
 type PRStateClient interface {
 	PRState(ctx context.Context, prURL string) (state, mergedAt, headRefOid string, err error)
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/bborbe/errors"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
+	"github.com/golang/glog"
 )
 
 // PRBranches holds the source and target branch names of a pull request.
@@ -160,6 +161,7 @@ func (c *ghClient) PRState(
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		glog.V(2).Infof("gh pr view pr_url=%s err=%v", prURL, err)
 		return "", "", "", errors.Wrapf(
 			ctx,
 			err,
@@ -174,6 +176,8 @@ func (c *ghClient) PRState(
 		HeadRefOid string `json:"headRefOid"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		glog.V(2).
+			Infof("gh pr view pr_url=%s err=%v body=%q", prURL, err, strings.TrimSpace(stdout.String()))
 		return "", "", "", errors.Wrapf(
 			ctx,
 			err,
@@ -182,6 +186,13 @@ func (c *ghClient) PRState(
 		)
 	}
 
+	glog.V(2).Infof(
+		"gh pr view pr_url=%s state=%s merged_at=%s head_ref_oid=%s",
+		prURL,
+		result.State,
+		result.MergedAt,
+		result.HeadRefOid,
+	)
 	return result.State, result.MergedAt, result.HeadRefOid, nil
 }
 
