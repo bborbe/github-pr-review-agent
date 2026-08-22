@@ -29,6 +29,24 @@ type GitHubClient struct {
 		result1 github.PRBranches
 		result2 error
 	}
+	PRStateStub        func(context.Context, string) (string, string, string, error)
+	pRStateMutex       sync.RWMutex
+	pRStateArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	pRStateReturns struct {
+		result1 string
+		result2 string
+		result3 string
+		result4 error
+	}
+	pRStateReturnsOnCall map[int]struct {
+		result1 string
+		result2 string
+		result3 string
+		result4 error
+	}
 	PostCommentStub        func(context.Context, string, string, int, string) error
 	postCommentMutex       sync.RWMutex
 	postCommentArgsForCall []struct {
@@ -129,6 +147,77 @@ func (fake *GitHubClient) GetPRBranchesReturnsOnCall(i int, result1 github.PRBra
 		result1 github.PRBranches
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *GitHubClient) PRState(arg1 context.Context, arg2 string) (string, string, string, error) {
+	fake.pRStateMutex.Lock()
+	ret, specificReturn := fake.pRStateReturnsOnCall[len(fake.pRStateArgsForCall)]
+	fake.pRStateArgsForCall = append(fake.pRStateArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.PRStateStub
+	fakeReturns := fake.pRStateReturns
+	fake.recordInvocation("PRState", []interface{}{arg1, arg2})
+	fake.pRStateMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3, ret.result4
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3, fakeReturns.result4
+}
+
+func (fake *GitHubClient) PRStateCallCount() int {
+	fake.pRStateMutex.RLock()
+	defer fake.pRStateMutex.RUnlock()
+	return len(fake.pRStateArgsForCall)
+}
+
+func (fake *GitHubClient) PRStateCalls(stub func(context.Context, string) (string, string, string, error)) {
+	fake.pRStateMutex.Lock()
+	defer fake.pRStateMutex.Unlock()
+	fake.PRStateStub = stub
+}
+
+func (fake *GitHubClient) PRStateArgsForCall(i int) (context.Context, string) {
+	fake.pRStateMutex.RLock()
+	defer fake.pRStateMutex.RUnlock()
+	argsForCall := fake.pRStateArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *GitHubClient) PRStateReturns(result1 string, result2 string, result3 string, result4 error) {
+	fake.pRStateMutex.Lock()
+	defer fake.pRStateMutex.Unlock()
+	fake.PRStateStub = nil
+	fake.pRStateReturns = struct {
+		result1 string
+		result2 string
+		result3 string
+		result4 error
+	}{result1, result2, result3, result4}
+}
+
+func (fake *GitHubClient) PRStateReturnsOnCall(i int, result1 string, result2 string, result3 string, result4 error) {
+	fake.pRStateMutex.Lock()
+	defer fake.pRStateMutex.Unlock()
+	fake.PRStateStub = nil
+	if fake.pRStateReturnsOnCall == nil {
+		fake.pRStateReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 string
+			result3 string
+			result4 error
+		})
+	}
+	fake.pRStateReturnsOnCall[i] = struct {
+		result1 string
+		result2 string
+		result3 string
+		result4 error
+	}{result1, result2, result3, result4}
 }
 
 func (fake *GitHubClient) PostComment(arg1 context.Context, arg2 string, arg3 string, arg4 int, arg5 string) error {

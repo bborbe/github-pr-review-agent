@@ -19,6 +19,7 @@ import (
 	"github.com/bborbe/cqrs/base"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
+	"github.com/bborbe/github-pr-review-agent/pkg/github"
 	"github.com/bborbe/github-pr-review-agent/pkg/githubposter"
 	"github.com/bborbe/github-pr-review-agent/pkg/prompts"
 	libkafka "github.com/bborbe/kafka"
@@ -208,10 +209,14 @@ func CreateAgent(
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
+	// Live GitHub PR-state client shared by every phase's prStateCheck
+	// pre/post-flight (gh CLI wrapper, reuses the ghToken auth path).
+	prStateClient := github.NewGHClient(ghToken)
 	planningPhase := agentlib.NewPhase("planning", tokenCheck, prpkg.NewPlanningStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools),
 		prompts.BuildPlanningInstructions(),
 		maxDuration,
+		prStateClient,
 	))
 	executionStep := prpkg.NewCheckoutExecutionStep(
 		repoManager,
@@ -227,6 +232,7 @@ func CreateAgent(
 		currentDateTime,
 		nil, // runner — production builds a fresh ClaudeRunner in runClaude
 		maxDuration,
+		prStateClient,
 	)
 	reviewStep := prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools),
@@ -236,6 +242,7 @@ func CreateAgent(
 		ghToken,
 		botLogin,
 		maxDuration,
+		prStateClient,
 	)
 	return agentlib.NewAgent(
 		planningPhase,
