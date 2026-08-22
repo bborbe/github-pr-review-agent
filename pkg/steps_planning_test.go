@@ -34,6 +34,7 @@ var _ = Describe("planningStep", func() {
 			runner,
 			claudelib.Instructions{},
 			libtime.Duration(25*time.Minute),
+			nil,
 		)
 	})
 
@@ -529,6 +530,7 @@ https://github.com/bborbe/maintainer/pull/14
 				runner,
 				claudelib.Instructions{},
 				libtime.Duration(20*time.Millisecond),
+				nil,
 			)
 			md, err := agentlib.ParseMarkdown(ctx, `---
 ref: abc123
@@ -561,6 +563,7 @@ https://github.com/bborbe/maintainer/pull/14
 				runner,
 				claudelib.Instructions{},
 				libtime.Duration(20*time.Millisecond),
+				nil,
 			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
@@ -595,6 +598,7 @@ https://github.com/bborbe/maintainer/pull/14
 						runner,
 						claudelib.Instructions{},
 						libtime.Duration(20*time.Millisecond),
+						nil,
 					)
 					md, err := agentlib.ParseMarkdown(ctx, `---
 ref: abc123
@@ -632,6 +636,7 @@ https://github.com/bborbe/maintainer/pull/14
 					runner,
 					claudelib.Instructions{},
 					libtime.Duration(20*time.Millisecond),
+					nil,
 				)
 				md, err := agentlib.ParseMarkdown(ctx, `---
 ref: abc123

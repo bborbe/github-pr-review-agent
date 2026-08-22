@@ -7,6 +7,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,10 @@ type Client interface {
 		body string,
 		verdict prpkg.Verdict,
 	) error
+	// PRState fetches the current GitHub state of a pull request:
+	// state (OPEN|MERGED|CLOSED), mergedAt (RFC3339, empty if not
+	// merged), and headRefOid (the PR's current HEAD commit SHA).
+	PRState(ctx context.Context, prURL string) (state, mergedAt, headRefOid string, err error)
 }
 
 // NewGHClient creates a Client that uses the gh CLI.
@@ -129,6 +134,55 @@ func (c *ghClient) PostComment(
 	}
 
 	return nil
+}
+
+// PRState fetches the current GitHub state of a pull request via
+// `gh pr view <pr_url> --json state,mergedAt,headRefOid`. Returns
+// state (OPEN|MERGED|CLOSED), mergedAt (RFC3339, empty if not merged),
+// and headRefOid (the PR's current HEAD commit SHA).
+func (c *ghClient) PRState(
+	ctx context.Context,
+	prURL string,
+) (state, mergedAt, headRefOid string, err error) {
+	// #nosec G204 -- args are validated by caller, prURL from URL parsing
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view",
+		prURL,
+		"--json", "state,mergedAt,headRefOid",
+	)
+
+	// Set GH_TOKEN if configured
+	if c.token != "" {
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+c.token)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", "", "", errors.Wrapf(
+			ctx,
+			err,
+			"gh pr view failed: %s",
+			strings.TrimSpace(stderr.String()),
+		)
+	}
+
+	var result struct {
+		State      string `json:"state"`
+		MergedAt   string `json:"mergedAt"`
+		HeadRefOid string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return "", "", "", errors.Wrapf(
+			ctx,
+			err,
+			"gh pr view returned unparseable JSON: %s",
+			strings.TrimSpace(stdout.String()),
+		)
+	}
+
+	return result.State, result.MergedAt, result.HeadRefOid, nil
 }
 
 // SubmitReview submits a structured review (approve or request-changes) on a pull request.
