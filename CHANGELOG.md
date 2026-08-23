@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update Go to 1.27.0 and github.com/bborbe/agent to v0.82.1, github.com/bborbe/cqrs to v0.6.8, github.com/bborbe/errors to v1.5.20, github.com/bborbe/kafka to v1.25.9, github.com/bborbe/maintainer to v0.50.0, github.com/bborbe/sentry to v1.9.26, github.com/bborbe/service to v1.10.9, github.com/bborbe/time to v1.27.10, github.com/bborbe/vault-cli to v0.114.6
+
 ## v0.4.6
 
 - chore: Fix `make precommit` on the Go 1.27 toolchain — run `gofmt -w` last in the `format` target (after golines) so its wrapping is normalized before the gofmt lint check, and bump `GOLANGCI_LINT_VERSION` v2.12.2 → v2.13.1 (fixes staticcheck `buildir` panic on Go 1.27 AST) + `ERRCHECK_VERSION` v1.10.0 → v1.20.0 (fixes `package "context" without types`) in `tools.env`
