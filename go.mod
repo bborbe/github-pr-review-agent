@@ -2,7 +2,9 @@ module github.com/bborbe/github-pr-review-agent
 
 go 1.27.0
 
-replace github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.0
+replace (
+	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.0
+)
 
 require (
 	github.com/bborbe/agent v0.82.1
