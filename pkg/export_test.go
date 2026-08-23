@@ -88,3 +88,21 @@ func LastCharsForTest(s string, n int) string {
 func AppendDismissDiagnosticForTest(md *agentlib.Markdown, result PostResult) {
 	appendDismissDiagnostic(md, result)
 }
+
+// AdvanceIfAlreadyReviewedForTest exposes advanceIfAlreadyReviewed for unit
+// testing (the ## Review-present idempotency guard).
+func AdvanceIfAlreadyReviewedForTest(md *agentlib.Markdown) *agentlib.Result {
+	s := &checkoutExecutionStep{}
+	return s.advanceIfAlreadyReviewed(md)
+}
+
+// PRStateCheckForTest exposes prStateCheck for unit testing the
+// merged/closed/open-at-head/open-past-head routing + idempotency without
+// exposing it to production callers.
+func PRStateCheckForTest(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+) (*agentlib.Result, error) {
+	return prStateCheck(ctx, md, client)
+}

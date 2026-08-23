@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
@@ -170,6 +171,7 @@ var _ = Describe("Factory", func() {
 				nil,
 				nil,
 				currentDateTime,
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -189,6 +191,7 @@ var _ = Describe("Factory", func() {
 				nil,
 				nil,
 				currentDateTime,
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -310,6 +313,7 @@ var _ = Describe("Factory", func() {
 				"standard",
 				nil,
 				currentDateTime,
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(provider).NotTo(BeNil())
 		})

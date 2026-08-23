@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/github-pr-review-agent/pkg/prompts"
+	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -61,6 +63,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				sampleFindings,
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instructions).To(HaveLen(2))
@@ -92,6 +95,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 					true,
 					sampleFindings,
 					"",
+					libtime.Duration(25*time.Minute),
 				)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -114,6 +118,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				sampleFindings,
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -154,6 +159,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				false,
 				"",
 				"ast-grep runner script not found",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -179,6 +185,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				"{}",
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -203,6 +210,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				"{}",
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -222,6 +230,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				"{}",
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("read plugin command file"))
@@ -238,6 +247,7 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				"{}",
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("base_ref"))
@@ -254,9 +264,37 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				true,
 				"{}",
 				"",
+				libtime.Duration(25*time.Minute),
 			)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("reviewMode"))
+		})
+	})
+
+	Describe("time budget wrap-up contract", func() {
+		It("assembles the wrap-up contract into the prompt the runner receives", func() {
+			writePlugin(fakePlugin)
+
+			instructions, err := prompts.BuildExecutionInstructions(
+				ctx,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"standard",
+				"main",
+				true,
+				sampleFindings,
+				"",
+				libtime.Duration(25*time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			workflow := instructions[0].Content
+			// The budget reaches the prompt as a rendered duration string (25m).
+			Expect(workflow).To(ContainSubstring("25m"))
+			// The wrap-up wording: stop at the budget and flag every unexamined
+			// ## Plan concern as `not verified`.
+			Expect(workflow).To(ContainSubstring("not verified"))
+			Expect(workflow).To(ContainSubstring("STOP"))
+			Expect(workflow).To(ContainSubstring("time budget"))
 		})
 	})
 })

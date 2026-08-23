@@ -13,6 +13,7 @@ import (
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/errors"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
 	prurl "github.com/bborbe/maintainer/prurl"
@@ -38,9 +39,15 @@ type reviewStep struct {
 	verifier     ReviewVerifier // nil = skip verification
 	ghToken      string
 	botLogin     string
+	maxDuration  libtime.Duration // soft REVIEW_MAX_DURATION budget per claude run
+	prState      PRStateClient
 }
 
-// NewReviewStep constructs the ai_review-phase step.
+// NewReviewStep constructs the ai_review-phase step. maxDuration is the soft
+// REVIEW_MAX_DURATION budget enforced on the claude run; expiry routes to
+// human_review without writing ## Verdict. prState queries the live GitHub
+// PR state so a merged/closed/superseded PR short-circuits before routing to
+// human_review (both at step head and after a fail verdict).
 func NewReviewStep(
 	runner claudelib.ClaudeRunner,
 	poster PrPoster,
@@ -48,6 +55,8 @@ func NewReviewStep(
 	verifier ReviewVerifier,
 	ghToken string,
 	botLogin string,
+	maxDuration libtime.Duration,
+	prState PRStateClient,
 ) agentlib.Step {
 	return &reviewStep{
 		runner:       runner,
@@ -56,6 +65,8 @@ func NewReviewStep(
 		verifier:     verifier,
 		ghToken:      ghToken,
 		botLogin:     botLogin,
+		maxDuration:  maxDuration,
+		prState:      prState,
 	}
 }
 
@@ -77,7 +88,16 @@ func (s *reviewStep) ShouldRun(_ context.Context, _ *agentlib.Markdown) (bool, e
 //     out the task).
 //   - ## Verdict missing → call claude with planning + review context,
 //     write ## Verdict, verify the in_progress post, parse + route.
+//
+//nolint:funlen // the soft-budget expiry branch (incl. the salvage write) is required per-phase routing; extracting it hides the human_review-before-##-Verdict ordering AC 2 asserts. 83 lines, 3 over the cap.
 func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.Result, error) {
+	// Pre-flight: if the PR already merged/closed/superseded, the review is
+	// moot — write the terminal verdict and short-circuit before ai_review.
+	result, err := prStateCheck(ctx, md, s.prState)
+	if err != nil || result != nil {
+		return result, err
+	}
+
 	if _, exists := md.FindSection("## Verdict"); exists {
 		glog.V(2).Infof("ai-review: ## Verdict already present — advancing to done")
 		return &agentlib.Result{
@@ -93,8 +113,16 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 
 	prompt := claudelib.BuildPrompt(s.instructions.String(), nil, taskContent)
 
-	runResult, runErr := s.runner.Run(ctx, prompt)
+	runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
 	if runErr != nil {
+		// Budget expiry (fired deadline) → human_review before ## Verdict/post; never retried.
+		// The streamed partial (if any) is salvaged under ## Salvage; never written to ## Verdict.
+		if budgetExpired {
+			glog.V(2).
+				Infof("ai-review: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
+			return budgetExpiredResult("ai-review", s.maxDuration), nil
+		}
 		return &agentlib.Result{
 			Status:  agentlib.AgentStatusFailed,
 			Message: fmt.Sprintf("ai-review claude run failed: %v", runErr),
@@ -131,21 +159,17 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 
 	verdict, err := extractVerdict(ctx, runResult.Result)
 	if err != nil {
+		// Post-flight before routing unparseable → human_review: the PR may
+		// have merged/closed/superseded while the review ran.
+		result, checkErr := prStateCheck(ctx, md, s.prState)
+		if checkErr != nil || result != nil {
+			return result, checkErr
+		}
 		return &agentlib.Result{
 			Status:    agentlib.AgentStatusDone,
 			NextPhase: "human_review",
 			Message:   fmt.Sprintf("ai-review wrote ## Verdict but verdict unparseable: %v", err),
 		}, nil
-	}
-
-	// Dismiss-and-comment is intentionally fire-and-forget: the dismissal
-	// outcome is recorded in ## Diagnostics by tryDismissHallucinated, but
-	// the next-phase routing below still falls through unchanged. A human
-	// owns the final call on every fail verdict — the dismissal only
-	// unblocks the GitHub merge gate, it does not auto-merge or change
-	// where the task lands.
-	if verdict.Verdict == "fail" && len(verdict.Hallucinations) > 0 {
-		s.tryDismissHallucinated(ctx, md, verdict.Hallucinations)
 	}
 
 	if verdict.Verdict == "pass" {
@@ -154,6 +178,35 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 			NextPhase: "done",
 			Message:   verdict.Reason,
 		}, nil
+	}
+
+	return s.routeFailVerdict(ctx, md, verdict)
+}
+
+// routeFailVerdict handles every non-pass verdict: fire-and-forget
+// hallucination dismissal, then the post-flight prStateCheck, then the
+// human_review handoff. Dismiss-and-comment is intentionally
+// fire-and-forget — the dismissal outcome is recorded in ## Diagnostics
+// by tryDismissHallucinated, but the human_review routing below still
+// falls through unchanged. A human owns the final call on every fail
+// verdict; the dismissal only unblocks the GitHub merge gate, it does
+// not auto-merge or change where the task lands.
+//
+// The post-flight before human_review catches the "PR merged while we
+// were reviewing it" and "force-pushed during review" races — verdict=fail
+// no longer parks at human_review if the merge or supersession happened.
+func (s *reviewStep) routeFailVerdict(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	verdict verdictPayload,
+) (*agentlib.Result, error) {
+	if verdict.Verdict == "fail" && len(verdict.Hallucinations) > 0 {
+		s.tryDismissHallucinated(ctx, md, verdict.Hallucinations)
+	}
+
+	result, prStateErr := prStateCheck(ctx, md, s.prState)
+	if prStateErr != nil || result != nil {
+		return result, prStateErr
 	}
 
 	return &agentlib.Result{

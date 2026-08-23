@@ -7,11 +7,14 @@ package pkg_test
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
+	"time"
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
+	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,6 +33,8 @@ var _ = Describe("planningStep", func() {
 		step = pkg.NewPlanningStep(
 			runner,
 			claudelib.Instructions{},
+			libtime.Duration(25*time.Minute),
+			nil,
 		)
 	})
 
@@ -509,6 +514,172 @@ https://github.com/bborbe/maintainer/pull/14
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.NextPhase).To(Equal("human_review"))
 			})
+		})
+	})
+
+	Describe("soft time budget expiry", func() {
+		// AC 2: a budget-terminated run routes to human_review with a
+		// budget-naming message, never to the failed/controller-retry path,
+		// is never retried, and never writes ## Plan.
+		It("routes to human_review with a budget-naming message", func() {
+			runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return nil, runCtx.Err()
+			}
+			budgetStep := pkg.NewPlanningStep(
+				runner,
+				claudelib.Instructions{},
+				libtime.Duration(20*time.Millisecond),
+				nil,
+			)
+			md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+			Expect(result.Message).To(ContainSubstring("soft time budget"))
+			Expect(result.Message).To(ContainSubstring("20ms"))
+			// Budget-terminated runs are not retried and never write ## Plan.
+			Expect(runner.RunCallCount()).To(Equal(1))
+			_, exists := md.FindSection("## Plan")
+			Expect(exists).To(BeFalse())
+		})
+
+		It("routes a run that expires mid-retry-loop immediately (no retry)", func() {
+			runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return nil, runCtx.Err()
+			}
+			budgetStep := pkg.NewPlanningStep(
+				runner,
+				claudelib.Instructions{},
+				libtime.Duration(20*time.Millisecond),
+				nil,
+			)
+			md, err := agentlib.ParseMarkdown(
+				ctx,
+				"# PR Review\n\nhttps://github.com/bborbe/maintainer/pull/14\n",
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+			// The retry loop must NOT retry a budget-terminated run.
+			Expect(runner.RunCallCount()).To(Equal(1))
+		})
+
+		Context("salvage", func() {
+			// AC 5: a budget-terminated run with a captured streamed partial
+			// persists it under the distinct ## Salvage heading (never ## Plan),
+			// still routing done + human_review.
+			It(
+				"persists the captured partial under ## Salvage when the run is killed at the budget",
+				func() {
+					runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+						<-runCtx.Done() // block until the soft budget deadline fires
+						// A killed run returns the bounded streamed partial alongside the
+						// fired-deadline error — the capture shape ExtractBudgetPartial reads.
+						return &claudelib.ClaudeResult{
+							Partial: "partial planning output",
+						}, runCtx.Err()
+					}
+					budgetStep := pkg.NewPlanningStep(
+						runner,
+						claudelib.Instructions{},
+						libtime.Duration(20*time.Millisecond),
+						nil,
+					)
+					md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+					Expect(err).NotTo(HaveOccurred())
+
+					result, err := budgetStep.Run(ctx, md)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+					Expect(result.NextPhase).To(Equal("human_review"))
+					// The partial is persisted under ## Salvage, clearly marked incomplete.
+					section, exists := md.FindSection("## Salvage")
+					Expect(exists).To(BeTrue())
+					Expect(section.Body).To(ContainSubstring("Incomplete"))
+					Expect(section.Body).To(ContainSubstring("partial planning output"))
+					// The normal section is never written on the budget path.
+					_, exists = md.FindSection("## Plan")
+					Expect(exists).To(BeFalse())
+				},
+			)
+
+			// AC 5 negative: an empty capture must not produce a ## Salvage section —
+			// the salvage write is a no-op, yet the run still routes to human_review.
+			It("writes no ## Salvage when the run captured nothing", func() {
+				runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					return nil, runCtx.Err()
+				}
+				budgetStep := pkg.NewPlanningStep(
+					runner,
+					claudelib.Instructions{},
+					libtime.Duration(20*time.Millisecond),
+					nil,
+				)
+				md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(result.Message).To(ContainSubstring("soft time budget"))
+				_, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeFalse())
+			})
+		})
+
+		Context("negative row — non-budget failure keeps the failed path", func() {
+			// Precise-detection contract: only a FIRED run-context deadline
+			// routes to human_review. A runner that crashes immediately (deadline
+			// not fired) keeps the existing failed/controller-retry path.
+			It(
+				"returns AgentStatusFailed (not human_review) when the deadline never fired",
+				func() {
+					runner.RunReturns(nil, stderrors.New("claude CLI crashed"))
+					md, err := agentlib.ParseMarkdown(
+						ctx,
+						"# PR Review\n\nhttps://github.com/bborbe/maintainer/pull/14\n",
+					)
+					Expect(err).NotTo(HaveOccurred())
+					result, err := step.Run(ctx, md)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result.Status).To(Equal(agentlib.AgentStatusFailed))
+					Expect(result.NextPhase).To(BeEmpty())
+					Expect(result.Message).To(ContainSubstring("claude CLI crashed"))
+					_, exists := md.FindSection("## Plan")
+					Expect(exists).To(BeFalse())
+				},
+			)
 		})
 	})
 
