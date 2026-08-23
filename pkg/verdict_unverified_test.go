@@ -43,6 +43,18 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			),
 			true,
 		),
+		// BENIGN regression (2026-08-23 bborbe/math#18, reviewBody_len=1079): a
+		// "not verified" concern that self-describes as not-applicable (config/
+		// docs-only change, no code to verify) must NOT fail-close an approve.
+		// The old regex matched the bare "not verified" substring and demoted a
+		// clean approve → false CHANGES_REQUESTED (admin-merged).
+		Entry(
+			"benign not verified (code logic not applicable — config-only)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":["security: not verified (code logic not applicable — this is a config/changelog-only diff with no Go code changes)"]}`,
+			),
+			false,
+		),
 		// No flagged concern → the gate must not over-trigger.
 		Entry(
 			"no flags",
