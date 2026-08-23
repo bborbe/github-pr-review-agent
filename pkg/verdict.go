@@ -272,7 +272,7 @@ var unverifiedConcernPattern = regexp.MustCompile(`(?i)not verified|unverified`)
 // concerns (no benign explanation) still fail-close, preserving the weak-model
 // MUST-tier protection (SC5).
 var benignUnverifiedPattern = regexp.MustCompile(
-	`(?i)not applicable|config[- ]only|docs?[- ]only|no (go |code |source )?changes|nothing to (verify|check)`,
+	`(?i)not applicable|config[- ]only|(docs?|documentation)[- ]only|no (go |code |source )*changes|nothing to (verify|check)`,
 )
 
 // HasUnverifiedConcerns reports whether the review body's verdict JSON flags
