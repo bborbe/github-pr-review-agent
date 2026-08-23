@@ -5,18 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.6.0
+## Unreleased
 
-- feat: check the live GitHub PR state (`gh pr view --json state,mergedAt,headRefOid`) at the head of every phase and before routing a fail verdict to `human_review` — a merged/closed/superseded PR now closes the review task with a `## Resolution` verdict (`merged`/`closed_unmerged` → completed, `superseded` → aborted) instead of parking it in the human triage pile
-
-## v0.5.0
-
-- feat: persist a budget-terminated run's streamed partial review into a `## Salvage` task section (marked incomplete, distinct from `## Review`, never posted) so every budget overrun ends in a human-reviewable partial
-- feat: add the time-budget wrap-up contract to the execution prompt (stop at the budget, disposition every `## Plan` concern, flag unexamined ones as `not verified`) and fail-close an `approve` that carries any unverified concern to `request-changes`
-- feat: enforce the `REVIEW_MAX_DURATION` soft time budget on every Claude phase run and route budget overruns to `human_review` with a budget-naming message — never a blank `needs_input`, never a retry, never a partial posted
-- feat: add `REVIEW_MAX_DURATION` soft time budget env (default `25m`, floor `60s`) to both entry points, validated at startup, and thread it through `RunConfig`
-- test: lock the `## Review`-present idempotency guard against a `## Salvage` section — a salvaged partial (a distinct, clearly-incomplete heading) can never advance to `ai_review` on a later trigger, and a stale salvage never blocks a completed review
-- feat: bump `github.com/bborbe/agent` to the release that captures the streamed partial review text when a claude run is terminated, and add `pkg.ExtractBudgetPartial` so budget-terminated runs can salvage what the model wrote
+- chore: update Go to 1.27.0 and github.com/bborbe/agent to v0.82.1, github.com/bborbe/cqrs to v0.6.8, github.com/bborbe/errors to v1.5.20, github.com/bborbe/kafka to v1.25.9, github.com/bborbe/maintainer to v0.50.0, github.com/bborbe/sentry to v1.9.26, github.com/bborbe/service to v1.10.9, github.com/bborbe/time to v1.27.10, github.com/bborbe/vault-cli to v0.114.6
 
 ## v0.4.6
 
