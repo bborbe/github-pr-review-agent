@@ -6,7 +6,7 @@ replace github.com/opencontainers/runtime-spec => github.com/opencontainers/runt
 
 require (
 	github.com/bborbe/agent v0.82.1
-	github.com/bborbe/argument/v2 v2.12.36
+	github.com/bborbe/argument/v2 v2.12.37
 	github.com/bborbe/cqrs v0.6.8
 	github.com/bborbe/errors v1.5.20
 	github.com/bborbe/kafka v1.25.9
@@ -14,7 +14,7 @@ require (
 	github.com/bborbe/sentry v1.9.26
 	github.com/bborbe/service v1.10.9
 	github.com/bborbe/time v1.27.10
-	github.com/bborbe/vault-cli v0.114.6
+	github.com/bborbe/vault-cli v0.114.7
 	github.com/golang/glog v1.2.5
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
@@ -29,9 +29,9 @@ require (
 	github.com/bborbe/http v1.26.24 // indirect
 	github.com/bborbe/k8s v1.14.11 // indirect
 	github.com/bborbe/kv v1.21.11 // indirect
-	github.com/bborbe/log v1.6.23 // indirect
-	github.com/bborbe/math v1.3.21 // indirect
-	github.com/bborbe/metrics v0.5.13 // indirect
+	github.com/bborbe/log v1.6.24 // indirect
+	github.com/bborbe/math v1.4.0 // indirect
+	github.com/bborbe/metrics v0.5.14 // indirect
 	github.com/bborbe/parse v1.10.21 // indirect
 	github.com/bborbe/run v1.9.37 // indirect
 	github.com/bborbe/strimzi v1.8.14 // indirect
