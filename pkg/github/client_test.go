@@ -111,6 +111,37 @@ var _ = Describe("Client", func() {
 		// We would need to refactor ghClient to accept an injectable command executor.
 	})
 
+	Context("PRState", func() {
+		It("fails for an unreachable PR URL", func() {
+			client := github.NewGHClient("")
+			_, _, _, err := client.PRState(
+				ctx,
+				"https://github.com/nonexistent-owner/nonexistent-repo/pull/1",
+			)
+			// 404 from gh against a non-existent repo — validates the shell-out
+			// + error surface regardless of whether gh CLI is present locally.
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("respects context cancellation", func() {
+			client := github.NewGHClient("")
+			cancelCtx, cancel := context.WithCancel(ctx)
+			cancel() // Cancel immediately
+			_, _, _, err := client.PRState(
+				cancelCtx,
+				"https://github.com/nonexistent-owner/nonexistent-repo/pull/1",
+			)
+			Expect(err).To(HaveOccurred())
+		})
+
+		// NOTE: Success path tests (MERGED/CLOSED/OPEN state routing) are not
+		// practical without refactoring. The ghClient uses exec.CommandContext
+		// internally, which cannot be mocked without injecting a command executor
+		// interface. The routing logic over the three states is covered by
+		// pr_state_check_test.go via the counterfeiter fake — the concrete
+		// client's contract here is just the shell-out + error surface.
+	})
+
 	// NOTE: Success path tests for GetPRBranch and PostComment are not practical
 	// without refactoring. The ghClient uses exec.CommandContext internally, which
 	// cannot be mocked without injecting a command executor interface. To test:

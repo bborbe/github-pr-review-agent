@@ -251,6 +251,40 @@ func ParseVerdict(reviewText string) Result {
 // never posts as a clean approve. Recognized by isFailClosedReason for logging.
 const ReasonFunnelDidNotRun = "mechanical funnel did not run"
 
+// ReasonConcernsNotVerified is the fail-closed Result.Reason set when the review
+// flags one or more ## Plan concerns as "not verified" (unexamined at the time
+// budget) yet still emits approve. The verdict is overridden to request-changes
+// so an incomplete review can never green-light a PR.
+const ReasonConcernsNotVerified = "one or more ## Plan concerns not verified"
+
+// unverifiedConcernPattern matches a ## Plan concern the model flagged as
+// "not verified" in the execution output format's concerns_addressed list.
+var unverifiedConcernPattern = regexp.MustCompile(`(?i)not verified|unverified`)
+
+// HasUnverifiedConcerns reports whether the review body's verdict JSON flags
+// any ## Plan concern as "not verified" — i.e. the model stopped investigating
+// at the time budget before examining it. An approve that flags any concern
+// must be fail-closed to request-changes (see postAndRoute). Returns false for
+// a missing/malformed verdict block or an empty concerns list (no over-trigger).
+func HasUnverifiedConcerns(reviewText string) bool {
+	block, _, ok := findVerdictBlock(reviewText)
+	if !ok {
+		return false
+	}
+	var payload struct {
+		ConcernsAddressed []string `json:"concerns_addressed"`
+	}
+	if err := json.Unmarshal([]byte(block), &payload); err != nil {
+		return false
+	}
+	for _, concern := range payload.ConcernsAddressed {
+		if unverifiedConcernPattern.MatchString(concern) {
+			return true
+		}
+	}
+	return false
+}
+
 // isFailClosedReason reports whether a request-changes Result.Reason came from
 // ParseVerdict fail-closing (empty / unparseable / no-verdict-block / unknown
 // verdict) rather than from a model-authored reason on a genuine request-changes
@@ -263,6 +297,7 @@ func isFailClosedReason(reason string) bool {
 	return reason == "empty review text" ||
 		reason == "no verdict block" ||
 		reason == ReasonFunnelDidNotRun ||
+		reason == ReasonConcernsNotVerified ||
 		strings.HasPrefix(reason, "malformed JSON:") ||
 		strings.HasPrefix(reason, "unknown verdict:")
 }

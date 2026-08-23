@@ -14,6 +14,7 @@ import (
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/errors"
+	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 	"github.com/golang/glog"
 )
@@ -37,16 +38,26 @@ const maxPlanningAttempts = 3
 type planningStep struct {
 	runner       claudelib.ClaudeRunner
 	instructions claudelib.Instructions
+	maxDuration  libtime.Duration
+	prState      PRStateClient
 }
 
-// NewPlanningStep constructs the planning-phase step.
+// NewPlanningStep constructs the planning-phase step. maxDuration is the soft
+// REVIEW_MAX_DURATION budget enforced on each claude run; expiry routes to
+// human_review instead of the controller retry path. prState queries the live
+// GitHub PR state so a merged/closed/superseded PR short-circuits before any
+// planning work.
 func NewPlanningStep(
 	runner claudelib.ClaudeRunner,
 	instructions claudelib.Instructions,
+	maxDuration libtime.Duration,
+	prState PRStateClient,
 ) agentlib.Step {
 	return &planningStep{
 		runner:       runner,
 		instructions: instructions,
+		maxDuration:  maxDuration,
+		prState:      prState,
 	}
 }
 
@@ -75,6 +86,13 @@ func (s *planningStep) ShouldRun(_ context.Context, _ *agentlib.Markdown) (bool,
 //
 // Routes: empty concerns → LGTM POST → done; non-empty → execution phase.
 func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.Result, error) {
+	// Pre-flight: if the PR already merged/closed/superseded, the review is
+	// moot — write the terminal verdict and short-circuit before planning.
+	result, err := prStateCheck(ctx, md, s.prState)
+	if err != nil || result != nil {
+		return result, err
+	}
+
 	if section, exists := md.FindSection("## Plan"); exists {
 		glog.V(2).Infof("planning: ## Plan already present — re-routing without claude")
 		return s.routeFromPlan(ctx, md, section.Body)
@@ -93,8 +111,17 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 
 	var lastParseErr error
 	for attempt := 1; attempt <= maxPlanningAttempts; attempt++ {
-		runResult, runErr := s.runner.Run(ctx, prompt)
+		runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
 		if runErr != nil {
+			// Budget expiry (a FIRED run-context deadline) routes to human_review
+			// and is never retried, never written to ## Plan. The streamed partial
+			// (if any) is salvaged under ## Salvage before the budget result returns.
+			if budgetExpired {
+				glog.V(2).
+					Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+				writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
+				return budgetExpiredResult("planning", s.maxDuration), nil
+			}
 			// Transport error (nil result + err) is NOT retried — controller territory.
 			glog.V(2).Infof("planning: claude failed nextPhase=human_review err=%v", runErr)
 			return &agentlib.Result{

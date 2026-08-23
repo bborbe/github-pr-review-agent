@@ -7,6 +7,8 @@ package pkg_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -41,6 +43,9 @@ var _ = Describe("checkoutExecutionStep", func() {
 			nil,
 			nil,
 			currentDateTime,
+			nil,
+			libtime.Duration(25*time.Minute),
+			nil,
 		)
 	})
 
@@ -295,6 +300,9 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
+						nil,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -321,6 +329,9 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
+						nil,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -347,6 +358,9 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
+						nil,
 					)
 					const nonMatchingTask = "---\nclone_url: https://github.com/bborbe/maintainer.git\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -376,6 +390,9 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
+						nil,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -407,6 +424,9 @@ prior review body
 						nil,
 						nil,
 						currentDateTime,
+						nil,
+						libtime.Duration(25*time.Minute),
+						nil,
 					)
 					const badURLTask = "---\nclone_url: not-a-url\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -484,6 +504,58 @@ prior review body
 
 				md := buildMD(ctx, reviewBody)
 				_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime, true)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+			})
+		})
+
+		Context("fail-closed gate when a concern is flagged not verified", func() {
+			// funnelRan=true so the funnel gate does not interfere — the unverified-
+			// concerns gate must be what demotes the approve.
+			It("fail-closes an approve carrying an unverified concern to request-changes", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 9})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"looks ok","concerns_addressed":["security: rate-limit not verified — stopped at the time budget"]}`+
+						"\n```\n")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
+
+			It("leaves an approve with no unverified concerns untouched (no over-trigger)", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 10})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"clean","concerns_addressed":["security: rate-limit addressed in handler.go:45"]}`+
+						"\n```\n")
+				_, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
 				Expect(err).NotTo(HaveOccurred())
 
 				_, req := fakePoster.PostArgsForCall(0)
@@ -637,6 +709,298 @@ prior review body
 				Expect(diagSection.Body).To(ContainSubstring("review_id: 2"))
 			})
 		})
+	})
+
+	Describe("soft time budget expiry", func() {
+		// AC 2: a budget-terminated execution run routes to human_review with a
+		// budget-naming message BEFORE writing ## Review or posting — never to
+		// the failed/controller-retry path.
+		It("routes to human_review without writing ## Review or posting", func() {
+			tmpDir, err := os.MkdirTemp("", "exec-budget-*")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				Expect(os.RemoveAll(tmpDir)).To(Succeed())
+			}()
+
+			cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+			Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+			Expect(os.WriteFile(
+				filepath.Join(cmdDir, "pr-review.md"),
+				[]byte(
+					"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+				),
+				0600,
+			)).To(Succeed())
+
+			fakeRunner := &mocks.ClaudeRunnerMock{}
+			fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return nil, runCtx.Err()
+			}
+
+			repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+			currentDateTime := libtime.NewCurrentDateTime()
+			budgetStep := pkg.NewCheckoutExecutionStep(
+				repoManager,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"agent",
+				"sonnet",
+				map[string]string{},
+				claudelib.AllowedTools{"Read"},
+				"standard",
+				nil,
+				nil,
+				nil,
+				currentDateTime,
+				fakeRunner,
+				libtime.Duration(20*time.Millisecond),
+				nil,
+			)
+
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+			Expect(result.Message).To(ContainSubstring("soft time budget"))
+			Expect(result.Message).To(ContainSubstring("20ms"))
+			Expect(repoManager.EnsureWorktreeCallCount()).To(Equal(1))
+			// Budget-terminated runs never write ## Review and never post.
+			_, exists := md.FindSection("## Review")
+			Expect(exists).To(BeFalse())
+			_, exists = md.FindSection("## Diagnostics")
+			Expect(exists).To(BeFalse())
+		})
+
+		Context("salvage", func() {
+			// AC 5: a budget-terminated execution run with a captured streamed
+			// partial persists it under the distinct ## Salvage heading (never
+			// ## Review) and never posts — the budget path returns BEFORE
+			// postAndRoute (AC 6 never-posts).
+			It("persists the captured partial under ## Salvage and never posts", func() {
+				tmpDir, err := os.MkdirTemp("", "exec-salvage-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer func() {
+					Expect(os.RemoveAll(tmpDir)).To(Succeed())
+				}()
+
+				cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+				Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+				Expect(os.WriteFile(
+					filepath.Join(cmdDir, "pr-review.md"),
+					[]byte(
+						"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+					),
+					0600,
+				)).To(Succeed())
+
+				fakeRunner := &mocks.ClaudeRunnerMock{}
+				fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					// A killed run returns the bounded streamed partial alongside the
+					// fired-deadline error — the capture shape ExtractBudgetPartial reads.
+					return &claudelib.ClaudeResult{Partial: "partial review output"}, runCtx.Err()
+				}
+				fakePoster := &mocks.PrPoster{}
+
+				repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+				currentDateTime := libtime.NewCurrentDateTime()
+				budgetStep := pkg.NewCheckoutExecutionStep(
+					repoManager,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"agent",
+					"sonnet",
+					map[string]string{},
+					claudelib.AllowedTools{"Read"},
+					"standard",
+					nil,
+					fakePoster,
+					nil,
+					currentDateTime,
+					fakeRunner,
+					libtime.Duration(20*time.Millisecond),
+					nil,
+				)
+
+				md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				// The partial is persisted under ## Salvage, clearly marked incomplete.
+				section, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeTrue())
+				Expect(section.Body).To(ContainSubstring("Incomplete"))
+				Expect(section.Body).To(ContainSubstring("partial review output"))
+				// ## Review is never written and nothing is ever posted on the budget path.
+				_, exists = md.FindSection("## Review")
+				Expect(exists).To(BeFalse())
+				Expect(fakePoster.PostCallCount()).To(Equal(0))
+			})
+
+			// AC 5 negative: an empty capture must not produce a ## Salvage section —
+			// the salvage write is a no-op, yet the run still routes to human_review.
+			It("writes no ## Salvage when the run captured nothing", func() {
+				tmpDir, err := os.MkdirTemp("", "exec-salvage-*")
+				Expect(err).NotTo(HaveOccurred())
+				defer func() {
+					Expect(os.RemoveAll(tmpDir)).To(Succeed())
+				}()
+
+				cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+				Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+				Expect(os.WriteFile(
+					filepath.Join(cmdDir, "pr-review.md"),
+					[]byte(
+						"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+					),
+					0600,
+				)).To(Succeed())
+
+				fakeRunner := &mocks.ClaudeRunnerMock{}
+				fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+					<-runCtx.Done() // block until the soft budget deadline fires
+					return nil, runCtx.Err()
+				}
+				fakePoster := &mocks.PrPoster{}
+
+				repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+				currentDateTime := libtime.NewCurrentDateTime()
+				budgetStep := pkg.NewCheckoutExecutionStep(
+					repoManager,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"agent",
+					"sonnet",
+					map[string]string{},
+					claudelib.AllowedTools{"Read"},
+					"standard",
+					nil,
+					fakePoster,
+					nil,
+					currentDateTime,
+					fakeRunner,
+					libtime.Duration(20*time.Millisecond),
+					nil,
+				)
+
+				md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := budgetStep.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(result.Message).To(ContainSubstring("soft time budget"))
+				// Empty capture → salvage is a no-op.
+				_, exists := md.FindSection("## Salvage")
+				Expect(exists).To(BeFalse())
+				Expect(fakePoster.PostCallCount()).To(Equal(0))
+			})
+		})
+	})
+
+	Describe("advanceIfAlreadyReviewed with a salvaged partial", func() {
+		// AC 6: the ## Review-present idempotency guard must NEVER fire on a
+		// salvaged partial. A budget-terminated run persists its partial under
+		// ## Salvage (a heading deliberately distinct from ## Review), so a
+		// partial can never advance into ai_review on a later trigger.
+		It("returns nil when the task holds only a ## Salvage section (no ## Review)", func() {
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+## Salvage
+
+_Incomplete: this run was terminated at the soft time budget before producing a final result._
+
+partial review text
+`)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pkg.AdvanceIfAlreadyReviewedForTest(md)).To(BeNil())
+		})
+
+		It("returns the done/ai_review result when ## Review is present (regression)", func() {
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+## Review
+
+complete review body
+`)
+			Expect(err).NotTo(HaveOccurred())
+			result := pkg.AdvanceIfAlreadyReviewedForTest(md)
+			Expect(result).NotTo(BeNil())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("ai_review"))
+		})
+
+		It(
+			"returns the done/ai_review result when both ## Salvage and ## Review are present",
+			func() {
+				// A stale salvage from an earlier budget-terminated trigger must not
+				// block a completed ## Review from advancing.
+				md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+## Salvage
+
+_Incomplete: partial output._
+
+partial review text
+
+## Review
+
+complete review body
+`)
+				Expect(err).NotTo(HaveOccurred())
+				result := pkg.AdvanceIfAlreadyReviewedForTest(md)
+				Expect(result).NotTo(BeNil())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("ai_review"))
+			},
+		)
 	})
 
 	Describe("ExtractPRURL", func() {

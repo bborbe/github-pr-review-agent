@@ -2,12 +2,11 @@ module github.com/bborbe/github-pr-review-agent
 
 go 1.27.0
 
-replace (
-	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.0
-)
+replace github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.0
 
 require (
 	github.com/bborbe/agent v0.82.1
+	github.com/bborbe/argument/v2 v2.12.37
 	github.com/bborbe/cqrs v0.6.8
 	github.com/bborbe/errors v1.5.20
 	github.com/bborbe/kafka v1.25.9
@@ -26,7 +25,6 @@ require (
 require (
 	github.com/IBM/sarama v1.60.1 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
-	github.com/bborbe/argument/v2 v2.12.37 // indirect
 	github.com/bborbe/collection v1.20.23 // indirect
 	github.com/bborbe/http v1.26.24 // indirect
 	github.com/bborbe/k8s v1.14.11 // indirect
