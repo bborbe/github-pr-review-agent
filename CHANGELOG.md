@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.3
 
 - fix: key the `HasUnverifiedConcerns` fail-close on the concern's own blocker tiering (MUST-tier "must verify" / "will never fire" / "blocking" language, or a bare unexamined admission) instead of a benign-phrase whitelist — a benign "not verified (could not be cross-checked — source not in this repository)" note no longer demotes a clean `approve` to `CHANGES_REQUESTED` (false-request-changes recurrence 2026-08-24, bborbe/nuke#68, on v0.6.2; re-review posted APPROVED 5 min later)
 
