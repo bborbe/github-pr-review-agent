@@ -142,6 +142,38 @@ var _ = Describe("Client", func() {
 		// client's contract here is just the shell-out + error surface.
 	})
 
+	Context("PRDiff", func() {
+		It("fails for an unreachable PR URL", func() {
+			client := github.NewGHClient("")
+			_, err := client.PRDiff(
+				ctx,
+				"https://github.com/nonexistent-owner/nonexistent-repo/pull/1",
+			)
+			// 404 from gh against a non-existent repo — validates the shell-out
+			// + error surface regardless of whether gh CLI is present locally.
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("respects context cancellation", func() {
+			client := github.NewGHClient("")
+			cancelCtx, cancel := context.WithCancel(ctx)
+			cancel() // Cancel immediately
+			_, err := client.PRDiff(
+				cancelCtx,
+				"https://github.com/nonexistent-owner/nonexistent-repo/pull/1",
+			)
+			Expect(err).To(HaveOccurred())
+		})
+
+		// NOTE: Success path tests (diff fetching + routing) are not practical
+		// without refactoring. The ghClient uses exec.CommandContext internally,
+		// which cannot be mocked without injecting a command executor interface.
+		// The success-path wiring — the fetched diff reaching the ai_review
+		// verifier prompt — is covered by the fake-runner wiring rows in
+		// pkg/steps_review_test.go; the concrete client's contract here is just
+		// the shell-out + error surface.
+	})
+
 	// NOTE: Success path tests for GetPRBranch and PostComment are not practical
 	// without refactoring. The ghClient uses exec.CommandContext internally, which
 	// cannot be mocked without injecting a command executor interface. To test:

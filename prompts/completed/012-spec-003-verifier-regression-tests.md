@@ -1,8 +1,12 @@
 ---
-status: approved
+status: completed
 spec: [003-bug-ai-review-verifier-false-fails-on-gh-unavailable]
+execution_id: github-pr-review-agent-exec-012-spec-003-verifier-regression-tests
+dark-factory-version: dev
 created: "2026-08-27T22:44:08Z"
 queued: "2026-08-28T06:11:44Z"
+started: "2026-08-29T23:07:30Z"
+completed: "2026-08-29T23:10:43Z"
 ---
 
 # Regression-lock the ai_review verifier inline-diff behavior

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - fix: ai_review verifier now verifies hallucinated citations against the PR raw diff embedded inline in the verifier preamble (host-fetched via `gh pr diff`, supplied under `## Environment` as `PR Diff` + `Posted Review Comments`) instead of a model-run `gh pr diff` shell-out — the false "gh is not available" failure disappears and the check always has real ground truth — and the ai_review tool allowlist drops its `gh pr` Bash entries (reviewTools is now `Read`/`Grep` only)
+- test: regression-lock the ai_review verifier inline-diff behavior — Ginkgo rows assert the diff + posted review comments reach the verifier prompt, a sound review passes without `human_review` escalation, and a fabricated citation still fails with the hallucination naming the fabricated comment (`pkg/steps_review_test.go`); the `ReviewTools` allowlist test locks `Read`/`Grep` only (`pkg/factory`); `PRDiff` subprocess tests cover the shell-out + error surface (`pkg/github/client_test.go`)
 
 ## v0.6.3
 

@@ -854,6 +854,134 @@ var _ = Describe("dismiss-and-comment routing", func() {
 	// design — kept as a belt-and-suspenders guard for future regex changes.
 })
 
+var _ = Describe("verifier diff embedding", func() {
+	// Regression locks for the ai_review verifier preamble wiring (spec 003):
+	// the host-fetched PR raw diff and the posted ## Review comments must reach
+	// the verifier's claude prompt, a sound review must pass without human_review
+	// escalation, and a genuine hallucination (file/line absent from the diff)
+	// must still fail with the hallucination object naming the fabricated comment.
+	// All rows use the fake runner — no live Claude, no network.
+
+	var (
+		ctx     context.Context
+		runner  *mocks.ClaudeRunnerMock
+		poster  *mocks.PrPoster
+		prState *mocks.PRStateClient
+		step    agentlib.Step
+	)
+
+	const (
+		prURL      = "https://github.com/bborbe/maintainer/pull/2"
+		inlineDiff = "diff --git a/pkg/foo.go b/pkg/foo.go\n" +
+			"@@ -95,6 +95,7 @@ func foo() {\n" +
+			"+ added line\n"
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		runner = &mocks.ClaudeRunnerMock{}
+		poster = &mocks.PrPoster{}
+		prState = &mocks.PRStateClient{}
+		// headRefOid MUST equal the fixture's frontmatter ref: abc123 — the
+		// prStateCheck pre-flight routes OPEN + ref != headRefOid to superseded
+		// (closeMoot) BEFORE the default branch, which would short-circuit every
+		// row without a runner call or a diff fetch.
+		prState.PRStateReturns("OPEN", "", "abc123", nil)
+		prState.PRDiffReturns(inlineDiff, nil)
+		step = pkg.NewReviewStep(
+			runner,
+			poster,
+			claudelib.Instructions{},
+			nil,
+			"test-token",
+			"test-bot",
+			libtime.Duration(25*time.Minute),
+			prState,
+		)
+	})
+
+	mdWithReview := func(reviewBody string) *agentlib.Markdown {
+		md, err := agentlib.ParseMarkdown(ctx,
+			"---\nref: abc123\n---\n\nReview the PR at "+prURL+"\n\n## Review\n\n"+reviewBody)
+		Expect(err).NotTo(HaveOccurred())
+		return md
+	}
+
+	It("embeds the PR raw diff and the posted review comments in the verifier prompt", func() {
+		// Wiring row (spec AC 2): the prompt the verifier runs against carries
+		// both the raw diff (host-fetched via gh pr diff) and the posted review
+		// comments as host-supplied context. Deleting the envContext wiring in
+		// reviewStep.Run removes both from the prompt and flips this row to fail.
+		reviewBody := "line 97 in pkg/foo.go"
+		runner.RunReturns(&claudelib.ClaudeResult{
+			Result: `{"verdict":"pass","reason":"all cited files/lines in diff"}`,
+		}, nil)
+		md := mdWithReview(reviewBody)
+
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).NotTo(BeNil())
+		Expect(prState.PRDiffCallCount()).To(Equal(1))
+		_, prompt := runner.RunArgsForCall(0)
+		Expect(prompt).To(ContainSubstring(inlineDiff))
+		Expect(prompt).To(ContainSubstring("Posted Review Comments"))
+		Expect(prompt).To(ContainSubstring(reviewBody))
+		Expect(result.NextPhase).To(Equal("done"))
+	})
+
+	It("passes a review whose cited file + line exist in the supplied inline diff", func() {
+		// Clean-pass row (spec AC 3): pkg/foo.go line 97 is inside the
+		// @@ -95,6 +95,7 @@ hunk, so the verifier has the ground truth to
+		// confirm it. The pass verdict routes to done — never human_review.
+		runner.RunReturns(&claudelib.ClaudeResult{
+			Result: `{"verdict":"pass","reason":"all cited files/lines in diff"}`,
+		}, nil)
+		md := mdWithReview("line 97 in pkg/foo.go")
+
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).NotTo(BeNil())
+		Expect(prState.PRDiffCallCount()).To(Equal(1))
+		_, prompt := runner.RunArgsForCall(0)
+		Expect(prompt).To(ContainSubstring("@@ -95,6 +95,7 @@"))
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("done"))
+	})
+
+	It(
+		"fails a review citing a file/line absent from the inline diff and escalates to human_review",
+		func() {
+			// Fabricated-hallucination row (spec AC 4): pkg/notpresent.go:99 is not
+			// touched by the canned diff, so the verifier — given the diff as ground
+			// truth — rejects the citation. The fail verdict routes to human_review
+			// and the dismissal carries the hallucination naming the fabricated
+			// comment.
+			runner.RunReturns(
+				&claudelib.ClaudeResult{
+					Result: `{"verdict":"fail","reason":"line 99 not in diff","hallucinations":` +
+						`[{"file":"pkg/notpresent.go","line":99,"issue":"line 99 not in diff"}]}`,
+				},
+				nil,
+			)
+			poster.DismissCurrentReviewReturns(pkg.PostResult{Outcome: "success", HTTPStatus: 200})
+			md := mdWithReview("line 99 in pkg/notpresent.go")
+
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.NextPhase).To(Equal("human_review"))
+			_, prompt := runner.RunArgsForCall(0)
+			Expect(prompt).To(ContainSubstring(inlineDiff))
+			Expect(poster.DismissCurrentReviewCallCount()).To(Equal(1))
+			_, _, _, hallucinations := poster.DismissCurrentReviewArgsForCall(0)
+			Expect(hallucinations).To(HaveLen(1))
+			Expect(hallucinations[0].File).To(Equal("pkg/notpresent.go"))
+			Expect(hallucinations[0].Line).To(Equal(99))
+			Expect(hallucinations[0].Issue).To(Equal("line 99 not in diff"))
+		},
+	)
+})
+
 var _ = Describe("shouldVerifyPost", func() {
 	var ctx context.Context
 

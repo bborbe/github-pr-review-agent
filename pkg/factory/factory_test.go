@@ -24,6 +24,29 @@ import (
 )
 
 var _ = Describe("Factory", func() {
+	Describe("ReviewTools", func() {
+		tools := factory.ReviewTools
+
+		It("grants the read-only review tools", func() {
+			Expect(tools).To(ContainElement("Read"))
+			Expect(tools).To(ContainElement("Grep"))
+		})
+
+		It("locks the allowlist to exactly Read and Grep", func() {
+			Expect(tools).To(HaveLen(2))
+		})
+
+		It("grants no Bash and no gh pr entries", func() {
+			// Spec 003 AC 1: the two gh-pr shell-out entries are gone and no
+			// general Bash was added — the ai_review phase reads the diff from
+			// the host-supplied preamble, never by shelling out.
+			for _, tool := range tools {
+				Expect(tool).NotTo(ContainSubstring("Bash"))
+				Expect(tool).NotTo(ContainSubstring("gh pr"))
+			}
+		})
+	})
+
 	Describe("ExecutionTools", func() {
 		tools := factory.ExecutionTools
 
