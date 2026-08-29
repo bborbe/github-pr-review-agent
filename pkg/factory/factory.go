@@ -100,7 +100,6 @@ var (
 	}
 	reviewTools = claudelib.AllowedTools{
 		"Read", "Grep",
-		"Bash(gh pr view:*)", "Bash(gh pr diff:*)",
 	}
 )
 

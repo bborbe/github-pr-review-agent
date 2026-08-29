@@ -89,7 +89,7 @@ func (s *reviewStep) ShouldRun(_ context.Context, _ *agentlib.Markdown) (bool, e
 //   - ## Verdict missing → call claude with planning + review context,
 //     write ## Verdict, verify the in_progress post, parse + route.
 //
-//nolint:funlen // the soft-budget expiry branch (incl. the salvage write) is required per-phase routing; extracting it hides the human_review-before-##-Verdict ordering AC 2 asserts. 83 lines, 3 over the cap.
+//nolint:funlen // the soft-budget expiry branch (incl. the salvage write) is required per-phase routing; extracting it hides the human_review-before-##-Verdict ordering AC 2 asserts. The verifier-preamble call (buildVerifierPreamble) must precede the claude run — the fail-closed ordering is what AC 4 asserts. 83 lines, 3 over the cap.
 func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.Result, error) {
 	// Pre-flight: if the PR already merged/closed/superseded, the review is
 	// moot — write the terminal verdict and short-circuit before ai_review.
@@ -111,7 +111,15 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 		return nil, errors.Wrapf(ctx, err, "ai-review marshal task")
 	}
 
-	prompt := claudelib.BuildPrompt(s.instructions.String(), nil, taskContent)
+	// Verifier preamble: hand the verifier the ground truth it checks against —
+	// the raw PR diff and the posted review comments — as host-supplied prompt
+	// text instead of letting the model shell out to `gh`.
+	envContext, earlyResult := s.buildVerifierPreamble(ctx, md)
+	if earlyResult != nil {
+		return earlyResult, nil
+	}
+
+	prompt := claudelib.BuildPrompt(s.instructions.String(), envContext, taskContent)
 
 	runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
 	if runErr != nil {
@@ -181,6 +189,42 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 	}
 
 	return s.routeFailVerdict(ctx, md, verdict)
+}
+
+// buildVerifierPreamble assembles the ## Environment context for the
+// verifier prompt: the raw PR diff (host-fetched via gh so the model
+// never shells out) and the posted ## Review body. envContext must stay
+// non-nil from the start — an empty map renders byte-identically to the
+// old `nil` argument (BuildPrompt skips ## Environment when len == 0).
+// Returns a non-nil Result when the diff cannot be fetched: fail-closed,
+// a verifier with no diff must never pass.
+func (s *reviewStep) buildVerifierPreamble(
+	ctx context.Context,
+	md *agentlib.Markdown,
+) (map[string]string, *agentlib.Result) {
+	envContext := make(map[string]string)
+	if s.prState != nil {
+		prURLStr := githubPRURLPattern.FindString(md.Preamble)
+		if prURLStr == "" {
+			return nil, &agentlib.Result{
+				Status:  agentlib.AgentStatusFailed,
+				Message: "ai_review: no GitHub PR URL in preamble — cannot fetch diff",
+			}
+		}
+		diff, err := s.prState.PRDiff(ctx, prURLStr)
+		if err != nil {
+			glog.Warningf("ai_review: fetch PR diff failed pr_url=%s err=%v", prURLStr, err)
+			return nil, &agentlib.Result{
+				Status:  agentlib.AgentStatusFailed,
+				Message: fmt.Sprintf("ai_review: fetch PR diff failed: %v", err),
+			}
+		}
+		envContext["PR Diff"] = diff
+	}
+	if sec, ok := md.FindSection("## Review"); ok && sec != nil {
+		envContext["Posted Review Comments"] = sec.Body
+	}
+	return envContext, nil
 }
 
 // routeFailVerdict handles every non-pass verdict: fire-and-forget

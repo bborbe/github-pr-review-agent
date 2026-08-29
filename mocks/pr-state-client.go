@@ -12,6 +12,20 @@ import (
 )
 
 type PRStateClient struct {
+	PRDiffStub        func(context.Context, string) (string, error)
+	pRDiffMutex       sync.RWMutex
+	pRDiffArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	pRDiffReturns struct {
+		result1 string
+		result2 error
+	}
+	pRDiffReturnsOnCall map[int]struct {
+		result1 string
+		result2 error
+	}
 	PRStateStub        func(context.Context, string) (string, string, string, error)
 	pRStateMutex       sync.RWMutex
 	pRStateArgsForCall []struct {
@@ -32,6 +46,71 @@ type PRStateClient struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *PRStateClient) PRDiff(arg1 context.Context, arg2 string) (string, error) {
+	fake.pRDiffMutex.Lock()
+	ret, specificReturn := fake.pRDiffReturnsOnCall[len(fake.pRDiffArgsForCall)]
+	fake.pRDiffArgsForCall = append(fake.pRDiffArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.PRDiffStub
+	fakeReturns := fake.pRDiffReturns
+	fake.recordInvocation("PRDiff", []interface{}{arg1, arg2})
+	fake.pRDiffMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *PRStateClient) PRDiffCallCount() int {
+	fake.pRDiffMutex.RLock()
+	defer fake.pRDiffMutex.RUnlock()
+	return len(fake.pRDiffArgsForCall)
+}
+
+func (fake *PRStateClient) PRDiffCalls(stub func(context.Context, string) (string, error)) {
+	fake.pRDiffMutex.Lock()
+	defer fake.pRDiffMutex.Unlock()
+	fake.PRDiffStub = stub
+}
+
+func (fake *PRStateClient) PRDiffArgsForCall(i int) (context.Context, string) {
+	fake.pRDiffMutex.RLock()
+	defer fake.pRDiffMutex.RUnlock()
+	argsForCall := fake.pRDiffArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *PRStateClient) PRDiffReturns(result1 string, result2 error) {
+	fake.pRDiffMutex.Lock()
+	defer fake.pRDiffMutex.Unlock()
+	fake.PRDiffStub = nil
+	fake.pRDiffReturns = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *PRStateClient) PRDiffReturnsOnCall(i int, result1 string, result2 error) {
+	fake.pRDiffMutex.Lock()
+	defer fake.pRDiffMutex.Unlock()
+	fake.PRDiffStub = nil
+	if fake.pRDiffReturnsOnCall == nil {
+		fake.pRDiffReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 error
+		})
+	}
+	fake.pRDiffReturnsOnCall[i] = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *PRStateClient) PRState(arg1 context.Context, arg2 string) (string, string, string, error) {

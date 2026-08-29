@@ -8,6 +8,9 @@ automation acts on it.
 
 - `## Plan` — the original review scope (focus areas, concerns)
 - `## Review` — what the executor produced (verdict, summary, comments)
+- Under `## Environment` in the prompt preamble: `PR Diff` (the raw
+  unified diff of the pull request) and `Posted Review Comments` (the
+  `## Review` body the executor posted) — both supplied by the host.
 
 ## Three Checks
 
@@ -15,9 +18,10 @@ automation acts on it.
    either address it (with a comment) or confirm it's a non-issue (in
    `concerns_addressed`)? Any concern silently dropped is a fail signal.
 
-2. **No hallucinations.** For each comment in `## Review`, run
-   `gh pr diff <url>` and verify the cited file + line number actually
-   exist in the diff. A comment on a non-existent line is a hallucination.
+2. **No hallucinations.** For each comment in `## Review`, verify the
+   cited file + line number actually exist in the inline diff provided
+   under `## Environment` (`PR Diff`). A comment citing a file or line
+   absent from the inline diff is a hallucination.
 
 3. **Verdict consistency.** Does the verdict match the comments?
    - `approve` + critical/major comments → inconsistent
@@ -30,7 +34,8 @@ automation acts on it.
   - `pass` — all three checks pass
   - `fail` — any check fails (write reason)
 - If `## Plan` or `## Review` are missing / unparseable, return `needs_input`.
-- If `gh` calls fail during hallucination check, return `failed`.
+- Do NOT run `gh` or any shell command — no Bash tool is available; the
+  diff is already provided inline under `## Environment`.
 - Be skeptical. Your value is catching the cases where the executor
   rubber-stamped its own reasoning. A "looks good!" verdict on a
   half-reviewed PR is exactly what this phase is here to catch.

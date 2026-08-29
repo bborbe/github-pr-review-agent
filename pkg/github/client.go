@@ -42,6 +42,9 @@ type Client interface {
 	// state (OPEN|MERGED|CLOSED), mergedAt (RFC3339, empty if not
 	// merged), and headRefOid (the PR's current HEAD commit SHA).
 	PRState(ctx context.Context, prURL string) (state, mergedAt, headRefOid string, err error)
+	// PRDiff fetches the raw unified diff of a pull request via the gh CLI.
+	// Same auth path as PRState.
+	PRDiff(ctx context.Context, prURL string) (string, error)
 }
 
 // NewGHClient creates a Client that uses the gh CLI.
@@ -194,6 +197,39 @@ func (c *ghClient) PRState(
 		result.HeadRefOid,
 	)
 	return result.State, result.MergedAt, result.HeadRefOid, nil
+}
+
+// PRDiff fetches the raw unified diff of a pull request via
+// `gh pr diff <pr_url>`. Returns the diff verbatim (no trimming or
+// parsing) so the ai_review verifier can check cited file + line numbers
+// against the real change set.
+func (c *ghClient) PRDiff(
+	ctx context.Context,
+	prURL string,
+) (string, error) {
+	// #nosec G204 -- args are validated by caller, prURL from URL parsing
+	cmd := exec.CommandContext(ctx, "gh", "pr", "diff", prURL)
+
+	// Set GH_TOKEN if configured
+	if c.token != "" {
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+c.token)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		glog.V(2).Infof("gh pr diff pr_url=%s err=%v", prURL, err)
+		return "", errors.Wrapf(
+			ctx,
+			err,
+			"gh pr diff failed: %s",
+			strings.TrimSpace(stderr.String()),
+		)
+	}
+
+	return stdout.String(), nil
 }
 
 // SubmitReview submits a structured review (approve or request-changes) on a pull request.

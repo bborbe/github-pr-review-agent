@@ -20,6 +20,9 @@ import (
 //counterfeiter:generate -o ../mocks/pr-state-client.go --fake-name PRStateClient . PRStateClient
 type PRStateClient interface {
 	PRState(ctx context.Context, prURL string) (state, mergedAt, headRefOid string, err error)
+	// PRDiff fetches the raw unified diff of a pull request via the gh CLI.
+	// Satisfied by pkg/github.Client (the gh CLI wrapper), same auth path as PRState.
+	PRDiff(ctx context.Context, prURL string) (string, error)
 }
 
 // ResolutionOutput is the typed contract for the `## Resolution` JSON
