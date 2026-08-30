@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-08-27T22:40:44Z"
 generating: "2026-08-28T06:11:53Z"
 prompted: "2026-08-28T06:11:53Z"
 verifying: "2026-08-29T23:10:44Z"
+completed: "2026-08-30T16:05:58Z"
 branch: dark-factory/bug-ai-review-verifier-false-fails-on-gh-unavailable
 ---
 
@@ -57,26 +58,55 @@ None for the agent. Affected PRs are unblocked by operators clearing the `human_
 - [ ] Ginkgo regression-lock (clean pass): a clean review whose cited file + line are present in the supplied inline diff passes the verifier and does not escalate to `human_review` — evidence: `go test ./pkg/...` exits 0 with the row green; removing the inline-diff wiring flips the row to fail
 - [ ] Ginkgo regression-lock (fabricated hallucination): a comment citing a file/line absent from the supplied inline diff fails the verifier and the returned hallucination object names that fabricated comment — evidence: `go test ./pkg/...` exits 0 with the row green
 - [ ] `pkg/prompts/review_workflow.md` instructs the verifier to verify each cited file + line against the supplied inline diff and no longer against a live `gh pr diff` — evidence: `grep -n -i 'gh pr diff' pkg/prompts/review_workflow.md` returns 0 lines AND `grep -n -i 'inline diff' pkg/prompts/review_workflow.md` returns line ≥ 1 (file content)
-- [ ] **Post-Deploy (Rung-2):** on a small PR in the dev allowlist repo (`github.com/bborbe/go-skeleton`) that draws a non-LGTM review (so the verifier path executes), the newest review Job pod completes the verifier without the false-fail and the review is not parked at `human_review` — evidence: `kubectlnukedev -n dev logs <newest job pod> | grep -c 'gh is not available'` returns 0 AND the review task file's `## Verdict` section records the ai_review meta-verdict `pass` (the verifier completed, not failed) — evidence: `grep -c 'verdict: pass' <task file>` returns line ≥ 1 AND `grep '^phase:' <task file>` returns a terminal verdict value (`done`), not `human_review`.
+- [ ] **Post-Deploy (Rung-2):** on a small PR in the dev allowlist repo (`github.com/bborbe/go-skeleton`) that draws a non-LGTM review (so the verifier path executes), the newest review Job pod completes the verifier without the false-fail and the review is not parked at `human_review` — evidence: `kubectlnukedev -n dev logs <newest job pod> | grep -c 'gh is not available'` returns 0 AND the review task file's `## Verdict` section records the ai_review meta-verdict `pass` (the verifier completed, not failed) — evidence: `grep -c '"verdict": "pass"' <task file>` returns line ≥ 1 AND `grep '^phase:' <task file>` returns a terminal verdict value (`done`), not `human_review`.
   - `deploy_check:` `kubectlnukedev -n dev get config.agent.benjamin-borbe.de github-pr-review-agent -o jsonpath='{.spec.image}'`
-  - `deploy_target:` `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.6.4`
-- [ ] **Post-Deploy (Rung-3):** on a small PR in the prod allowlist repo (`github.com/bborbe/dark-factory`, the observed incident repo) that draws a non-LGTM review, the newest review Job pod completes the verifier without the false-fail — evidence: `kubectlnukeprod -n prod logs <newest job pod> | grep -c 'gh is not available'` returns 0 AND the review task file's `## Verdict` section records the ai_review meta-verdict `pass` (the verifier completed, not failed) — evidence: `grep -c 'verdict: pass' <task file>` returns line ≥ 1 AND `grep '^phase:' <task file>` returns a terminal verdict value (`done`), not `human_review`.
+  - `deploy_target:` `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.6.5`
+- [ ] **Post-Deploy (Rung-3):** on a small PR in the prod allowlist repo (`github.com/bborbe/dark-factory`, the observed incident repo) that draws a non-LGTM review, the newest review Job pod completes the verifier without the false-fail — evidence: `kubectlnukeprod -n prod logs <newest job pod> | grep -c 'gh is not available'` returns 0 AND the review task file's `## Verdict` section records the ai_review meta-verdict `pass` (the verifier completed, not failed) — evidence: `grep -c '"verdict": "pass"' <task file>` returns line ≥ 1 AND `grep '^phase:' <task file>` returns a terminal verdict value (`done`), not `human_review`.
   - `deploy_check:` `kubectlnukeprod -n prod get config.agent.benjamin-borbe.de github-pr-review-agent -o jsonpath='{.spec.image}'`
-  - `deploy_target:` `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.6.4`
+  - `deploy_target:` `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.6.5`
 
 # Verification Status (2026-08-30)
 
-Prompts 2/2 complete. AC 1-6 verified; AC 7 (Rung-3 prod) is the only open gate — it needs an organic non-LGTM prod PR and cannot be forced.
+Prompts 2/2 complete. `/dark-factory:verify-spec 003` ran 2026-08-30 and **refused** — AC 1-5 and AC 7 PASS, **AC 6 FAIL** (its dev evidence predated the deploy). AC 6 was then re-earned on a purpose-built PR, and the two AC-text defects the verifier found were fixed. All ACs now carry evidence; awaiting a re-run. The AC checkboxes above stay unticked — flipping them is the verifier's job, not a hand edit.
+
+AC 1-5 were re-verified first-hand rather than taken on trust: the verifier removed the inline-diff wiring itself, watched all 4 Ginkgo rows flip to FAIL, restored to a byte-clean tree and re-ran green.
+
+The prod-repo substitution flagged earlier was **accepted**, with better reasoning than the note that raised it: prod `REPO_ALLOWLIST` is `github.com/bborbe/*,!github.com/bborbe/go-skeleton`, so `nuke` and `discord-assistant` are not substitutes for "the prod allowlist repo" — they *are* it, under the same wildcard that covers `dark-factory`. The defect lives in repo-agnostic verifier code, so the repo name carries no verification weight.
 
 - **AC 1** ✅ `reviewTools` = `Read`/`Grep` only; `planningTools` unchanged (factory test locks it)
 - **AC 2-4** ✅ Ginkgo rows green; regression lock *proven* — wiring removed → all 3 rows fail → restored → pass
 - **AC 5** ✅ `grep -c 'gh pr diff' pkg/prompts/review_workflow.md` = 0; `inline diff` present
-- **AC 6 (Rung-2 dev)** ✅ `bborbe/go-skeleton#98` on v0.6.5: `"verdict": "pass"`, `Status=done`, `NextPhase=done`, `gh is not available` count = 0, `hallucinations: []`, verifier enumerated the diff line-by-line
-- **AC 7 (Rung-3 prod)** ⏳ deployed (v0.6.5, helm rev 12, CR image confirmed, watcher 1/1) but **not functionally exercised** — awaiting an organic non-LGTM prod PR
+- **AC 6 (Rung-2 dev)** ✅ **satisfied 2026-08-30 15:53Z on a purpose-built PR** — Job `pr-reviewer-agent-f76c4f41-20260830155342`, `bborbe/go-skeleton#99`. Deliberately built as *presence*-based evidence after the first attempt failed (below):
+  - **Image verified from the Job spec, not assumed:** `…/github-pr-review-agent:v0.6.5`.
+  - **The verifier path genuinely ran:** the posted review was `CHANGES_REQUESTED` (non-LGTM), which is the precondition for ai_review spawning at all.
+  - **Third spawn `--allowedTools Read,Grep`** — no `Bash`, no `gh`.
+  - **Zero `Read` tool calls in the entire job**, so the verifier never opened a file from disk.
+  - **`buildVerifierPreamble` skip warning fired 0 times**, so `envContext["PR Diff"]` was populated.
+  - Yet the verifier adjudicated three comments against diff content: *"All comments cite lines that exist in the diff (line 15 time.Now, line 31 fmt.Errorf, and a valid file-level test-coverage comment)"* → `"verdict": "pass"`, `"hallucinations": []`, `{"Status":"done","NextPhase":"done"}`. With no `gh`, no `Bash`, and no `Read`, the inline diff is the only possible source. Corroborating detail: the cited lines are **15/31** while the file on disk has them at **16/32** — diff-relative numbering, not file-relative.
+  - The single `no GitHub PR URL in preamble` line is `steps_review.go:317` (`callVerifier`), the pre-existing skip this spec left untouched.
+
+- **AC 6 — first attempt, FALSIFIED 2026-08-30 by `/dark-factory:verify-spec`** (kept as the record of why the evidence above was rebuilt). The earlier claim here — "`bborbe/go-skeleton#98` on v0.6.5" — was wrong. The two dev runs started 08:28:23Z and 08:58:22Z; the chart bump that put v0.6.5 on dev is `nuke` commit `0a30e35` at **09:02:03Z**, and its own message reads `bump agent v0.6.3 -> v0.6.5` — dev went v0.6.3 → v0.6.5 directly, v0.6.4 never deployed anywhere. **Both dev runs were the pre-fix binary.** Compounding it: AC 6's evidence signature is non-discriminating — the 08:28 v0.6.3 run also yields `"verdict": "pass"`, `phase: done`, `hallucinations: []`, `gh is not available` = 0. The grep set is satisfiable by the unfixed binary, so those runs prove nothing about the fix either way. Re-running needs a fresh go-skeleton PR (#98 was closed 09:02:20Z; no open PRs there).
+  - Related premise wobble worth recording: three **prod** v0.6.3 runs (07:50 / 08:12 / 08:41) also reached `phase: done`, so the spec's Reproduction claim that v0.6.3 "false-fails every run" did not hold on 2026-08-30. Consistent with the task's own note that the failure is model excuse-making rather than a missing binary — i.e. intermittent, which makes any single-day `gh is not available` = 0 weak evidence on its own. The decisive AC 7 evidence is positive, not absence-based (see below).
+- **AC 7 (Rung-3 prod)** ✅ **evidence collected 2026-08-30 14:51–15:08 UTC** — 4 prod Jobs across 2 distinct PRs on v0.6.5, `gh is not available` count = 0 in all four, zero spurious escalations:
+  - `bborbe/nuke#119` — Job `pr-reviewer-agent-5d366a0f-20260830145727`: ai_review `"verdict": "pass"`, `Status=done`, `NextPhase=done`. **This is the AC 7 evidence.**
+  - `bborbe/discord-assistant#37` — three Jobs. The first two (`56cf1742`, `fcca21ee`) returned `verdict=fail` → `human_review`, correctly: holding the diff inline, the verifier enumerated the changed files (`CHANGELOG.md`, `shim/claude_openai_shim.py`, `src/commands.js`) and flagged the review's comment on `test/test_shim.py`, absent from the diff. That is AC 5 firing on real traffic, not a regression. Run three (`9f6b7f89`) returned `NextPhase=done` after the PR was corrected.
+  - The v0.6.5 skip warning fired 0 times; the two `no GitHub PR URL` lines per run are `steps_review.go:317` (`callVerifier`) and `:384` (dismiss) — pre-existing paths this spec left untouched.
+  - **Deviation from the AC text:** the AC names `github.com/bborbe/dark-factory` as the prod repo; the evidence comes from other `bborbe/*` repos. **Adjudicated and accepted** by `/dark-factory:verify-spec` — see the reasoning at the top of this section.
+  - **Stronger evidence added by the verifier run (2026-08-30).** Two further prod jobs on `nuke#120`, both stronger than the four above because the proof is *positive* rather than absence-based:
+    - `pr-reviewer-agent-c8b97098-20260830152725` — the third claude spawn runs `--allowedTools Read,Grep` (no `Bash`, no `gh` at all), yet returns `"verdict": "pass"`, `"hallucinations": []`, `{"Status":"done","NextPhase":"done"}`; durable task file shows `phase: done`, `status: completed`.
+    - `pr-reviewer-agent-f726b93b` (15:10Z) — **the decisive one.** Its verifier, holding only `Read`/`Grep`, wrote: *"line 103 is not present in the provided diff … diff only shows EXECUTOR_VERSION assignment change around line 36"*. It described diff **content it had no tool to fetch**, then emitted a correct hallucination object (`agent/Makefile:103`) → `human_review`. That is the host-supplied inline diff demonstrably working AND the gate still biting — the two things AC 4 and AC 5 exist to prove, observed together on real prod traffic.
+  - Verified distinct log strings: `callVerifier` logs `"ai_review verify: no GitHub PR URL in preamble"`; `buildVerifierPreamble` logs `"ai_review: no GitHub PR URL in task — skipping inline diff"`. The latter fired **0 times** across all prod jobs, so the diff was genuinely embedded every time.
 
 **Post-approval correction:** v0.6.4 shipped this spec's fix but introduced a new universal false-fail (`buildVerifierPreamble` matched the PR URL against `md.Preamble` only and fail-closed on a miss; the URL lives in a pre-H2 section by the ai_review phase). Fixed in v0.6.5 (commit `d63fb13`) via `ExtractPRURL(md)` + skip-instead-of-fail, with a regression row reproducing the dev shape. The spec's ACs are satisfied by v0.6.5, not v0.6.4 — `deploy_target` in AC 6/7 should read v0.6.5.
 
-When the prod PR lands: re-run the AC 7 evidence, then `/dark-factory:verify-spec 003`.
+**To close this out — one item left, and it needs a human:**
+
+1. ~~Fix `deploy_target:` → v0.6.5 in AC 6/7~~ — done 2026-08-30.
+2. ~~Fix AC 6/7's grep pattern to `'"verdict": "pass"'`~~ — done 2026-08-30. The old `'verdict: pass'` returned 0 against real task files, which record JSON; the AC as written failed on a genuinely passing run.
+3. ~~Open a small `bborbe/go-skeleton` PR carrying a real defect so the dev rung executes on v0.6.5~~ — done 2026-08-30 via `go-skeleton#99`; evidence in AC 6 above. PR to be closed, not merged (`test/verify-dev-rung-v065`).
+4. Re-run `/dark-factory:verify-spec 003`. **All ACs now have evidence.**
+
+Note: this spec's completion is independent of the parent task's 5-PR temporal criterion, which is a task-level DoD gate (2 of 5 as of 2026-08-30) and is not an AC here.
 
 # Verification
 
@@ -89,9 +119,9 @@ When the prod PR lands: re-run the AC 7 evidence, then `/dark-factory:verify-spe
 
 ## Operator-executable (runs on the host after PR merge, verification ladder)
 
-- Publish the image: `VERSION=v0.6.4 make buca` produces `docker.io/bborbe/github-pr-review-agent:v0.6.4`
+- Publish the image: `VERSION=v0.6.5 make buca` produces `docker.io/bborbe/github-pr-review-agent:v0.6.5`
 - Bump BOTH version sources in `~/Documents/workspaces/nuke/github-pr-reviewer/` (dual-source footgun): `values-dev.yaml` `agent.tag` AND `values-prod.yaml` `agent.tag`, plus `Makefile` `AGENT_TAG_dev` and `AGENT_TAG_prod` (current dev tag v0.6.3). Confirm the per-stage registry (`image.registry`) matches the deploy_target above; adjust `deploy_target:` to the actual released tag if the release lands on a different number
-- Deploy dev first, then prod: `BRANCH=dev make mirror` + `BRANCH=dev make apply`, then `BRANCH=prod make mirror` + `BRANCH=prod make apply` (per runbook "Agent - Deploy New Version" § standalone agents)
+- Deploy dev first, then prod: `BRANCH=dev make mirror` + `BRANCH=dev make apply`, then `BRANCH=master make mirror` + `BRANCH=master make apply` (per runbook "Agent - Deploy New Version" § standalone agents). **Prod is `BRANCH=master`, not `BRANCH=prod`** — `nuke/Makefile.env` maps `master`→`STAGE=prod` and hard-errors on `BRANCH=prod` with "Invalid BRANCH 'prod' — deploy from dev or master". Hit live during the 2026-08-30 prod deploy; the runbook has been corrected too.
 - Functional verify (agents are Jobs — check the newest Job pod + task outcome): open a small PR with a clear defect on `github.com/bborbe/go-skeleton` (dev) and on `github.com/bborbe/dark-factory` (prod), confirm the posted review is non-LGTM (the verifier runs only on a non-LGTM review; if the bot LGTM-approves, the verifier did not run — amend the PR with a stronger defect and re-trigger), then run the Rung-2 / Rung-3 pod-log greps above and confirm `gh pr view <n> --repo <owner>/<repo> --json reviews` shows the bot review at the head SHA.
 
 # Desired Behavior
@@ -138,3 +168,19 @@ Prompts should be generated in this order — each row is a single prompt with a
 | 2 | Regression-lock Ginkgo tests: wiring (diff + comments present in runner call), clean APPROVE passes, fabricated hallucination fails with the correct hallucination object | 4, 5 | 2, 3, 4 | prompt 1 (tests assert the wiring it lands) |
 
 Rationale: prompt 1 ships the behavior change, prompt 2 locks it with the fake-runner tests — the tests must come after the wiring exists, and both must land before the operator verification ladder (Rung-2/3) runs against the deployed image.
+
+## Verification Result
+
+**Verified:** 2026-08-30T16:05:21Z (HEAD 4f7989c)
+**Binary:** installed `dark-factory` (spec targets `github.com/bborbe/github-pr-review-agent`, not dark-factory itself)
+**Scenario:** AC 1-5 re-derived in-repo incl. a live regression-lock break/restore; AC 6/7 re-derived from live dev+prod Job specs, pod logs and durable task files — the spec's transcriptions were not taken on trust.
+**Evidence:**
+- deploy_check: dev + prod `config.agent.benjamin-borbe.de/github-pr-review-agent` `.spec.image` = `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.6.5` (both match `deploy_target`)
+- AC 1: `reviewTools = {"Read", "Grep"}`; `planningTools` still holds `Bash(gh pr view:*)`/`Bash(gh pr diff:*)`; `factory_test.go` "grants no Bash and no gh pr entries" locks it. AC 5: `grep -c 'gh pr diff' pkg/prompts/review_workflow.md` = 0; `inline diff` at lines 22, 24
+- AC 2-4 regression lock re-proven live: early-returning `buildVerifierPreamble` before the envContext wiring → `Ran 372 of 372 ... 368 Passed | 4 Failed`, exactly the 4 "verifier diff embedding" rows; file restored byte-identical (`git diff -- pkg/steps_review.go` empty) → `go test -count=1 ./pkg/...` green; `make precommit` → `ready to commit`
+- AC 6 (dev, `bborbe/go-skeleton#99`, Job `pr-reviewer-agent-f76c4f41-20260830155342`): Job spec image `…:v0.6.5`; posted review `CHANGES_REQUESTED` 15:56:01Z at headRefOid `60b58543…` (non-LGTM → verifier spawned); verifier CLI `--allowedTools Read,Grep` (no Bash/gh) at `claude-runner.go:117`; **zero `log-tool-use` lines after that spawn**; `grep -c 'gh is not available'` = 0; `grep -c 'skipping inline diff'` = 0 and no `fetch PR diff failed` → `envContext["PR Diff"]` populated; `"verdict": "pass"`, `"hallucinations": []`, `{"Status":"done","NextPhase":"done"}`; task file `phase: done`, `status: completed`, `grep -c '"verdict": "pass"'` = 1
+- AC 7 (prod, `bborbe/nuke#121`, Job `pr-reviewer-agent-045d3a85-20260830154924`): image `…:v0.6.5`; review verdict `request-changes`; verifier `--allowedTools Read,Grep`, zero tool calls after spawn; `gh is not available` = 0; `skipping inline diff` = 0; verifier wrote *"every cited file+line in the review comments maps to actual content in the inline diff"* and named `values-prod.yaml:36` — cross-checked against the real `gh pr diff 121`, whose `dark-factory/values-prod.yaml` hunk `@@ -33,9 +33,10 @@` covers line 36. Positive proof of host-supplied diff: no tool could have fetched it. `{"Status":"done","NextPhase":"done"}`; task file `phase: done`, `status: completed`, `grep -c '"verdict": "pass"'` = 1
+- AC 7 repo substitution re-checked against the live config, not the spec's prose: prod `REPO_ALLOWLIST` = `github.com/bborbe/*,!github.com/bborbe/go-skeleton`, so `bborbe/nuke` is the prod allowlist repo under the same wildcard as `dark-factory`; the defect is in repo-agnostic verifier code. Accepted.
+- `go-skeleton#99` being an intentionally defective throwaway does **not** invalidate AC 6: the spec's own § Verification prescribes "open a small PR with a clear defect on github.com/bborbe/go-skeleton", and the Failure Modes row for an LGTM review prescribes strengthening the defect. Merge status is irrelevant — the verifier path runs at review time.
+**Correction to `# Verification Status`:** the AC 6 bullet's "Zero `Read` tool calls in the entire job" is inaccurate — the review-phase spawn made 3 `[read]` calls (log lines 106, 108, 126). The load-bearing claim holds and is what was verified: **zero `Read` (and zero of any tool) calls in the ai_review verifier spawn**.
+**Verdict:** PASS
