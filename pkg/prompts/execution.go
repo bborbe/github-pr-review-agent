@@ -118,11 +118,14 @@ const timeBudgetFooter = "---\n\n" +
 	"This run has a soft time budget of %s. When the budget is reached, STOP " +
 	"investigating immediately and write the verdict from what you already know — " +
 	"do not keep going until the job kills the run.\n\n" +
-	"Disposition EVERY concern in `## Plan` inside `concerns_addressed` with one of:\n" +
+	"Disposition EVERY concern in `## Plan` inside `concerns_addressed` with one of " +
+	"these mutually exclusive values:\n" +
 	"- `addressed` — a code change or a comment resolves it\n" +
-	"- `not an issue` — you examined it and confirmed it is a non-issue\n" +
-	"- `not verified` — the time budget stopped you before you could examine it\n\n" +
-	"A concern listed as `not verified` means the review is incomplete: the verdict " +
+	"- `not-an-issue` — you examined it and confirmed it is a non-issue\n" +
+	"- `not-verified` — the time budget stopped you before you could examine it\n\n" +
+	"The values are mutually exclusive: a concern you examined is `not-an-issue`, " +
+	"never `not-verified` — `not-verified` means only that you never looked at it.\n\n" +
+	"A concern listed as `not-verified` means the review is incomplete: the verdict " +
 	"will be fail-closed to request-changes and the partial output is salvaged for a " +
 	"human. Never silently drop a concern because investigation ended.\n\n"
 
@@ -137,7 +140,7 @@ const timeBudgetFooter = "---\n\n" +
 // funnelFailDetail so the review surfaces the gap instead of silently approving.
 // maxDuration is the soft REVIEW_MAX_DURATION budget appended as the time-budget
 // wrap-up contract so the model stops investigating at the budget and flags any
-// ## Plan concern it could not examine as `not verified`.
+// ## Plan concern it could not examine as `not-verified`.
 func BuildExecutionInstructions(
 	ctx context.Context,
 	claudeConfigDir claudelib.ClaudeConfigDir,

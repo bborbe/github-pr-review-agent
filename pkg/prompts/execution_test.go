@@ -290,11 +290,42 @@ var _ = Describe("BuildExecutionInstructions", func() {
 			workflow := instructions[0].Content
 			// The budget reaches the prompt as a rendered duration string (25m).
 			Expect(workflow).To(ContainSubstring("25m"))
-			// The wrap-up wording: stop at the budget and flag every unexamined
-			// ## Plan concern as `not verified`.
-			Expect(workflow).To(ContainSubstring("not verified"))
+			// The wrap-up wording: stop at the budget and disposition every
+			// ## Plan concern with one of the mutually exclusive enum values.
+			Expect(workflow).To(ContainSubstring("not-an-issue"))
+			Expect(workflow).To(ContainSubstring("not-verified"))
+			Expect(workflow).To(ContainSubstring("mutually exclusive"))
 			Expect(workflow).To(ContainSubstring("STOP"))
 			Expect(workflow).To(ContainSubstring("time budget"))
 		})
+	})
+
+	Describe("output-format schema", func() {
+		It(
+			"wires the embedded concerns_addressed object schema into the output-format instruction",
+			func() {
+				writePlugin(fakePlugin)
+
+				instructions, err := prompts.BuildExecutionInstructions(
+					ctx,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"standard",
+					"main",
+					true,
+					sampleFindings,
+					"",
+					libtime.Duration(25*time.Minute),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				outputFormat := instructions[1].Content
+				// The runner receives the embedded schema, not just a doc edit: each
+				// concern is an object with a structured disposition enum.
+				Expect(outputFormat).To(ContainSubstring("\"disposition\""))
+				Expect(outputFormat).To(ContainSubstring("not-an-issue"))
+				Expect(outputFormat).To(ContainSubstring("not-verified"))
+				Expect(outputFormat).To(ContainSubstring("\"disposition\": \"addressed\""))
+			},
+		)
 	})
 })
