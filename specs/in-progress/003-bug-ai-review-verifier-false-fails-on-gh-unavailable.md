@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-08-27T22:40:44Z"
 generating: "2026-08-28T06:11:53Z"
 prompted: "2026-08-28T06:11:53Z"
+verifying: "2026-08-29T23:10:44Z"
 branch: dark-factory/bug-ai-review-verifier-false-fails-on-gh-unavailable
 ---
 
