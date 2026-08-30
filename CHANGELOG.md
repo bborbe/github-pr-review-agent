@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.6
 
 - fix: make the `concerns_addressed` disposition a structured field (`addressed` | `not-an-issue` | `not-verified`) and read it directly in `HasUnverifiedConcerns` — an `approve` whose concerns were all examined now posts as `APPROVED` no matter how the model worded its explanations, ending the recurring false `CHANGES_REQUESTED` on clean approves (observed 2026-08-24 bborbe/nuke#68 and 2026-08-30 bborbe/discord-assistant#37); legacy bare-string entries still demote on a `not verified` substring
 
