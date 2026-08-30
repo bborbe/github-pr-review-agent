@@ -203,27 +203,30 @@ func (s *reviewStep) buildVerifierPreamble(
 	md *agentlib.Markdown,
 ) (map[string]string, *agentlib.Result) {
 	envContext := make(map[string]string)
-	if s.prState != nil {
-		prURLStr := githubPRURLPattern.FindString(md.Preamble)
-		if prURLStr == "" {
-			return nil, &agentlib.Result{
-				Status:  agentlib.AgentStatusFailed,
-				Message: "ai_review: no GitHub PR URL in preamble — cannot fetch diff",
-			}
-		}
-		diff, err := s.prState.PRDiff(ctx, prURLStr)
-		if err != nil {
-			glog.Warningf("ai_review: fetch PR diff failed pr_url=%s err=%v", prURLStr, err)
-			return nil, &agentlib.Result{
-				Status:  agentlib.AgentStatusFailed,
-				Message: fmt.Sprintf("ai_review: fetch PR diff failed: %v", err),
-			}
-		}
-		envContext["PR Diff"] = diff
-	}
 	if sec, ok := md.FindSection("## Review"); ok && sec != nil {
 		envContext["Posted Review Comments"] = sec.Body
 	}
+	if s.prState == nil {
+		return envContext, nil
+	}
+	// ExtractPRURL (not a bare preamble match): the URL is often carried in a
+	// pre-H2 section rather than the preamble by the time ai_review runs.
+	// Missing URL is a skip, not a failure — mirrors callVerifier (~line 312)
+	// and the dismiss path (~line 379), which both skip on the same condition.
+	prURLStr := ExtractPRURL(md)
+	if prURLStr == "" {
+		glog.Warningf("ai_review: no GitHub PR URL in task — skipping inline diff")
+		return envContext, nil
+	}
+	diff, err := s.prState.PRDiff(ctx, prURLStr)
+	if err != nil {
+		glog.Warningf("ai_review: fetch PR diff failed pr_url=%s err=%v", prURLStr, err)
+		return nil, &agentlib.Result{
+			Status:  agentlib.AgentStatusFailed,
+			Message: fmt.Sprintf("ai_review: fetch PR diff failed: %v", err),
+		}
+	}
+	envContext["PR Diff"] = diff
 	return envContext, nil
 }
 

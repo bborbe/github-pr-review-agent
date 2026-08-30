@@ -907,6 +907,32 @@ var _ = Describe("verifier diff embedding", func() {
 		return md
 	}
 
+	It("resolves the PR URL from a pre-H2 section when the preamble has none", func() {
+		// Regression lock for the dev v0.6.4 false-fail: the ai_review phase saw a
+		// task whose preamble carried no PR URL (it lived in a pre-H2 section), and
+		// the original fail-closed branch returned
+		// "ai_review: no GitHub PR URL in preamble — cannot fetch diff",
+		// swapping one universal false-fail for another. ExtractPRURL searches the
+		// pre-H2 sections too, so the diff is still fetched and embedded.
+		md, err := agentlib.ParseMarkdown(ctx,
+			"---\nref: abc123\n---\n\nno url here\n\n"+
+				"# Context\n\nReview the PR at "+prURL+"\n\n"+
+				"## Review\n\nline 97 in pkg/foo.go")
+		Expect(err).NotTo(HaveOccurred())
+		runner.RunReturns(&claudelib.ClaudeResult{
+			Result: `{"verdict":"pass","reason":"all cited files/lines in diff"}`,
+		}, nil)
+
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).NotTo(BeNil())
+		Expect(result.Status).NotTo(Equal(agentlib.AgentStatusFailed))
+		Expect(result.Message).NotTo(ContainSubstring("no GitHub PR URL"))
+		Expect(prState.PRDiffCallCount()).To(Equal(1))
+		_, prompt := runner.RunArgsForCall(0)
+		Expect(prompt).To(ContainSubstring(inlineDiff))
+	})
+
 	It("embeds the PR raw diff and the posted review comments in the verifier prompt", func() {
 		// Wiring row (spec AC 2): the prompt the verifier runs against carries
 		// both the raw diff (host-fetched via gh pr diff) and the posted review

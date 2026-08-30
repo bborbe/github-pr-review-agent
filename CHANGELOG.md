@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: resolve the ai_review PR URL with `ExtractPRURL` (searches pre-H2 sections) instead of a bare preamble match, and skip the inline diff instead of failing when no URL is found — v0.6.4 swapped the old "gh is not available" false-fail for `ai_review: no GitHub PR URL in preamble — cannot fetch diff`, which failed every run whose task carried the URL outside the preamble (observed on dev, bborbe/go-skeleton#98). Missing URL is now a skip, mirroring `callVerifier` and the dismiss path; a diff-fetch error stays fail-closed
+
 ## v0.6.4
 
 - fix: ai_review verifier now verifies hallucinated citations against the PR raw diff embedded inline in the verifier preamble (host-fetched via `gh pr diff`, supplied under `## Environment` as `PR Diff` + `Posted Review Comments`) instead of a model-run `gh pr diff` shell-out — the false "gh is not available" failure disappears and the check always has real ground truth — and the ai_review tool allowlist drops its `gh pr` Bash entries (reviewTools is now `Read`/`Grep` only)
