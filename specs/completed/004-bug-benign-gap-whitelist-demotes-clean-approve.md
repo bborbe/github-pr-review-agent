@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-08-30T19:38:49Z"
 generating: "2026-08-30T19:39:18Z"
 prompted: "2026-08-30T19:56:51Z"
 verifying: "2026-08-30T20:23:41Z"
+completed: "2026-08-30T20:42:11Z"
 branch: dark-factory/bug-benign-gap-whitelist-demotes-clean-approve
 ---
 
