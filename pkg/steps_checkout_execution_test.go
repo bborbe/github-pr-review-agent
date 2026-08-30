@@ -561,6 +561,62 @@ prior review body
 				_, req := fakePoster.PostArgsForCall(0)
 				Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
 			})
+
+			// Object-shape rows: the disposition field is authoritative at the
+			// posting boundary too — funnelRan=true so the funnel gate does not
+			// interfere.
+			It("fail-closes an object-shape not-verified concern to request-changes", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 11})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"looks ok","concerns_addressed":[{"concern":"security: rate-limit","disposition":"not-verified"}]}`+
+						"\n```\n")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
+
+			// Posting-level regression lock for the 2026-08-30
+			// bborbe/discord-assistant#37 incident: the run-2 object shape with
+			// disposition `not-an-issue` (prose contains `not verified`) must post
+			// as an approval.
+			It("posts an object-shape not-an-issue approve untouched (incident shape)", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 12})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"looks ok","concerns_addressed":[{"concern":"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested","disposition":"not-an-issue"}]}`+
+						"\n```\n")
+				_, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+			})
 		})
 
 		Context("when post succeeds", func() {
