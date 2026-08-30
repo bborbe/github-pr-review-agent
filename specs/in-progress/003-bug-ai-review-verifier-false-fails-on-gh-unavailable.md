@@ -64,6 +64,20 @@ None for the agent. Affected PRs are unblocked by operators clearing the `human_
   - `deploy_check:` `kubectlnukeprod -n prod get config.agent.benjamin-borbe.de github-pr-review-agent -o jsonpath='{.spec.image}'`
   - `deploy_target:` `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.6.4`
 
+# Verification Status (2026-08-30)
+
+Prompts 2/2 complete. AC 1-6 verified; AC 7 (Rung-3 prod) is the only open gate — it needs an organic non-LGTM prod PR and cannot be forced.
+
+- **AC 1** ✅ `reviewTools` = `Read`/`Grep` only; `planningTools` unchanged (factory test locks it)
+- **AC 2-4** ✅ Ginkgo rows green; regression lock *proven* — wiring removed → all 3 rows fail → restored → pass
+- **AC 5** ✅ `grep -c 'gh pr diff' pkg/prompts/review_workflow.md` = 0; `inline diff` present
+- **AC 6 (Rung-2 dev)** ✅ `bborbe/go-skeleton#98` on v0.6.5: `"verdict": "pass"`, `Status=done`, `NextPhase=done`, `gh is not available` count = 0, `hallucinations: []`, verifier enumerated the diff line-by-line
+- **AC 7 (Rung-3 prod)** ⏳ deployed (v0.6.5, helm rev 12, CR image confirmed, watcher 1/1) but **not functionally exercised** — awaiting an organic non-LGTM prod PR
+
+**Post-approval correction:** v0.6.4 shipped this spec's fix but introduced a new universal false-fail (`buildVerifierPreamble` matched the PR URL against `md.Preamble` only and fail-closed on a miss; the URL lives in a pre-H2 section by the ai_review phase). Fixed in v0.6.5 (commit `d63fb13`) via `ExtractPRURL(md)` + skip-instead-of-fail, with a regression row reproducing the dev shape. The spec's ACs are satisfied by v0.6.5, not v0.6.4 — `deploy_target` in AC 6/7 should read v0.6.5.
+
+When the prod PR lands: re-run the AC 7 evidence, then `/dark-factory:verify-spec 003`.
+
 # Verification
 
 ## Container-executable (runs inside the YOLO container at prompt time)
