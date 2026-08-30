@@ -5,6 +5,9 @@
 package pkg_test
 
 import (
+	"os"
+	"strings"
+
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -20,10 +23,14 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			Expect(pkg.HasUnverifiedConcerns(reviewBody)).To(Equal(expected))
 		},
 		// flagged lowercase `not verified` → the model stopped at the time budget.
+		// spec-002 regression (the `:26` fixture), object shape now: the FULL
+		// prose "security: rate-limit not verified" is preserved in the `concern`
+		// field with `disposition: "not-verified"` — prose reading "not verified"
+		// AND the not-verified disposition both hold, so the row must still demote.
 		Entry(
-			"flagged lowercase not verified",
+			"flagged lowercase not verified (spec-002 :26 object shape)",
 			fence(
-				`{"verdict":"approve","concerns_addressed":["security: rate-limit not verified"]}`,
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit not verified","disposition":"not-verified"}]}`,
 			),
 			true,
 		),
@@ -75,13 +82,13 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 		// POSITIVE CONTROL 2026-08-24 (bborbe/nuke#73): a "not verified" concern
 		// that IS a MUST-tier blocker (metric existence unconfirmed; without it
 		// the alerts will never fire; must verify before deploying) must still
-		// fail-close. Still a legacy bare string here — its `not verified` text
-		// demotes via the legacy substring rule; the next prompt migrates it to
-		// the object shape.
+		// fail-close. Object shape now: the full verbatim text is the `concern`
+		// with `disposition: "not-verified"` — the MUST-tier positive control
+		// must still demote.
 		Entry(
 			"MUST-tier unverified blocker (alerts will never fire)",
 			fence(
-				`{"verdict":"approve","concerns_addressed":["correctness: expression references github_build_watcher_rate_limit_remaining — not verified: build-watcher source not present in this monorepo, metric existence cannot be confirmed; without it the alerts will never fire. Must verify metric is exported before deploying."]}`,
+				`{"verdict":"approve","concerns_addressed":[{"concern":"correctness: expression references github_build_watcher_rate_limit_remaining — not verified: build-watcher source not present in this monorepo, metric existence cannot be confirmed; without it the alerts will never fire. Must verify metric is exported before deploying.","disposition":"not-verified"}]}`,
 			),
 			true,
 		),
@@ -173,4 +180,102 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			true,
 		),
 	)
+
+	// The pairs below differ ONLY in the `disposition` enum value — the concern
+	// prose is byte-identical across each pair and the gate never inspects it.
+	// Three distinct organic explanation wordings: the incident run-2 gap
+	// phrasing, the nuke#68 cross-check phrasing that escaped the old benign
+	// whitelist, and an invented phrasing matching no former whitelist entry.
+	DescribeTable("prose is inert: the disposition field alone decides",
+		func(concern, disposition string, expected bool) {
+			Expect(pkg.HasUnverifiedConcerns(fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"` + concern + `","disposition":"` + disposition + `"}]}`,
+			))).To(Equal(expected))
+		},
+		// Wording 1 — the incident run-2 gap phrasing (bborbe/discord-assistant#37).
+		Entry(
+			"wording 1 not-an-issue passes",
+			"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested",
+			"not-an-issue",
+			false,
+		),
+		Entry(
+			"wording 1 not-verified demotes",
+			"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested",
+			"not-verified",
+			true,
+		),
+		// Wording 2 — the nuke#68 cross-check phrasing (escaped the old whitelist).
+		Entry(
+			"wording 2 not-an-issue passes",
+			"correctness: could not be cross-checked against the actual controller code. Not verified.",
+			"not-an-issue",
+			false,
+		),
+		Entry(
+			"wording 2 not-verified demotes",
+			"correctness: could not be cross-checked against the actual controller code. Not verified.",
+			"not-verified",
+			true,
+		),
+		// Wording 3 — invented phrasing matching no former whitelist entry.
+		Entry(
+			"wording 3 not-an-issue passes",
+			"performance: I inspected the vendored copy and the mutex is uncontended in this call graph",
+			"not-an-issue",
+			false,
+		),
+		Entry(
+			"wording 3 not-verified demotes",
+			"performance: I inspected the vendored copy and the mutex is uncontended in this call graph",
+			"not-verified",
+			true,
+		),
+	)
+})
+
+var _ = Describe("incident regression (bborbe/discord-assistant#37 run 2)", func() {
+	// Regression-lock for the 2026-08-30 false-CHANGES_REQUESTED: the run-2
+	// verdict stored verbatim in the fixture carries `disposition: "not-an-issue"`,
+	// so the gate must let the approve through even though the concern prose
+	// contains the literal `not verified` substring (the old regex gate demoted
+	// on that prose). Only the disposition value is transformed for the negative
+	// row. The fixture body is read at test time (inside the leaf nodes) so a
+	// missing/drifted fixture fails the rows, not the suite construction.
+	DescribeTable("the disposition field wins over the concern prose",
+		func(transform func(string) string, expected bool) {
+			body, err := os.ReadFile("testdata/review_discord_assistant_37_run2.md")
+			Expect(err).NotTo(HaveOccurred())
+			text := string(body)
+			if transform != nil {
+				text = transform(text)
+			}
+			Expect(pkg.HasUnverifiedConcerns(text)).To(Equal(expected))
+		},
+		Entry("fixture as-is (not-an-issue) passes", nil, false),
+		Entry("fixture with disposition flipped to not-verified demotes",
+			func(text string) string {
+				// Target the exact JSON field token, not the bare enum value — the
+				// prose header may itself mention `not-an-issue`, and a
+				// first-occurrence replace would flip the header instead of the JSON.
+				flipped := strings.ReplaceAll(
+					text,
+					`"disposition": "not-an-issue"`,
+					`"disposition": "not-verified"`,
+				)
+				// Fail loudly on header/format drift: a no-op substitution would
+				// silently test the unflipped body and turn the lock into a tautology.
+				Expect(flipped).NotTo(Equal(text))
+				return flipped
+			},
+			true,
+		),
+	)
+
+	It("parses the as-is fixture verdict as approve", func() {
+		body, err := os.ReadFile("testdata/review_discord_assistant_37_run2.md")
+		Expect(err).NotTo(HaveOccurred())
+		result := pkg.ParseVerdict(string(body))
+		Expect(result.Verdict).To(Equal(pkg.VerdictApprove))
+	})
 })

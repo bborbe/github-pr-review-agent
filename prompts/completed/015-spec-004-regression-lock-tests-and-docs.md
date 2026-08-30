@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [004-bug-benign-gap-whitelist-demotes-clean-approve]
+summary: 'Regression-locked the disposition gate: added the verbatim discord-assistant#37 run-2 incident fixture and its regression rows, a prose-inert paired table, object-shape migrations of the spec-002 nuke#73 and :26 fixtures, and posting-boundary rows, plus the CHANGELOG fix entry and the concretized deploy procedure in the release doc'
+execution_id: github-pr-review-agent-unverified-gate-exec-015-spec-004-regression-lock-tests-and-docs
+dark-factory-version: dev
 created: "2026-08-30T19:44:12Z"
 queued: "2026-08-30T20:06:13Z"
+started: "2026-08-30T20:13:58Z"
+completed: "2026-08-30T20:23:41Z"
 branch: dark-factory/bug-benign-gap-whitelist-demotes-clean-approve
 ---
 

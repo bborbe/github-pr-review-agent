@@ -51,10 +51,23 @@ spawned by the agent-task-executor from a Kafka PR-review task.
 VERSION=vX.Y.Z make buca   # build + push docker.io/bborbe/github-pr-review-agent:vX.Y.Z, then apply
 ```
 
-Deploy specifics (version pin, dev vs prod, mirrored-agent apply) live on the service's
-**Development Instructions** page — read it before deploying; recalled paths go stale
-after monorepo → standalone splits. See the Development Guide "Deploy Mirrored Agent
-Service" flow.
+Deploy specifics — both version sources live in `~/Documents/workspaces/nuke/github-pr-reviewer/`:
+(1) `values-dev.yaml` and `values-prod.yaml` — the `agent.tag` field in each;
+(2) `Makefile` — the `AGENT_TAG_dev` and `AGENT_TAG_prod` variables. Bump BOTH sources
+in lockstep on every deploy, then mirror + apply dev first, then prod:
+
+```bash
+cd ~/Documents/workspaces/nuke/github-pr-reviewer
+BRANCH=dev make mirror && BRANCH=dev make apply
+BRANCH=master make mirror && BRANCH=master make apply
+```
+
+**Prod is `BRANCH=master`, not `BRANCH=prod`.** Using `BRANCH=prod` silently targets
+the wrong channel.
+
+> Facts in this section last verified against bborbe/nuke 2026-08-30. Re-check against
+> the real repo on each deploy and update this date; if the values files are renamed or
+> `AGENT_TAG_*` removed, refresh this procedure before deploying.
 
 ## GitHub Release (optional milestone)
 
