@@ -327,5 +327,33 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				Expect(outputFormat).To(ContainSubstring("\"disposition\": \"addressed\""))
 			},
 		)
+
+		It(
+			"declares exactly the disposition values the gate accepts",
+			func() {
+				writePlugin(fakePlugin)
+
+				instructions, err := prompts.BuildExecutionInstructions(
+					ctx,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"standard",
+					"main",
+					true,
+					sampleFindings,
+					"",
+					libtime.Duration(25*time.Minute),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				outputFormat := instructions[1].Content
+				// pkg.HasUnverifiedConcerns switches on exactly these three
+				// disposition values; a drift between the enum the model reads here
+				// and the switch the gate runs demotes every approve fail-safe —
+				// this is the only pre-deploy guard between the two.
+				Expect(outputFormat).To(ContainSubstring("addressed"))
+				Expect(outputFormat).To(ContainSubstring("not-an-issue"))
+				Expect(outputFormat).To(ContainSubstring("not-verified"))
+			},
+		)
 	})
 })

@@ -46,33 +46,38 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 		// BENIGN regression (2026-08-23 bborbe/math#18, reviewBody_len=1079): a
 		// "not verified" concern that self-describes as not-applicable (config/
 		// docs-only change, no code to verify) must NOT fail-close an approve.
-		// The old regex matched the bare "not verified" substring and demoted a
-		// clean approve → false CHANGES_REQUESTED (admin-merged).
+		// The old prose whitelist is gone: the concern is now an object whose
+		// `disposition` field is authoritative — `not-an-issue` passes no matter
+		// what the prose says. The prose is kept verbatim in `concern` to prove
+		// it is inert (it contains `not verified` and would demote under the
+		// legacy bare-string rule).
 		Entry(
-			"benign not verified (code logic not applicable — config-only)",
+			"benign not verified object (code logic not applicable — config-only)",
 			fence(
-				`{"verdict":"approve","concerns_addressed":["security: not verified (code logic not applicable — this is a config/changelog-only diff with no Go code changes)"]}`,
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: not verified (code logic not applicable — this is a config/changelog-only diff with no Go code changes)","disposition":"not-an-issue"}]}`,
 			),
 			false,
 		),
 		// REGRESSION 2026-08-24 (bborbe/nuke#68): a benign "not verified" concern
 		// that explains the verification gap as contextual (source not in this
-		// repo → could not be cross-checked) escaped the benignUnverifiedPattern
+		// repo → could not be cross-checked) escaped the old benign-phrase
 		// whitelist and demoted a clean approve → false CHANGES_REQUESTED on
-		// v0.6.2 (re-review 5 min later posted APPROVED; metric confirmed correct).
-		// The gate must key on the concern's own blocker tiering, not a fixed
-		// phrase list — non-blocking explained gaps pass.
+		// v0.6.2. Under the new encoding the `disposition` field is the
+		// mechanism: `not-an-issue` passes; the verbatim prose (which still
+		// contains `not verified`) is never inspected.
 		Entry(
-			"benign not verified (source not in repo — could not be cross-checked)",
+			"benign not verified object (source not in repo — could not be cross-checked)",
 			fence(
-				`{"verdict":"approve","concerns_addressed":["correctness: metric name agent_controller_results_written_total{result=\"not_found\"} — searched entire repo (go.mod, all source, all alerts) and the metric only appears in this new alert and the CHANGELOG. The agent-task-controller source is not in this repository, so the metric name and label value could not be cross-checked against the actual controller code. Not verified."]}`,
+				`{"verdict":"approve","concerns_addressed":[{"concern":"correctness: metric name agent_controller_results_written_total{result=\"not_found\"} — searched entire repo (go.mod, all source, all alerts) and the metric only appears in this new alert and the CHANGELOG. The agent-task-controller source is not in this repository, so the metric name and label value could not be cross-checked against the actual controller code. Not verified.","disposition":"not-an-issue"}]}`,
 			),
 			false,
 		),
 		// POSITIVE CONTROL 2026-08-24 (bborbe/nuke#73): a "not verified" concern
 		// that IS a MUST-tier blocker (metric existence unconfirmed; without it
 		// the alerts will never fire; must verify before deploying) must still
-		// fail-close — the tier-keyed gate preserves true request-changes.
+		// fail-close. Still a legacy bare string here — its `not verified` text
+		// demotes via the legacy substring rule; the next prompt migrates it to
+		// the object shape.
 		Entry(
 			"MUST-tier unverified blocker (alerts will never fire)",
 			fence(
@@ -100,5 +105,72 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 		// Malformed verdict JSON → unmarshal fails → no over-trigger.
 		Entry("malformed JSON",
 			fence(`{"verdict":"approve","concerns_addressed":["unterminated`), false),
+
+		// Object entries: the `disposition` field is authoritative; prose is inert.
+		Entry(
+			"object disposition addressed passes",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"addressed"}]}`,
+			),
+			false,
+		),
+		Entry(
+			"object disposition not-an-issue passes",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"not-an-issue"}]}`,
+			),
+			false,
+		),
+		Entry(
+			"object disposition not-verified demotes",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"not-verified"}]}`,
+			),
+			true,
+		),
+		Entry(
+			"object disposition absent demotes (fail-safe)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit"}]}`,
+			),
+			true,
+		),
+		Entry(
+			"object unrecognised disposition demotes (fail-safe)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"inconclusive"}]}`,
+			),
+			true,
+		),
+		// Spec constraint: one valid not-verified object is enough; the
+		// uninterpretable element is skipped, not a parse failure.
+		Entry(
+			"mixed list demotes on the valid not-verified entry",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"not-verified"},42]}`,
+			),
+			true,
+		),
+		// All-uninterpretable entries (number + nested array) are skipped → no demotion.
+		Entry(
+			"all-uninterpretable list passes (entries skipped)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[42,["correctness: nested"]]}`,
+			),
+			false,
+		),
+		// concerns_addressed that is not a list at all → unmarshal fails → permissive false.
+		Entry("concerns_addressed not a list passes (no over-trigger)",
+			fence(`{"verdict":"approve","concerns_addressed":"oops"}`), false),
+		// The pre-v0.6.6 schema taught the model the space form `not an issue`;
+		// the hyphenated enum is matched exactly and the space form is NOT
+		// normalized → fail-safe demote (locks this decision).
+		Entry(
+			"object retired space-form disposition demotes (fail-safe)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"not an issue"}]}`,
+			),
+			true,
+		),
 	)
 })

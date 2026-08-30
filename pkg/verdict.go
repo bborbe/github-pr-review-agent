@@ -252,78 +252,59 @@ func ParseVerdict(reviewText string) Result {
 const ReasonFunnelDidNotRun = "mechanical funnel did not run"
 
 // ReasonConcernsNotVerified is the fail-closed Result.Reason set when the review
-// flags one or more ## Plan concerns as "not verified" (unexamined at the time
-// budget) yet still emits approve. The verdict is overridden to request-changes
-// so an incomplete review can never green-light a PR.
+// emits approve while one or more ## Plan concerns carry a `not-verified`
+// disposition (or an absent/unrecognised one, treated fail-safe) — the model
+// stopped at the time budget before examining them. The verdict is overridden
+// to request-changes so an incomplete review can never green-light a PR.
 const ReasonConcernsNotVerified = "one or more ## Plan concerns not verified"
 
-// unverifiedConcernPattern matches a ## Plan concern the model flagged as
-// "not verified" in the execution output format's concerns_addressed list.
-var unverifiedConcernPattern = regexp.MustCompile(`(?i)not verified|unverified`)
-
-// mustTierBlockerPattern matches an unverified concern that carries MUST-tier
-// blocker language — the model flags the unverified item as a requirement that
-// must be satisfied before merge ("must verify", "alerts will never fire",
-// "blocking"). Only these fail-close an approve (tier-keyed gate). Regression
-// 2026-08-24 (bborbe/nuke#68): the previous benign-phrase whitelist escaped the
-// model's varied organic phrasing ("could not be cross-checked against the
-// actual controller code. Not verified." — non-blocking per the review's own
-// "No Must/Should Fix issues found") and demoted a clean approve → false
-// CHANGES_REQUESTED on v0.6.2 (re-review 5 min later posted APPROVED; metric
-// confirmed correct). Keying on the concern's own blocker tiering instead of a
-// fixed phrase list is robust to any organic phrasing.
-var mustTierBlockerPattern = regexp.MustCompile(
-	`(?i)must (fix|verify|be (addressed|checked|resolved)|resolve)|will never (fire|work)|without (it|this)|blocking|blocks? (merge|ship|deploy)|cannot (merge|ship|be merged)|breaks? (the|this|prod|production)|required (before|to)|fatal|merge[ -]?blocker`,
-)
-
-// benignGapPattern matches an unverified concern that EXPLAINS the verification
-// gap as non-blocking/contextual — verification was unnecessary or impossible
-// for a stated benign reason (config/docs-only change, source not in this repo,
-// could not be cross-checked, no code changes). Such concerns pass an approve;
-// only MUST-tier blockers (mustTierBlockerPattern, checked first) or bare
-// unexamined admissions (no explanation at all) fail-close. Genuinely unexamined
-// cases like "security: rate-limit not verified" still fail-close (SC5).
-var benignGapPattern = regexp.MustCompile(
-	`(?i)not applicable|config[- ]only|(docs?|documentation)[- ]only|no (go |code |source )*changes|nothing to (verify|check)|source (is )?not (in|present in) (this|the) (repo|repository|monorepo)|could not be cross[- ]checked|no (blocking )?(issues|findings|problems) (found|identified)|not (an?|a) (issue|problem|blocker)`,
-)
-
-// HasUnverifiedConcerns reports whether the review body's verdict JSON flags
-// any ## Plan concern as "not verified" AND the verification gap is
-// fail-close-worthy. Tier-keyed: an unverified concern fail-closes when it
-// carries MUST-tier blocker language (mustTierBlockerPattern) or is a bare
-// unexamined admission (no benign explanation); an unverified concern that
-// explains the gap as non-blocking (benignGapPattern) passes. An approve that
-// flags a fail-close-worthy concern must be demoted to request-changes (see
-// postAndRoute). Returns false for a missing/malformed verdict block or an
-// empty concerns list (no over-trigger).
+// HasUnverifiedConcerns reports whether the review body's verdict JSON marks any
+// ## Plan concern as unexamined. concerns_addressed entries are objects carrying
+// a three-value `disposition` field (`addressed` | `not-an-issue` |
+// `not-verified`); an approve carrying a `not-verified` disposition (or an
+// absent/unrecognised disposition value, treated fail-safe) must be demoted to
+// request-changes (see postAndRoute) so an incomplete review can never
+// green-light a PR. Concern prose is never inspected. A legacy entry that is a
+// bare string falls back to a plain substring check (`not verified` /
+// `unverified`, lowercased) so task files written before the object shape
+// preserve spec 002's contract. Returns false for a missing/malformed verdict
+// block, an empty concerns list, or a concerns_addressed value that is not a
+// list (no over-trigger).
 func HasUnverifiedConcerns(reviewText string) bool {
 	block, _, ok := findVerdictBlock(reviewText)
 	if !ok {
 		return false
 	}
 	var payload struct {
-		ConcernsAddressed []string `json:"concerns_addressed"`
+		ConcernsAddressed []json.RawMessage `json:"concerns_addressed"`
 	}
 	if err := json.Unmarshal([]byte(block), &payload); err != nil {
 		return false
 	}
-	for _, concern := range payload.ConcernsAddressed {
-		if !unverifiedConcernPattern.MatchString(concern) {
+	for _, raw := range payload.ConcernsAddressed {
+		// Legacy bare-string entry: today's substring rule, plain strings.Contains.
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			lower := strings.ToLower(s)
+			if strings.Contains(lower, "not verified") || strings.Contains(lower, "unverified") {
+				return true
+			}
 			continue
 		}
-		// Blocker-tier language is authoritative: an unverified item the model
-		// flags as a hard requirement still fail-closes even if it also
-		// mentions a benign-sounding reason (e.g. nuke#73: source not present
-		// in monorepo + "without it the alerts will never fire").
-		if mustTierBlockerPattern.MatchString(concern) {
-			return true
+		// Object entry: the disposition field is authoritative; prose is inert.
+		var obj struct {
+			Disposition string `json:"disposition"`
 		}
-		if benignGapPattern.MatchString(concern) {
-			continue
+		if err := json.Unmarshal(raw, &obj); err == nil {
+			switch obj.Disposition {
+			case "addressed", "not-an-issue":
+				continue
+			default: // not-verified, absent, or unrecognised -> fail-safe demote
+				return true
+			}
 		}
-		// Bare unexamined admission — no explanation why verification was
-		// skipped. Preserves the original weak-model MUST-tier protection.
-		return true
+		// Neither a string nor an object (number, nested array): uninterpretable —
+		// skip it and evaluate the remaining entries.
 	}
 	return false
 }

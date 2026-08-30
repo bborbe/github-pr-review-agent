@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [004-bug-benign-gap-whitelist-demotes-clean-approve]
+summary: Rewrote HasUnverifiedConcerns to read the disposition field, deleted all three prose regexes, migrated the benign rows to the object shape, and added gate-behavior rows plus a schema-vs-gate contract test
+execution_id: github-pr-review-agent-unverified-gate-exec-014-spec-004-gate-rewrite
+dark-factory-version: dev
 created: "2026-08-30T19:44:12Z"
 queued: "2026-08-30T20:06:13Z"
+started: "2026-08-30T20:09:00Z"
+completed: "2026-08-30T20:13:57Z"
 branch: dark-factory/bug-benign-gap-whitelist-demotes-clean-approve
 ---
 
