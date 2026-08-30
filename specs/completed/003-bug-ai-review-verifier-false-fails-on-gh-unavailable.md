@@ -119,9 +119,9 @@ Note: this spec's completion is independent of the parent task's 5-PR temporal c
 
 ## Operator-executable (runs on the host after PR merge, verification ladder)
 
-- Publish the image: `VERSION=v0.6.4 make buca` produces `docker.io/bborbe/github-pr-review-agent:v0.6.5`
+- Publish the image: `VERSION=v0.6.5 make buca` produces `docker.io/bborbe/github-pr-review-agent:v0.6.5`
 - Bump BOTH version sources in `~/Documents/workspaces/nuke/github-pr-reviewer/` (dual-source footgun): `values-dev.yaml` `agent.tag` AND `values-prod.yaml` `agent.tag`, plus `Makefile` `AGENT_TAG_dev` and `AGENT_TAG_prod` (current dev tag v0.6.3). Confirm the per-stage registry (`image.registry`) matches the deploy_target above; adjust `deploy_target:` to the actual released tag if the release lands on a different number
-- Deploy dev first, then prod: `BRANCH=dev make mirror` + `BRANCH=dev make apply`, then `BRANCH=prod make mirror` + `BRANCH=prod make apply` (per runbook "Agent - Deploy New Version" § standalone agents)
+- Deploy dev first, then prod: `BRANCH=dev make mirror` + `BRANCH=dev make apply`, then `BRANCH=master make mirror` + `BRANCH=master make apply` (per runbook "Agent - Deploy New Version" § standalone agents). **Prod is `BRANCH=master`, not `BRANCH=prod`** — `nuke/Makefile.env` maps `master`→`STAGE=prod` and hard-errors on `BRANCH=prod` with "Invalid BRANCH 'prod' — deploy from dev or master". Hit live during the 2026-08-30 prod deploy; the runbook has been corrected too.
 - Functional verify (agents are Jobs — check the newest Job pod + task outcome): open a small PR with a clear defect on `github.com/bborbe/go-skeleton` (dev) and on `github.com/bborbe/dark-factory` (prod), confirm the posted review is non-LGTM (the verifier runs only on a non-LGTM review; if the bot LGTM-approves, the verifier did not run — amend the PR with a stronger defect and re-trigger), then run the Rung-2 / Rung-3 pod-log greps above and confirm `gh pr view <n> --repo <owner>/<repo> --json reviews` shows the bot review at the head SHA.
 
 # Desired Behavior
