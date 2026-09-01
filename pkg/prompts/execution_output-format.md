@@ -43,9 +43,18 @@ Field rules:
   - `not-an-issue` — you examined the concern and confirmed it is not an issue
   - `not-verified` — the time budget stopped you before you could examine it;
     it means ONLY that you never looked at the concern. A concern you examined
-    is `not-an-issue`, never `not-verified`.
-- A concern listed as `not-verified` makes the review incomplete: an `approve`
-  verdict carrying any `not-verified` concern is fail-closed to
-  `request-changes`.
+    is `not-an-issue`, never `not-verified`. If you examined the concern but
+    the sandbox could not complete the verification (e.g. no toolchain to run a
+    dependency-graph check) and CI/precommit is the verifier, that is STILL
+    `not-an-issue`: write `detail` naming the verifier (e.g. "CI precommit
+    runs go mod tidy/verify + build") that will exercise it.
+- A concern listed as `not-verified` fail-closes an `approve` to
+  `request-changes` ONLY when it is a MUST-tier / load-bearing blocker (the
+  merge depends on verifying it — "must verify", "will never fire",
+  "blocking") or a bare unexamined admission with no explanation. A
+  `not-verified` concern that explains the gap as benign — e.g. the
+  toolchain is unavailable in the sandbox but the diff is otherwise clean and
+  CI/precommit is the gate — must NOT fail-close: disposition it
+  `not-an-issue` with the verifier named in `detail`; the CI gate decides.
 
 Output the JSON inside a fenced code block (```json ... ```). No prose before or after the fence. The fence renders the JSON readably in Obsidian and other markdown viewers; downstream consumers strip the fence before parsing.
