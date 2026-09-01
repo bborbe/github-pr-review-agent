@@ -92,6 +92,31 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			),
 			true,
 		),
+		// REGRESSION 2026-09-01 (Seibert-Data/quickbooks#4, 09:46 fail-close): a
+		// benign `not-verified` concern whose gap is toolchain-limited — the model
+		// examined the module files (internally consistent, tidy ran, no
+		// downgrades, all hashes present) but could not run a Go 1.27 toolchain in
+		// the sandbox, and names CI/precommit as the gate. Tier-keyed: no MUST-tier
+		// blocker language → the approve must NOT fail-close. This exact body
+		// posted a false CHANGES_REQUESTED on the octopus fleet on 2026-09-01.
+		Entry(
+			"benign toolchain-limited not verified (Go 1.27 toolchain unavailable, CI is the gate)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"correctness: go.mod go directive 1.27.0 dep compatibility","detail":"not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate","disposition":"not-verified"}]}`,
+			),
+			false,
+		),
+		// The octopus fleet posts the LEGACY flat-string shape (the model wrote
+		// the whole explanation in one string, no disposition object). Same
+		// quickbooks#4 09:46 content verbatim: the flag wording is the admission,
+		// the explanation names the verifier (CI/precommit) -> must pass.
+		Entry(
+			"benign toolchain-limited not verified — legacy flat-string shape (octopus posted form)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":["correctness: go.mod go directive 1.27.0 dep compatibility: not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate"]}`,
+			),
+			false,
+		),
 		// No flagged concern → the gate must not over-trigger.
 		Entry(
 			"no flags",
@@ -182,11 +207,16 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 	)
 
 	// The pairs below differ ONLY in the `disposition` enum value — the concern
-	// prose is byte-identical across each pair and the gate never inspects it.
-	// Three distinct organic explanation wordings: the incident run-2 gap
-	// phrasing, the nuke#68 cross-check phrasing that escaped the old benign
-	// whitelist, and an invented phrasing matching no former whitelist entry.
-	DescribeTable("prose is inert: the disposition field alone decides",
+	// prose is byte-identical across each pair. Three distinct organic
+	// explanation wordings: the incident run-2 gap phrasing, the nuke#68
+	// cross-check phrasing that escaped the old benign whitelist, and an
+	// invented phrasing matching no former whitelist entry. Tier-keyed
+	// contract (2026-09-01, Seibert-Data/quickbooks#4): `not-an-issue` always
+	// passes; `not-verified` demotes unless the concern itself explains the gap
+	// as benign — wording 2 ("could not be cross-checked") is a benign
+	// explanation and passes even with `not-verified`; wordings 1 and 3 carry no
+	// benign explanation, so `not-verified` demotes (bare unexamined admission).
+	DescribeTable("tier-keyed: not-verified demotes only when MUST-tier or a bare admission",
 		func(concern, disposition string, expected bool) {
 			Expect(pkg.HasUnverifiedConcerns(fence(
 				`{"verdict":"approve","concerns_addressed":[{"concern":"` + concern + `","disposition":"` + disposition + `"}]}`,
@@ -200,7 +230,7 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			false,
 		),
 		Entry(
-			"wording 1 not-verified demotes",
+			"wording 1 not-verified demotes (bare admission)",
 			"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested",
 			"not-verified",
 			true,
@@ -213,10 +243,10 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			false,
 		),
 		Entry(
-			"wording 2 not-verified demotes",
+			"wording 2 not-verified passes (benign cross-check gap explained)",
 			"correctness: could not be cross-checked against the actual controller code. Not verified.",
 			"not-verified",
-			true,
+			false,
 		),
 		// Wording 3 — invented phrasing matching no former whitelist entry.
 		Entry(
@@ -226,7 +256,7 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			false,
 		),
 		Entry(
-			"wording 3 not-verified demotes",
+			"wording 3 not-verified demotes (bare admission)",
 			"performance: I inspected the vendored copy and the mutex is uncontended in this call graph",
 			"not-verified",
 			true,

@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: tier-key the `HasUnverifiedConcerns` fail-close gate — a `not-verified` concern now fail-closes an `approve` only when it is a MUST-tier blocker or a bare unexamined admission; a benign explained concern (e.g. "Go 1.27 toolchain not available in the review sandbox; CI precommit is the gate") passes, so a clean approve can no longer post a false `CHANGES_REQUESTED` (observed 2026-09-01 Seibert-Data/quickbooks#4 on the octopus fleet). The verdict-schema prompt (`execution_output-format.md`) mirrors the rule: examined-but-toolchain-limited concerns are `not-an-issue` with the verifier named in `detail`
+
 ## v0.6.6
 
 - fix: make the `concerns_addressed` disposition a structured field (`addressed` | `not-an-issue` | `not-verified`) and read it directly in `HasUnverifiedConcerns` — an `approve` whose concerns were all examined now posts as `APPROVED` no matter how the model worded its explanations, ending the recurring false `CHANGES_REQUESTED` on clean approves (observed 2026-08-24 bborbe/nuke#68 and 2026-08-30 bborbe/discord-assistant#37); legacy bare-string entries still demote on a `not verified` substring

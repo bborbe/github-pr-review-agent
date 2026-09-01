@@ -258,16 +258,59 @@ const ReasonFunnelDidNotRun = "mechanical funnel did not run"
 // to request-changes so an incomplete review can never green-light a PR.
 const ReasonConcernsNotVerified = "one or more ## Plan concerns not verified"
 
+// mustTierBlockerPattern matches an unverified concern that carries MUST-tier
+// blocker language — the model flags the unverified item as a requirement that
+// must be satisfied before merge ("must verify", "alerts will never fire",
+// "blocking"). Only these (or bare unexamined admissions, see
+// unverifiedConcernDemotes) fail-close an approve (tier-keyed gate). Regression
+// 2026-09-01 (Seibert-Data/quickbooks#4): the previous gate demoted on ANY
+// `not-verified` disposition, posting a false CHANGES_REQUESTED on the octopus
+// fleet for a benign toolchain-limited concern.
+var mustTierBlockerPattern = regexp.MustCompile(
+	`(?i)must (fix|verify|be (addressed|checked|resolved)|resolve)|will never (fire|work)|without (it|this)|blocking|blocks? (merge|ship|deploy)|cannot (merge|ship|be merged)|breaks? (the|this|prod|production)|required (before|to)|fatal|merge[ -]?blocker`,
+)
+
+// benignVerificationGapPattern matches an unverified concern that explains the
+// verification gap as non-blocking — verification was unnecessary/impossible for
+// a stated benign reason (config/docs-only, source not in repo, could not be
+// cross-checked) OR is deferred to a named verifier (CI/precommit/build gate/
+// toolchain in CI). Such concerns pass an approve; only MUST-tier blockers or
+// bare unexamined admissions fail-close (tier-keyed). The toolchain/gate
+// alternatives cover the 2026-09-01 quickbooks#4 phrasing ("Go 1.27 toolchain
+// not available in the review sandbox; repo CI precommit is the gate").
+var benignVerificationGapPattern = regexp.MustCompile(
+	`(?i)not applicable|config[- ]only|(docs?|documentation)[- ]only|no (go |code |source )*changes|nothing to (verify|check)|source (is )?not (in|present in) (this|the) (repo|repository|monorepo)|could not be cross[- ]checked|no (blocking )?(issues|findings|problems) (found|identified)|not (an?|a) (issue|problem|blocker)|toolchain (is )?not available|not available in (the )?(review )?sandbox|(ci|precommit|build|pipeline|workflow|github actions)[ -]?(is|runs|will|runs the)? ?(the )?(gate|verifier|check|test)|(is|serves as) (the )?(verification )?gate|will be (verified|checked) (by|in)|defer(red)? (to|the)|(is|remains) the gate`,
+)
+
+// unverifiedConcernDemotes reports whether a flagged unverified concern (text
+// assembled from the concern + detail) must fail-close an approve. Tier-keyed:
+// demote when it carries MUST-tier blocker language OR is a bare unexamined
+// admission (no benign explanation); pass when it explains the gap as benign or
+// defers verification to a named verifier (CI/precommit/gate).
+func unverifiedConcernDemotes(text string) bool {
+	if mustTierBlockerPattern.MatchString(text) {
+		return true
+	}
+	if benignVerificationGapPattern.MatchString(text) {
+		return false
+	}
+	return true // bare unexamined admission
+}
+
 // HasUnverifiedConcerns reports whether the review body's verdict JSON marks any
-// ## Plan concern as unexamined. concerns_addressed entries are objects carrying
-// a three-value `disposition` field (`addressed` | `not-an-issue` |
-// `not-verified`); an approve carrying a `not-verified` disposition (or an
-// absent/unrecognised disposition value, treated fail-safe) must be demoted to
-// request-changes (see postAndRoute) so an incomplete review can never
-// green-light a PR. Concern prose is never inspected. A legacy entry that is a
-// bare string falls back to a plain substring check (`not verified` /
-// `unverified`, lowercased) so task files written before the object shape
-// preserve spec 002's contract. Returns false for a missing/malformed verdict
+// ## Plan concern as unexamined in a way that must fail-close an approve.
+// concerns_addressed entries are objects carrying a three-value `disposition`
+// field (`addressed` | `not-an-issue` | `not-verified`); an `addressed` or
+// `not-an-issue` disposition always passes. A non-passing disposition
+// (`not-verified`, absent, or unrecognised) is tier-keyed: it demotes only when
+// the concern carries MUST-tier blocker language or is a bare unexamined
+// admission; a concern that explains the gap as benign or names the verifier
+// (e.g. "Go 1.27 toolchain not available in the review sandbox; repo CI
+// precommit is the gate") passes — see unverifiedConcernDemotes. A legacy entry
+// that is a bare string is tier-keyed the same way (the flag wording
+// `not verified`/`unverified` is the admission; benign explanations pass), so
+// task files written before the object shape preserve spec 002's contract
+// without the blanket demote. Returns false for a missing/malformed verdict
 // block, an empty concerns list, or a concerns_addressed value that is not a
 // list (no over-trigger).
 func HasUnverifiedConcerns(reviewText string) bool {
@@ -282,25 +325,28 @@ func HasUnverifiedConcerns(reviewText string) bool {
 		return false
 	}
 	for _, raw := range payload.ConcernsAddressed {
-		// Legacy bare-string entry: today's substring rule, plain strings.Contains.
+		// Legacy bare-string entry: the flag wording is the admission; tier-keyed.
 		var s string
 		if err := json.Unmarshal(raw, &s); err == nil {
 			lower := strings.ToLower(s)
 			if strings.Contains(lower, "not verified") || strings.Contains(lower, "unverified") {
-				return true
+				return unverifiedConcernDemotes(s)
 			}
 			continue
 		}
-		// Object entry: the disposition field is authoritative; prose is inert.
+		// Object entry: addressed/not-an-issue always pass; a non-passing
+		// disposition is tier-keyed on the concern + detail text.
 		var obj struct {
+			Concern     string `json:"concern"`
+			Detail      string `json:"detail"`
 			Disposition string `json:"disposition"`
 		}
 		if err := json.Unmarshal(raw, &obj); err == nil {
 			switch obj.Disposition {
 			case "addressed", "not-an-issue":
 				continue
-			default: // not-verified, absent, or unrecognised -> fail-safe demote
-				return true
+			default: // not-verified, absent, or unrecognised -> tier-keyed
+				return unverifiedConcernDemotes(obj.Concern + " " + obj.Detail)
 			}
 		}
 		// Neither a string nor an object (number, nested array): uninterpretable —
