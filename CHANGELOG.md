@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.86.0, github.com/bborbe/argument/v2 to v2.13.2, github.com/bborbe/cqrs to v0.6.10, github.com/bborbe/errors to v1.6.0, github.com/bborbe/kafka to v1.25.11, github.com/bborbe/maintainer to v0.50.5, github.com/bborbe/sentry to v1.10.1, github.com/bborbe/service to v1.10.11, github.com/bborbe/time to v1.27.12, github.com/bborbe/vault-cli to v0.121.2, github.com/onsi/gomega to v1.43.0
+
 ## v0.6.7
 
 - fix: tier-key the `HasUnverifiedConcerns` fail-close gate — a `not-verified` concern now fail-closes an `approve` only when it is a MUST-tier blocker or a bare unexamined admission; a benign explained concern (e.g. "Go 1.27 toolchain not available in the review sandbox; CI precommit is the gate") passes, so a clean approve can no longer post a false `CHANGES_REQUESTED` (observed 2026-09-01 Seibert-Data/quickbooks#4 on the octopus fleet). The verdict-schema prompt (`execution_output-format.md`) mirrors the rule: examined-but-toolchain-limited concerns are `not-an-issue` with the verifier named in `detail`
