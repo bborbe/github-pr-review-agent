@@ -18,8 +18,8 @@ former `bborbe/maintainer` monorepo (`agent/pr-reviewer`).
 4. Run the Claude Code review (`/pr-review <target-branch>`) inside the
    `claude-yolo` container against the diff.
 5. Parse the JSON verdict from the review output.
-6. Post a structured review — `APPROVE` / `REQUEST_CHANGES` (gated by
-   `autoApprove`) or a plain `COMMENT` — and clean up the clone.
+6. Post a structured review — `APPROVE` / `REQUEST_CHANGES`, the verdict
+   decides (spec 060; `autoApprove` does not gate the posted event) — and clean up the clone.
 
 ## Run modes
 
@@ -48,8 +48,9 @@ Env-driven (Kubernetes) — key variables:
 | `REVIEW_MAX_DURATION` | Soft time budget per Claude phase run (default `25m`, floor `60s`); an overrun routes the phase to `human_review` with a budget-naming message and salvages any streamed partial into the task's `## Salvage` section (never a retry, never posted to GitHub); keep below the K8s Job `ActiveDeadlineSeconds` |
 | `BITBUCKET_TOKEN` | Bitbucket Server bearer token (Bitbucket PRs only) |
 
-Per-repo behavior is driven by the target repo's `.maintainer.yaml`
-(`prReviewer.autoApprove`) — read from the PR head. See
+The target repo's `.maintainer.yaml` (`prReviewer.autoApprove`) is read from
+the PR head, but the posted event is decided by the verdict alone (spec 060) —
+`autoApprove` does not gate it. See
 [`bborbe/maintainer`](https://github.com/bborbe/maintainer) for that schema.
 
 ## Verdict contract

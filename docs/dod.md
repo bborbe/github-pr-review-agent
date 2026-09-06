@@ -13,7 +13,7 @@ After completing your implementation, review your own changes against each crite
 
 ## Review-Posting Safety (load-bearing — this agent writes to other people's PRs)
 
-- The posted review verdict is `APPROVE`/`REQUEST_CHANGES` only when the target repo's `.maintainer.yaml` `prReviewer.autoApprove: true`; otherwise it posts a plain `COMMENT` — never let a change bypass the `autoApprove` gate for an `APPROVE`
+- The posted review event is `APPROVE`/`REQUEST_CHANGES` per the verdict alone — `mapVerdictAndSummary` never emits `COMMENT` (spec 060: a `COMMENTED` review does not satisfy branch protection). `prReviewer.autoApprove` is read but does not gate the posted event; never re-introduce a `COMMENT` demotion
 - The `pr-override` path (`PostOverrideApprove`) is the one deliberate exception (trusted-author label) and posts unconditionally — do not widen that surface
 - Clones are throwaway scratch dirs at the PR head, cleaned up after the run; no writes back to the cloned repo
 - `REPO_ALLOWLIST` is honored — a PR outside the allowlist is refused, never reviewed

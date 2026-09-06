@@ -648,14 +648,14 @@ const maxGitHubCommentBodyNotice = "\n\n…[truncated to 65 KiB GitHub limit; fu
 // Empty summary is substituted with a default and recorded as a soft-warning.
 // Over-length bodies are truncated to 65,536 chars (the GitHub API limit).
 //
-// autoApprove is reserved for future per-repo gating; the verdict alone decides
-// the event today. The parameter is preserved in the signature for backward
-// compatibility with operator tooling that sets the field.
+// The verdict alone decides the event (spec 060): approve → APPROVE,
+// request-changes → REQUEST_CHANGES, never COMMENT. autoApprove is kept in the
+// signature for backward compatibility with operator tooling that sets the field.
 func mapVerdictAndSummary(
 	verdict prpkg.Verdict,
 	autoApprove bool,
 	summary string,
-) (event, body string, warnings []string) { //nolint:unparam // autoApprove reserved for future per-repo gating (spec 060)
+) (event, body string, warnings []string) { //nolint:unparam // autoApprove kept for operator tooling (spec 060)
 	_ = autoApprove
 	switch verdict {
 	case prpkg.VerdictRequestChanges:

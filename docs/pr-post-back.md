@@ -18,7 +18,7 @@ The poster receives:
 - **Verdict** (`approve` / `request-changes`) — extracted from the JSON block at the end of `## Review` by `ParseVerdict`.
 - **Summary** — the `## Review` body with the JSON verdict block stripped, via `StripJSONVerdict`. This is the human-readable part GitHub shows on the review.
 - **HeadSHA** — the `ref` frontmatter field, used to anchor the review to the exact commit.
-- **WorkDir** — the worktree path, used by the poster to read `.maintainer.yaml` for `prReviewer.autoApprove` config.
+- **WorkDir** — the worktree path, used by the poster to read `.maintainer.yaml` for `prReviewer.autoApprove` (read for operator tooling; does not gate the posted event — see spec 060).
 
 ### GitHub body length limit (65,536 chars)
 
@@ -38,7 +38,7 @@ postAndRoute
   ├─ PrPoster.Post(ctx, PostRequest{...})
   │     │
   │     ├─ bot identity self-check (GET /user == BOT_GITHUB_LOGIN)
-  │     ├─ autoApprove config read (.maintainer.yaml in worktree)
+  │     ├─ autoApprove config read (.maintainer.yaml in worktree) — no gating (spec 060)
   │     ├─ POST /repos/{owner}/{repo}/pulls/{n}/reviews
   │     └─ verify-after-POST (GET /pulls/{n}/reviews to confirm review appears)
   │

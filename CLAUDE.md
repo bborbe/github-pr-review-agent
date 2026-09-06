@@ -99,7 +99,7 @@ Standalone binary; the shared lib is imported from `github.com/bborbe/maintainer
 
 ## Key Design Decisions
 
-- **LLM produces a verdict; posting is gated code.** The Claude review returns a verdict only. Whether it posts as `APPROVE`/`REQUEST_CHANGES` (vs demoted `COMMENT`) is decided by the target repo's `.maintainer.yaml` `prReviewer.autoApprove`, read from the PR head.
+- **LLM produces a verdict; the verdict alone decides the posted event.** The Claude review returns a verdict only; `mapVerdictAndSummary` maps `approve` → `APPROVE` and `request-changes` → `REQUEST_CHANGES` unconditionally (spec 060). The target repo's `.maintainer.yaml` `prReviewer.autoApprove` is read (for operator tooling) but does not demote `APPROVE` to `COMMENT` — a `COMMENTED` review does not satisfy branch protection.
 - **`pr-override` is the one unconditional-approve path** — trusted-author `override-review` label, `PostOverrideApprove`, no autoApprove gate, no clone, no container. Do not widen it.
 - **Clones are throwaway scratch** at the PR head, cleaned up after the run — never written back.
 - **`REPO_ALLOWLIST` is enforced** — a PR outside the allowlist is refused, never reviewed.
