@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.7.0
 
 - feat: decouple the merge verdict from severity — each review comment now carries a `blocking` flag (with `blocking_reason` when set); the execution prompt marks a finding blocking only on concrete evidence (build/test breakage, production regression, security defect, correctness defect, merge-gate requirement, functional no-op), and the Go side fail-closes an `approve` that carries any blocking comment to `request-changes` (`ReasonBlockingFindingPresent`), with comments missing the new field falling back to the old severity roll-up so pre-existing debt on lines a PR did not touch no longer blocks it; ai_review's consistency check is re-keyed from severity to blocking and its hallucination check now keys on the cited file's presence in the diff's changed files
 
