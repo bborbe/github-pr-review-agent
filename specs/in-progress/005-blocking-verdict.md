@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-09-08T15:36:05Z"
 generating: "2026-09-08T15:38:45Z"
 prompted: "2026-09-08T15:49:47Z"
+verifying: "2026-09-08T16:12:28Z"
 branch: dark-factory/blocking-verdict
 ---
 
