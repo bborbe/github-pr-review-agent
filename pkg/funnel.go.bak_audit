@@ -92,9 +92,12 @@ func (r *funnelRunner) Run(
 		}, nil
 	}
 
-	resolved, files, preambleDetail := r.resolveAndCollectChangedFiles(ctx, worktreePath, baseRef)
-	if preambleDetail != "" {
-		return FunnelResult{Ran: false, FailDetail: preambleDetail}, nil
+	files, filesErr := r.changedFiles(ctx, worktreePath, baseRef)
+	if filesErr != nil {
+		return FunnelResult{
+			Ran:        false,
+			FailDetail: "could not compute changed files for base_ref " + baseRef,
+		}, nil
 	}
 	if len(files) == 0 {
 		return FunnelResult{
@@ -155,19 +158,7 @@ func (r *funnelRunner) Run(
 			FailDetail: "ast-grep runner output was not valid JSON",
 		}, nil
 	}
-
-	// Diff-anchor the findings to the lines the PR actually changed before they
-	// reach the review model: pre-existing debt on untouched lines is removed, so
-	// it can never gate a merge and costs no model tokens. Any failure to obtain
-	// or parse the hunk data fail-closes the funnel — a broken filter must never
-	// silently un-block a diff.
-	filtered, detail := r.filterToChangedLines(ctx, worktreePath, baseRef, resolved, files, out)
-	if detail != "" {
-		glog.Warningf("funnel diff-anchor fail-closed base_ref=%s detail=%s", baseRef, detail)
-		return FunnelResult{Ran: false, FailDetail: detail}, nil
-	}
-	glog.Infof("funnel diff-anchor kept findings over files=%d", len(files))
-	return FunnelResult{Ran: true, FindingsJSON: neutralizeCodeFences(filtered)}, nil
+	return FunnelResult{Ran: true, FindingsJSON: neutralizeCodeFences(out)}, nil
 }
 
 // neutralizeCodeFences replaces any run of three-or-more backticks with a
@@ -184,34 +175,22 @@ func neutralizeCodeFences(s string) string {
 // fallback, and returns the ref string to pass to git diff. Both the
 // changed-files scan and the hunk computation consume this single resolution
 // so they can never disagree on the base.
-func (r *funnelRunner) resolvedBaseRef(
-	ctx context.Context,
-	worktreePath string,
-	baseRef string,
-) (string, error) {
+func (r *funnelRunner) resolvedBaseRef(ctx context.Context, worktreePath string, baseRef string) (string, error) {
 	// Best-effort: make sure origin/<baseRef> exists locally. Ignore failure —
 	// the diff below falls back to the bare ref name.
 	_ = r.git(ctx, worktreePath, "fetch", "origin", baseRef+":refs/remotes/origin/"+baseRef)
 	if _, err := r.gitOutput(ctx, worktreePath, "diff", "--name-only", "origin/"+baseRef+"...HEAD"); err == nil {
 		return "origin/" + baseRef, nil
 	}
-	_, err := r.gitOutput(ctx, worktreePath, "diff", "--name-only", baseRef+"...HEAD")
-	if err == nil {
+	if _, err := r.gitOutput(ctx, worktreePath, "diff", "--name-only", baseRef+"...HEAD"); err == nil {
 		return baseRef, nil
 	}
-	// Wrap the last failed git diff error (gitOutput already surfaces stderr)
-	// rather than discarding it — the surfaced detail is identical, but the
-	// underlying cause stays in the error chain per DoD error hygiene.
-	return "", errors.Wrapf(ctx, err, "git diff --name-only base_ref=%s", baseRef)
+	return "", errors.Errorf(ctx, "git diff --name-only base_ref=%s", baseRef)
 }
 
 // changedFiles returns the PR's changed file paths (relative to
 // worktreePath) by diffing HEAD against the resolved base ref.
-func (r *funnelRunner) changedFiles(
-	ctx context.Context,
-	worktreePath string,
-	resolvedBase string,
-) ([]string, error) {
+func (r *funnelRunner) changedFiles(ctx context.Context, worktreePath string, resolvedBase string) ([]string, error) {
 	out, err := r.gitOutput(ctx, worktreePath, "diff", "--name-only", resolvedBase+"...HEAD")
 	if err != nil {
 		return nil, errors.Wrapf(ctx, err, "git diff --name-only base_ref=%s", resolvedBase)
@@ -229,26 +208,6 @@ func (r *funnelRunner) changedFiles(
 		files = append(files, line)
 	}
 	return files, nil
-}
-
-// resolveAndCollectChangedFiles resolves the PR diff base and returns the
-// changed file paths. A non-empty detail means resolution or the diff failed
-// and the caller must fail closed (Ran: false). Extracting this preamble
-// keeps Run under the funlen 80-line limit.
-func (r *funnelRunner) resolveAndCollectChangedFiles(
-	ctx context.Context,
-	worktreePath string,
-	baseRef string,
-) (resolved string, files []string, detail string) {
-	resolved, resolveErr := r.resolvedBaseRef(ctx, worktreePath, baseRef)
-	if resolveErr != nil {
-		return "", nil, "could not compute changed files for base_ref " + baseRef
-	}
-	files, filesErr := r.changedFiles(ctx, worktreePath, resolved)
-	if filesErr != nil {
-		return "", nil, "could not compute changed files for base_ref " + baseRef
-	}
-	return resolved, files, ""
 }
 
 // git runs a git subcommand in worktreePath, discarding stdout.
@@ -376,31 +335,9 @@ type funnelFinding struct {
 
 // funnelReport mirrors the runner's top-level JSON object.
 type funnelReport struct {
-	Stats           funnelStats                `json:"stats"`
+	Stats           funnelStats               `json:"stats"`
 	FindingsByOwner map[string][]funnelFinding `json:"findings_by_owner"`
-	Errors          []json.RawMessage          `json:"errors"`
-}
-
-// findingSurvives reports whether a finding is anchored to a line the PR
-// changed: its file's basename must be in changedBases and its 1-based line
-// (0-based ast-grep line + 1) must fall inside one of the changed ranges.
-// Findings with an empty file or line == 0 never survive.
-func findingSurvives(
-	f funnelFinding,
-	changedBases map[string]struct{},
-	ranges map[string][]lineRange,
-) bool {
-	if f.File == "" {
-		return false
-	}
-	if f.Line == 0 {
-		return false
-	}
-	base := filepath.Base(f.File)
-	if _, ok := changedBases[base]; !ok {
-		return false
-	}
-	return lineInRanges(f.Line+1, ranges[base])
+	Errors          []json.RawMessage         `json:"errors"`
 }
 
 // filterFindings rewrites the runner's findings JSON so that only findings
@@ -428,7 +365,17 @@ func filterFindings(
 	for owner, findings := range report.FindingsByOwner {
 		kept := make([]funnelFinding, 0, len(findings))
 		for _, f := range findings {
-			if !findingSurvives(f, changedBases, ranges) {
+			if f.File == "" {
+				continue
+			}
+			if f.Line == 0 {
+				continue
+			}
+			base := filepath.Base(f.File)
+			if _, ok := changedBases[base]; !ok {
+				continue
+			}
+			if !lineInRanges(f.Line+1, ranges[base]) {
 				continue
 			}
 			kept = append(kept, f)
@@ -454,11 +401,7 @@ func filterFindings(
 // diffing HEAD against the resolved base ref with --unified=0, where only
 // the new-file "+" lines count as changed. Any failure to obtain or parse
 // the hunk data is returned as an error so the caller can fail closed.
-func (r *funnelRunner) changedLineRanges(
-	ctx context.Context,
-	worktreePath string,
-	resolvedBase string,
-) (map[string][]lineRange, error) {
+func (r *funnelRunner) changedLineRanges(ctx context.Context, worktreePath string, resolvedBase string) (map[string][]lineRange, error) {
 	out, err := r.gitOutput(ctx, worktreePath, "diff", "--unified=0", resolvedBase+"...HEAD")
 	if err != nil {
 		return nil, errors.Wrapf(ctx, err, "git diff --unified=0 base_ref=%s", resolvedBase)
