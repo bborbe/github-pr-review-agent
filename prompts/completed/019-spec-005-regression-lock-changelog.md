@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [005-blocking-verdict]
+summary: 'Added the spec-005 acceptance table to pkg/verdict_test.go exercising the production ApplyBlockingGate composition across all four acceptance cases (verified via the revert-test: neutralizing the gate flips the blocking-true and absent-blocking critical/major rows while the four fail-closed rows stay green), and added the feat: ## Unreleased changelog entry in the correct position above the newest section.'
+execution_id: github-pr-review-agent-blocking-exec-019-spec-005-regression-lock-changelog
+dark-factory-version: dev
 created: "2026-09-08T15:43:03Z"
 queued: "2026-09-08T15:57:25Z"
+started: "2026-09-08T16:07:46Z"
+completed: "2026-09-08T16:12:27Z"
 branch: dark-factory/blocking-verdict
 ---
 

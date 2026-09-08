@@ -900,3 +900,75 @@ var _ = Describe("ParseVerdict end-anchored window regression (long verdict bloc
 		Expect(result.Verdict).To(Equal(pkg.VerdictApprove))
 	})
 })
+
+var _ = Describe("Blocking verdict roll-up (spec-005)", func() {
+	DescribeTable("composes ParseVerdict with the blocking gate",
+		func(reviewText string, expectedVerdict pkg.Verdict, expectedReason string) {
+			result := pkg.ApplyBlockingGate(pkg.ParseVerdict(reviewText), reviewText)
+			Expect(result.Verdict).To(Equal(expectedVerdict))
+			if expectedReason != "" {
+				Expect(result.Reason).To(Equal(expectedReason))
+			}
+		},
+		// (a) approve + critical-severity comment marked blocking:false — pre-existing debt
+		Entry(
+			"approve + critical blocking:false (pre-existing debt) → approve",
+			`{"verdict":"approve","reason":"pre-existing debt","comments":[{"file":"main.go","line":5,"severity":"critical","blocking":false,"message":"debt on an untouched line"}]}`,
+			pkg.VerdictApprove,
+			"pre-existing debt",
+		),
+		// (b) comment blocking:true while the model verdict is approve → request-changes
+		Entry(
+			"approve + blocking:true → request-changes (ReasonBlockingFindingPresent)",
+			`{"verdict":"approve","reason":"looks good","comments":[{"file":"main.go","line":9,"severity":"nit","blocking":true,"blocking_reason":"isHealthy() is inverted","message":"real defect"}]}`,
+			pkg.VerdictRequestChanges,
+			pkg.ReasonBlockingFindingPresent,
+		),
+		// (c) blocking field absent → severity fallback: critical/major block, nit/minor do not
+		Entry(
+			"approve + absent blocking critical → request-changes (severity fallback)",
+			`{"verdict":"approve","reason":"ok","comments":[{"file":"main.go","line":5,"severity":"critical","message":"..."}]}`,
+			pkg.VerdictRequestChanges,
+			pkg.ReasonBlockingFindingPresent,
+		),
+		Entry(
+			"approve + absent blocking major → request-changes (severity fallback)",
+			`{"verdict":"approve","reason":"ok","comments":[{"file":"main.go","line":5,"severity":"major","message":"..."}]}`,
+			pkg.VerdictRequestChanges,
+			pkg.ReasonBlockingFindingPresent,
+		),
+		Entry(
+			"approve + absent blocking nit → approve",
+			`{"verdict":"approve","reason":"ok","comments":[{"file":"main.go","line":5,"severity":"nit","message":"..."}]}`,
+			pkg.VerdictApprove,
+			"ok",
+		),
+		Entry(
+			"approve + absent blocking minor → approve",
+			`{"verdict":"approve","reason":"ok","comments":[{"file":"main.go","line":5,"severity":"minor","message":"..."}]}`,
+			pkg.VerdictApprove,
+			"ok",
+		),
+		// (d) the four fail-closed paths still yield request-changes, blocking gate or not
+		Entry("empty text → request-changes (fail-closed)",
+			"",
+			pkg.VerdictRequestChanges,
+			"empty review text",
+		),
+		Entry("no verdict block → request-changes (fail-closed)",
+			"### Must Fix\n\n- something",
+			pkg.VerdictRequestChanges,
+			"no verdict block",
+		),
+		Entry("malformed JSON → request-changes (fail-closed)",
+			`{"verdict": invalid}`,
+			pkg.VerdictRequestChanges,
+			"",
+		),
+		Entry("unknown verdict → request-changes (fail-closed)",
+			`{"verdict":"comment"}`,
+			pkg.VerdictRequestChanges,
+			"unknown verdict: comment",
+		),
+	)
+})
