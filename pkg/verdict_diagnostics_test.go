@@ -20,6 +20,8 @@ var _ = Describe("isFailClosedReason", func() {
 		Entry("no verdict block", "no verdict block", true),
 		Entry("malformed JSON", "malformed JSON: unexpected end of JSON input", true),
 		Entry("unknown verdict", "unknown verdict: block", true),
+		// The reason the blocking gate emits — must also drive the diagnostic log.
+		Entry("blocking finding present", pkg.ReasonBlockingFindingPresent, true),
 		// Model-authored reasons on a genuine request-changes — must NOT log.
 		Entry("real reason text", "Two must-fix issues in the auth handler", false),
 		Entry("empty string", "", false),

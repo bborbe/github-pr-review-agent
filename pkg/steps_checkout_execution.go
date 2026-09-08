@@ -406,6 +406,15 @@ func (s *checkoutExecutionStep) postAndRoute(
 		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
 	}
 
+	// Fail-closed gate: the model emitted `approve` while a comment carries
+	// `blocking: true` (or the severity fallback says a comment blocks) — the
+	// model contradicted itself. Override to request-changes so an approve never
+	// posts while a blocking finding exists. Composed AFTER the funnel and
+	// concerns gates: each gate only overrides approve → request-changes, so the
+	// earlier, coarser gates keep their reasons (funnel first, then concerns,
+	// then blocking) and this gate never rewrites an already-fail-closed verdict.
+	verdict = ApplyBlockingGate(verdict, reviewBody)
+
 	// Diagnostic for the recurring false-CHANGES_REQUESTED symptom: a
 	// request-changes verdict produced by ParseVerdict fail-closing (empty /
 	// unparseable / no-verdict-block) on a review whose posted body looks like a

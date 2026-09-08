@@ -258,6 +258,15 @@ const ReasonFunnelDidNotRun = "mechanical funnel did not run"
 // to request-changes so an incomplete review can never green-light a PR.
 const ReasonConcernsNotVerified = "one or more ## Plan concerns not verified"
 
+// ReasonBlockingFindingPresent is the fail-closed Result.Reason set when the
+// Go-side blocking gate sees an `approve` verdict whose verdict block carries
+// a comment marked `blocking: true` (or whose severity fallback says a
+// comment blocks) — the model contradicted itself, or its severity roll-up
+// contradicts the approve. The verdict is overridden to request-changes so
+// an approve never posts while a blocking finding exists. Recognized by
+// isFailClosedReason for logging.
+const ReasonBlockingFindingPresent = "blocking finding present"
+
 // mustTierBlockerPattern matches an unverified concern that carries MUST-tier
 // blocker language — the model flags the unverified item as a requirement that
 // must be satisfied before merge ("must verify", "alerts will never fire",
@@ -355,6 +364,64 @@ func HasUnverifiedConcerns(reviewText string) bool {
 	return false
 }
 
+// HasBlockingFinding reports whether the review body's verdict JSON carries
+// any comment that blocks the merge. A comment's `blocking` field is
+// authoritative when present, regardless of severity and regardless of
+// whether its `blocking_reason` is empty (the reason is a model-quality
+// requirement, not a gate condition). When `blocking` is absent, severity
+// falls back: `critical` and `major` block, `nit` and `minor` do not —
+// reproducing today's severity roll-up exactly for a model that omits the
+// new field. A comment that is unparseable, or carries neither `blocking`
+// nor `severity`, is skipped and does not block; a missing or malformed
+// `comments` list never over-triggers. Returns false for a missing or
+// malformed verdict block.
+func HasBlockingFinding(reviewText string) bool {
+	block, _, ok := findVerdictBlock(reviewText)
+	if !ok {
+		return false
+	}
+	var payload struct {
+		Comments []json.RawMessage `json:"comments"`
+	}
+	if err := json.Unmarshal([]byte(block), &payload); err != nil {
+		return false
+	}
+	for _, raw := range payload.Comments {
+		var comment struct {
+			Blocking *bool  `json:"blocking"`
+			Severity string `json:"severity"`
+		}
+		if err := json.Unmarshal(raw, &comment); err != nil {
+			continue // unparseable comment: skip, never over-trigger
+		}
+		if comment.Blocking != nil {
+			if *comment.Blocking {
+				return true // explicit blocking: true wins, regardless of severity/reason
+			}
+			continue // explicit blocking: false: this comment does not block — keep scanning
+		}
+		if comment.Severity == "critical" || comment.Severity == "major" {
+			return true // severity fallback for a comment missing `blocking`
+		}
+		// nit/minor, absent severity, or unrecognised severity: does not block
+	}
+	return false
+}
+
+// ApplyBlockingGate is the Go-side blocking override gate: an `approve`
+// verdict whose verdict block carries any blocking comment is overridden to
+// `request-changes` with ReasonBlockingFindingPresent. Every other verdict
+// passes through unchanged, so it only ever converts approve →
+// request-changes (never the reverse). Composed after the funnel and
+// concerns gates in postAndRoute, it never rewrites an already-fail-closed
+// verdict, so the earlier, coarser gates keep their reasons (funnel first).
+func ApplyBlockingGate(verdict Result, reviewText string) Result {
+	if verdict.Verdict == VerdictApprove && HasBlockingFinding(reviewText) {
+		return Result{Verdict: VerdictRequestChanges, Reason: ReasonBlockingFindingPresent}
+	}
+	return verdict
+}
+
 // isFailClosedReason reports whether a request-changes Result.Reason came from
 // ParseVerdict fail-closing (empty / unparseable / no-verdict-block / unknown
 // verdict) rather than from a model-authored reason on a genuine request-changes
@@ -368,6 +435,7 @@ func isFailClosedReason(reason string) bool {
 		reason == "no verdict block" ||
 		reason == ReasonFunnelDidNotRun ||
 		reason == ReasonConcernsNotVerified ||
+		reason == ReasonBlockingFindingPresent ||
 		strings.HasPrefix(reason, "malformed JSON:") ||
 		strings.HasPrefix(reason, "unknown verdict:")
 }

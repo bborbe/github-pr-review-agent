@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [005-blocking-verdict]
+summary: 'Implemented Go-side blocking gate: HasBlockingFinding detector, ApplyBlockingGate pure-composition gate, ReasonBlockingFindingPresent, isFailClosedReason registration, postAndRoute wiring, and full unit + posting-boundary test coverage; make precommit passes.'
+execution_id: github-pr-review-agent-blocking-exec-017-spec-005-blocking-gate
+dark-factory-version: dev
 created: "2026-09-08T15:43:03Z"
 queued: "2026-09-08T15:57:25Z"
+started: "2026-09-08T16:00:40Z"
+completed: "2026-09-08T16:04:39Z"
 branch: dark-factory/blocking-verdict
 ---
 
