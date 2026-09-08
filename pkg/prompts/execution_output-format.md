@@ -9,6 +9,8 @@ Final response MUST be a single JSON object with this schema:
       "file": "path/to/file.go",
       "line": 42,
       "severity": "critical | major | minor | nit",
+      "blocking": true | false,
+      "blocking_reason": "required when blocking is true; empty string otherwise",
       "message": "..."
     }
   ],
@@ -31,7 +33,18 @@ Field rules:
 - `verdict`: required, one of the listed values
 - `summary`: required, single short paragraph
 - `comments`: required, may be empty list for `approve` with no nits
-- Each comment requires `file`, `line`, `severity`, `message`
+- Each comment requires `file`, `line`, `severity`, `blocking`, `message`;
+  `blocking_reason` is required when `blocking` is true
+- `blocking`: required bool — whether the finding blocks the merge verdict.
+  Mark it `true` ONLY when the evidence demonstrates a concrete defect the
+  change introduces or must fix (see the blocking conditions in the
+  execution workflow footer); mark it `false` for pre-existing debt on lines
+  this PR did not touch, stylistic/naming/refactor suggestions, and findings
+  you could not confirm (dropped per the funnel-inject adjudication contract)
+- `blocking_reason`: required string when `blocking` is true — the concrete
+  defect that justifies blocking; an empty value never un-blocks
+- `severity` orders and labels comments only — it never decides the verdict.
+  The verdict is decided by `blocking` alone
 - `concerns_addressed`: required, one object per concern from `## Plan`. Each
   object has:
   - `concern` (required): the concern text from `## Plan`

@@ -94,16 +94,31 @@ const verdictTranslationFooter = "---\n\n" +
 	"After Step 7 (Manual Review) completes and the consolidated report is\n" +
 	"produced, ALSO emit a JSON verdict matching the agent's frozen schema (see\n" +
 	"`<output-format>`).\n\n" +
-	"Severity map (deterministic):\n" +
-	"- Must Fix finding → comment severity \"critical\", contributes to verdict \"request-changes\"\n" +
-	"- Should Fix finding → comment severity \"major\", contributes to verdict \"request-changes\"\n" +
+	"Severity orders and labels comments only — it never decides the verdict:\n" +
+	"- Must Fix finding → comment severity \"critical\"\n" +
+	"- Should Fix finding → comment severity \"major\"\n" +
 	"- Nice to Have finding → comment severity \"nit\"\n" +
 	"- The severity \"minor\" is reserved for LLM judgment on findings that\n" +
 	"  genuinely don't fit a plugin bucket; the deterministic map never emits it.\n\n" +
+	"Every comment carries a `blocking` bool, and `blocking_reason` when\n" +
+	"`blocking` is true. Mark a finding `blocking: true` ONLY when its evidence\n" +
+	"demonstrates a concrete defect the change introduces or must fix:\n" +
+	"- Build/test breakage — breaks compilation, tests, or a CI gate\n" +
+	"- Production regression — data loss, crash, outage, or a broken production path\n" +
+	"- Security defect — an exploitable vulnerability or a credential leak\n" +
+	"- Correctness defect — the changed code is wrong for a real input\n" +
+	"- Merge-gate requirement — a MUST-tier requirement the repo's merge demands\n" +
+	"  that this change fails\n" +
+	"- Functional no-op — the change's stated mechanism will never work or never\n" +
+	"  fire as written\n\n" +
+	"Do NOT mark a finding `blocking: true` when it is:\n" +
+	"- Pre-existing debt on lines this PR did not touch — surface it, don't block\n" +
+	"- A stylistic, naming, or refactor suggestion\n" +
+	"- A finding you cannot confirm — drop it per the funnel-inject adjudication\n" +
+	"  contract (report only findings you verified against the worktree)\n\n" +
 	"Verdict roll-up (binary — exactly one of two values):\n" +
-	"- Any Must Fix present → verdict \"request-changes\"\n" +
-	"- Any Should Fix present → verdict \"request-changes\"\n" +
-	"- Only Nice to Have, or nothing flagged → verdict \"approve\"\n\n" +
+	"- Any comment with `blocking: true` → verdict \"request-changes\"\n" +
+	"- Otherwise → verdict \"approve\"\n\n" +
 	"Each comment must pin to a real `file` and `line` from the report. If a\n" +
 	"finding has no coordinates, fold it into `summary` instead of emitting an\n" +
 	"un-pinned comment. Preserve the plugin's bucket label verbatim in the\n" +

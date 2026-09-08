@@ -19,13 +19,18 @@ automation acts on it.
    `concerns_addressed`)? Any concern silently dropped is a fail signal.
 
 2. **No hallucinations.** For each comment in `## Review`, verify the
-   cited file + line number actually exist in the inline diff provided
-   under `## Environment` (`PR Diff`). A comment citing a file or line
-   absent from the inline diff is a hallucination.
+   cited file is present in the diff's changed files (the files touched by
+   `PR Diff` under `## Environment`). A comment citing a file absent from
+   the changed files is a hallucination. A comment whose line sits outside
+   a diff hunk but inside a changed file is NOT a hallucination — the
+   executor pinned it from the checked-out worktree (a surfaced
+   pre-existing-debt finding).
 
 3. **Verdict consistency.** Does the verdict match the comments?
-   - `approve` + critical/major comments → inconsistent
-   - `request-changes` + only nit/minor comments → inconsistent
+   - `approve` + any comment with `blocking: true` → inconsistent
+   - `request-changes` + no comment with `blocking: true` → inconsistent
+   - `severity` plays no part in this check: an `approve` whose comments
+     are all `blocking: false` is consistent regardless of severity
 
 ## Rules
 

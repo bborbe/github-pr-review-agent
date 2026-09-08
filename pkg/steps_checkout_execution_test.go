@@ -619,6 +619,128 @@ prior review body
 			})
 		})
 
+		Context("fail-closed gate when a comment is blocking", func() {
+			// funnelRan=true so the funnel gate does not interfere — the blocking
+			// gate must be what demotes the approve.
+			It("fail-closes an approve carrying a blocking comment to request-changes", func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 13})
+
+				md := buildMD(ctx,
+					"LGTM.\n\n```json\n"+
+						`{"verdict":"approve","reason":"looks ok","comments":[{"file":"main.go","line":9,"severity":"nit","blocking":true,"blocking_reason":"isHealthy() is inverted","message":"real defect"}]}`+
+						"\n```\n")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
+
+			// Explicit blocking:false wins over severity even when the severity is
+			// critical — pre-existing debt the model consciously accepted.
+			It(
+				"posts an approve with a blocking:false critical comment untouched (pre-existing debt)",
+				func() {
+					fakePoster := &mocks.PrPoster{}
+					fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 14})
+
+					md := buildMD(ctx,
+						"LGTM.\n\n```json\n"+
+							`{"verdict":"approve","reason":"looks ok","comments":[{"file":"main.go","line":9,"severity":"critical","blocking":false,"blocking_reason":"accepted debt","message":"known issue"}]}`+
+							"\n```\n")
+					_, err := pkg.PostAndRouteForTest(
+						ctx,
+						fakePoster,
+						md,
+						prURL,
+						"",
+						fixedTime,
+						true,
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					_, req := fakePoster.PostArgsForCall(0)
+					Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+				},
+			)
+
+			// A comment carrying neither blocking nor severity is skipped per-entry —
+			// the gate must not over-trigger on comments without the new field.
+			It(
+				"posts an approve when comments carry neither blocking nor severity (per-entry skip)",
+				func() {
+					fakePoster := &mocks.PrPoster{}
+					fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 15})
+
+					md := buildMD(ctx,
+						"LGTM.\n\n```json\n"+
+							`{"verdict":"approve","reason":"looks ok","comments":[{"file":"main.go","line":9,"message":"note only"}]}`+
+							"\n```\n")
+					_, err := pkg.PostAndRouteForTest(
+						ctx,
+						fakePoster,
+						md,
+						prURL,
+						"",
+						fixedTime,
+						true,
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					_, req := fakePoster.PostArgsForCall(0)
+					Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+				},
+			)
+		})
+
+		Context("chain-precedence: funnel gate fires before the blocking gate", func() {
+			// funnelRan=false: the funnel gate demotes the approve first (to
+			// ReasonFunnelDidNotRun), so the blocking gate — composed after it —
+			// never gets a chance to rewrite the verdict. PostRequest carries only
+			// Verdict, not Reason, so the posted verdict is all this test can
+			// assert; the reason-preservation contract is asserted at the
+			// pure-function level by the ApplyBlockingGate unit test in
+			// verdict_blocking_test.go.
+			It(
+				"demotes the blocking-comment approve to request-changes via the funnel gate",
+				func() {
+					fakePoster := &mocks.PrPoster{}
+					fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 16})
+
+					md := buildMD(ctx,
+						"LGTM.\n\n```json\n"+
+							`{"verdict":"approve","reason":"looks ok","comments":[{"file":"main.go","line":9,"severity":"nit","blocking":true,"blocking_reason":"isHealthy() is inverted","message":"real defect"}]}`+
+							"\n```\n")
+					result, err := pkg.PostAndRouteForTest(
+						ctx,
+						fakePoster,
+						md,
+						prURL,
+						"",
+						fixedTime,
+						false,
+					)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result.NextPhase).To(Equal("ai_review"))
+
+					Expect(fakePoster.PostCallCount()).To(Equal(1))
+					_, req := fakePoster.PostArgsForCall(0)
+					Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+				},
+			)
+		})
+
 		Context("when post succeeds", func() {
 			It("advances to ai_review and writes a success diagnostic", func() {
 				fakePoster := &mocks.PrPoster{}
