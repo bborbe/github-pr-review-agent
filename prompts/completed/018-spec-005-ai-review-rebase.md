@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [005-blocking-verdict]
+summary: Re-keyed ai_review consistency check from severity to blocking and the hallucination check from diff-hunk lines to changed files in pkg/prompts/review_workflow.md, mirrored in docs/architecture.md; all AC 3/4 grep evidence passes and make precommit exits 0
+execution_id: github-pr-review-agent-blocking-exec-018-spec-005-ai-review-rebase
+dark-factory-version: dev
 created: "2026-09-08T15:43:03Z"
 queued: "2026-09-08T15:57:25Z"
+started: "2026-09-08T16:04:40Z"
+completed: "2026-09-08T16:07:44Z"
 branch: dark-factory/blocking-verdict
 ---
 

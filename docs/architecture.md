@@ -53,8 +53,8 @@ The fallback exists because LLMs sometimes drop the JSON block under load or wra
 The ai_review phase reads both `## Plan` and `## Review` and runs four checks (`pkg/prompts/review_workflow.md`):
 
 1. **Concerns addressed** — every concern from `## Plan` either has a corresponding comment in `## Review` or appears in `concerns_addressed` as explicitly non-issue.
-2. **No hallucinations** — every comment in `## Review` cites a file + line that actually exists in the inline PR diff supplied in the verifier preamble (host-fetched via `gh pr diff` and embedded under `## Environment`).
-3. **Verdict consistency** — does the executor's verdict match the severity of its comments? `approve` with critical comments = inconsistent; `request-changes` with only nits = inconsistent.
+2. **No hallucinations** — every comment in `## Review` cites a file present in the diff's changed files (supplied in the verifier preamble, host-fetched via `gh pr diff` and embedded under `## Environment`); a comment on a line outside a diff hunk but inside a changed file is not a hallucination.
+3. **Verdict consistency** — does the executor's verdict match the `blocking` flags of its comments? `approve` with any `blocking: true` comment = inconsistent; `request-changes` with no `blocking: true` comment = inconsistent. Severity plays no part in the check.
 4. **Post verification** — after the LLM writes `## Verdict`, the step calls `ReviewVerifier.VerifyReview` (GET `/pulls/{n}/reviews`) to confirm the execution-phase review actually persisted on GitHub. If absent, the step returns `AgentStatusFailed` and appends a diagnostic line (`ai_review verify: ...`) to `## Diagnostics`. Verification is skipped when `## Review` is absent (no post was attempted) or when the last `## Diagnostics` YAML block contains `class: permanent` or `class: unknown` (retry would not help). A `nil` verifier disables the check for local/test runs.
 
 ai_review's purpose is catching the case where execution rubber-stamped its own reasoning. Its `pass` / `fail` is meta — a green light to trust the executor's verdict, not a verdict on the PR itself.
