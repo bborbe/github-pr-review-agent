@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.12
 
 - fix: pin the coding plugin marketplace to `bborbe/coding@v0.51.0` in the Dockerfile runtime stage — the unpinned `claude plugin marketplace add bborbe/coding` silently resolved to a coding plugin version missing `docs/selector-mode-guide.md`, which made selector-mode reviews fail with a Must-Fix CRITICAL (observed 2026-07-23, fixed transiently by rebuild); the pin makes image rebuilds deterministic
 
