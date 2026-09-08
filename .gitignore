@@ -13,3 +13,4 @@
 /specs/in-progress/*.lock
 /vendor/
 /github-pr-review-agent
+/testdata-fixtures/

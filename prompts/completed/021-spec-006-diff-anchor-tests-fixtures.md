@@ -1,23 +1,25 @@
 ---
-status: approved
+status: completed
 spec: [006-diff-anchor-funnel-findings]
+summary: 'Added spec-006 diff-anchoring tests: export_test.go wrappers, hunk-parsing/filter/contract/fixture Ginkgo tables and two fail-closed Run rows in funnel_test.go, plus the four real-runner fixtures copied into pkg/testdata/ — make precommit exits 0.'
+execution_id: github-pr-review-agent-diff-anchor-exec-021-spec-006-diff-anchor-tests-fixtures
+dark-factory-version: dev
 created: "2026-09-08T20:14:50Z"
 queued: "2026-09-08T20:34:36Z"
+started: "2026-09-08T20:47:37Z"
+completed: "2026-09-08T20:53:05Z"
 branch: dark-factory/diff-anchor-funnel-findings
 ---
 
 # Diff-anchor the mechanical funnel findings — tests, fixtures, contract rows
 
-<!-- ENVIRONMENT NOTE FOR THE REVIEWER (not an operator step): the spec says the
-real-runner-captured fixtures live at /tmp/fixture-debt (built + verified 2026-09-08).
-That directory is NOT present in the YOLO container and NOT mounted (extraMounts in
-.dark-factory.yaml only cover GOPATH/GOCACHE/golangci-lint-cache), and this generation
-host could not clone bborbe/pr-review-fixtures (private, no token). Requirement 6
-therefore has a primary path (use /tmp/fixture-debt if present) and a reconstruction
-fallback (re-derive from the fixture PRs on GitHub), with hard count verification and a
-fail-loud STOP on any divergence — the executor must NOT fabricate fixtures. If you have
-the fixture data, ensure it is reachable inside the container (e.g. mount it or copy it
-into the worktree) before approving; otherwise the executor will attempt reconstruction. -->
+<!-- ENVIRONMENT NOTE FOR THE REVIEWER (not an operator step): the four real-runner
+fixture files are pre-staged in the worktree at testdata-fixtures/ (captured + verified
+2026-09-08), and the worktree is mounted into this container at /workspace, so they are
+visible at /workspace/testdata-fixtures/. Requirement 5a copies them into pkg/testdata/.
+Only if the staged files are missing does the executor fall back to reconstruction from
+the fixture PRs on GitHub (private — may lack credentials), with hard count verification
+and a fail-loud STOP on any divergence — the executor must NOT fabricate fixtures. -->
 
 <summary>
 - A Ginkgo table covers hunk-header parsing: single and multiple hunks per file, pure additions, deletion-only hunks, empty output, malformed headers, boundary ranges, and rename/binary-only entries — every row calls the real parser and asserts the parsed range or the parse failure
@@ -307,20 +309,20 @@ Verified contracts (do not re-derive):
 
 5. **Prepare and commit the two real-runner fixture files (AC 3, AC 4).** The fixture data consists of, for each of the two fixture diffs: the findings JSON captured from the real ast-grep runner, and the `git diff --unified=0 <base>...<head>` output whose hunks the filter consumes. Do this in this order:
 
-   a. **Primary path — `/tmp/fixture-debt` is present** (the spec's documented location; it is a git repo with `metrics.go` plus `findings.json` (=17) and `findings2.json` (=19)). Verify the directory and the expected files exist first:
-      - Copy `/tmp/fixture-debt/findings.json` → `pkg/testdata/funnel_fixture_minimal_diff_debt.json`
-      - Copy `/tmp/fixture-debt/findings2.json` → `pkg/testdata/funnel_fixture_diff_introduces_defect.json`
-      - Capture the two diffs from the fixture git repo by commit SHA (verified 2026-09-08: there are NO `base`/`feature`/`feature2` refs — the only branch is `feature`; the commits are `1a2b5ff` = base, `742b4fc` = feature (1-line pin, unreferenced), `c1f8d65` = feature2 (Ping added, branch `feature`)). Use:
-        - `git -C /tmp/fixture-debt diff --unified=0 1a2b5ff 742b4fc > pkg/testdata/funnel_fixture_minimal_diff_debt.diff`
-        - `git -C /tmp/fixture-debt diff --unified=0 1a2b5ff c1f8d65 > pkg/testdata/funnel_fixture_diff_introduces_defect.diff`
-      - Verify the JSONs and diffs before proceeding: `grep -c '"findings_count":17' pkg/testdata/funnel_fixture_minimal_diff_debt.json` returns ≥ 1 AND `grep -c '"findings_count":19' pkg/testdata/funnel_fixture_diff_introduces_defect.json` returns ≥ 1 AND `grep -c '^@@' pkg/testdata/funnel_fixture_minimal_diff_debt.diff` returns ≥ 1 AND `grep -c '^@@' pkg/testdata/funnel_fixture_diff_introduces_defect.diff` returns ≥ 1 (the diff must carry real hunks — the 17→0 fixture must not pass vacuously on an empty diff).
+   a. **Primary path — the pre-staged fixtures in the worktree** (captured on the host 2026-09-08 from the real ast-grep runner; the worktree is mounted into this container at `/workspace`, so `testdata-fixtures/` is visible). Verify the directory and the expected files exist first — four files in `testdata-fixtures/` at the repo root:
+      - Copy `testdata-fixtures/funnel_fixture_minimal_diff_debt.json` → `pkg/testdata/funnel_fixture_minimal_diff_debt.json`
+      - Copy `testdata-fixtures/funnel_fixture_diff_introduces_defect.json` → `pkg/testdata/funnel_fixture_diff_introduces_defect.json`
+      - Copy `testdata-fixtures/funnel_fixture_minimal_diff_debt.diff` → `pkg/testdata/funnel_fixture_minimal_diff_debt.diff`
+      - Copy `testdata-fixtures/funnel_fixture_diff_introduces_defect.diff` → `pkg/testdata/funnel_fixture_diff_introduces_defect.diff`
+      - Do NOT run git inside the container to capture these — they are already captured. If any of the four files is missing, fall through to 5b.
+      - Verify the JSONs and diffs before proceeding — note the fixtures are pretty-printed JSON (spaces after colons), so use whitespace-tolerant greps: `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*17' pkg/testdata/funnel_fixture_minimal_diff_debt.json` returns ≥ 1 AND `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*19' pkg/testdata/funnel_fixture_diff_introduces_defect.json` returns ≥ 1 AND `grep -c '^@@' pkg/testdata/funnel_fixture_minimal_diff_debt.diff` returns ≥ 1 AND `grep -c '^@@' pkg/testdata/funnel_fixture_diff_introduces_defect.diff` returns ≥ 1 (the diff must carry real hunks — the 17→0 fixture must not pass vacuously on an empty diff).
 
-   b. **Fallback path — reconstruction from the fixture PRs** (ONLY if `/tmp/fixture-debt` is absent AND the four files above do not already exist in `pkg/testdata/`):
+   b. **Fallback path — reconstruction from the fixture PRs** (ONLY if the four pre-staged files above do not exist in `testdata-fixtures/` AND the four files do not already exist in `pkg/testdata/`):
       - Clone `https://github.com/bborbe/pr-review-fixtures.git` into a temp dir (the container has GitHub access; if the clone fails for lack of credentials, STOP and report `status: failed` with that reason — do not fabricate fixtures).
       - PR #1 (minimal-diff-on-debt): check out head `7f5a15851699da359047a47c2af329474c9d48c8` (branch `fix/minimal-diff-on-debt`). PR #2 (real-defect): check out head `03448af503d9cf626bf7d4bb4cae23b7ea4e5db1` (branch `fix/real-defect`). For each, determine the base branch (`git merge-base <base> <head>`; it is the PR's target branch, typically `main` or `master`).
       - For each PR: capture `git diff --name-only <base>...<head>` (the changed files) and `git diff --unified=0 <base>...<head> > <name>.diff`, then run the REAL ast-grep funnel over the changed files at the head worktree: `<coding-plugin>/scripts/ast-grep-runner.sh <head-worktree> <changed-file...>` where `<coding-plugin>` = `/home/node/.claude/plugins/marketplaces/coding` (the container's coding plugin). Capture stdout as the findings JSON.
       - Save as `pkg/testdata/funnel_fixture_minimal_diff_debt.json`/`.diff` (PR #1) and `pkg/testdata/funnel_fixture_diff_introduces_defect.json`/`.diff` (PR #2).
-      - VERIFY the captured counts match the spec exactly: `grep -c '"findings_count":17'` on the minimal JSON ≥ 1 AND `grep -c '"findings_count":19'` on the defect JSON ≥ 1. If either count differs (e.g. a different ast-grep/coding-plugin version changed the findings), STOP and report `status: failed` with the actual counts — do NOT commit fixtures that contradict the spec's ACs, and do NOT hand-edit the JSON to force the counts.
+      - VERIFY the captured counts match the spec exactly (whitespace-tolerant): `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*17'` on the minimal JSON ≥ 1 AND `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*19'` on the defect JSON ≥ 1. If either count differs (e.g. a different ast-grep/coding-plugin version changed the findings), STOP and report `status: failed` with the actual counts — do NOT commit fixtures that contradict the spec's ACs, and do NOT hand-edit the JSON to force the counts.
 
    c. If neither path yields the four files, STOP and report `status: failed` with a clear message naming the missing fixture source (do not proceed with incomplete fixtures).
 
@@ -398,7 +400,7 @@ Verified contracts (do not re-derive):
 
 <constraints>
 - This prompt is confined to `pkg/funnel_test.go`, `pkg/export_test.go`, and the four new files in `pkg/testdata/` (`funnel_fixture_minimal_diff_debt.json` + `.diff`, `funnel_fixture_diff_introduces_defect.json` + `.diff`). Do NOT touch `pkg/funnel.go` — the filter shipped in prompt 1 of this batch and is already in the tree. Do NOT touch `pkg/prompts/*`, `pkg/steps_checkout_execution.go`, `pkg/verdict.go`, `CHANGELOG.md`, or any other file.
-- The fixtures must be REAL-runner-captured artifacts (from `/tmp/fixture-debt` or reconstructed from the real runner against the pinned fixture heads). Do NOT synthesize or hand-edit findings to hit the AC counts — a fixture that does not match `"findings_count":17` / `"findings_count":19` (and the 53/54 survivors) is a spec contradiction and must be reported, not forced.
+- The fixtures must be REAL-runner-captured artifacts (from the pre-staged `testdata-fixtures/` or reconstructed from the real runner against the pinned fixture heads). Do NOT synthesize or hand-edit findings to hit the AC counts — a fixture that does not match `findings_count` 17 / 19 (and the 53/54 survivors) is a spec contradiction and must be reported, not forced.
 - Findings JSON shape is frozen: the contract row must prove the filtered output re-parses with top-level `stats`/`findings_by_owner`/`errors`, `stats.yamls_run`/`stats.elapsed_ms` pass through, `stats.findings_count` equals the survivors, and surviving per-finding fields are verbatim.
 - The execution prompt files (`funnelInjectSteerTemplate`, the verdict-translation footer, `execution_output-format.md`) are byte-identical — this prompt does not touch them, and the AC 6 evidence `git diff pkg/prompts/execution.go pkg/prompts/execution_output-format.md` is empty by construction.
 - `FunnelResult` semantics are unchanged; the fail-closed rows must assert the spec's contract (`Ran` false, empty `FindingsJSON`, non-empty `FailDetail`) and must exercise the PRODUCTION `Run` (not a reimplementation of the wiring).
@@ -412,15 +414,15 @@ Verified contracts (do not re-derive):
 <verification>
 - `go test -mod=mod ./pkg/... -count=1` — must exit 0 with ALL new rows green: the hunk-parsing `DescribeTable`s, the filter `DescribeTable`, the contract `It`, the two fail-closed `It`s, and the two fixture rows. All pre-existing rows stay green.
 - AC 1 evidence: `grep -c 'Entry(' pkg/funnel_test.go` returns ≥ 1.
-- AC 3 evidence: `grep -c '"findings_count":17' pkg/testdata/funnel_fixture_minimal_diff_debt.json` returns ≥ 1 AND the `minimal-diff-on-debt` row is green under the `go test` above.
-- AC 4 evidence: `grep -c '"findings_count":19' pkg/testdata/funnel_fixture_diff_introduces_defect.json` returns ≥ 1 AND the `diff-introduces-defect` row is green under the `go test` above.
+- AC 3 evidence: `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*17' pkg/testdata/funnel_fixture_minimal_diff_debt.json` returns ≥ 1 AND the `minimal-diff-on-debt` row is green under the `go test` above.
+- AC 4 evidence: `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*19' pkg/testdata/funnel_fixture_diff_introduces_defect.json` returns ≥ 1 AND the `diff-introduces-defect` row is green under the `go test` above.
 - AC 5 evidence: the two fail-closed rows (`git failure`, `malformed header`) are green under the `go test` above.
 - AC 6 evidence: the contract row is green under the `go test` above; `pkg/prompts/execution.go` and `pkg/prompts/execution_output-format.md` are unchanged (this prompt does not modify them — verified by construction; the host-side `git diff` check is an operator/audit step).
 - `gofmt -l pkg/funnel_test.go pkg/export_test.go` — must print nothing.
 </verification>
 
 <!-- AUDITOR NOTES
-1. FIXTURE SOURCE DEPENDENCY (open question for the reviewer): the spec's ACs 3/4 require committed real-runner-captured JSONs containing exactly 17 and 19 findings. The spec points at /tmp/fixture-debt, which is NOT present in this generation environment and NOT in the container's mount set; reconstruction from the private bborbe/pr-review-fixtures repo needs GitHub credentials the container may or may not have. Requirement 5 therefore checks /tmp/fixture-debt first, falls back to reconstruction with hard count verification, and STOPS with status:failed rather than fabricating. Before approving, ensure the fixture data will be reachable in the container (mount or copy into the worktree), or confirm the reconstruction path is viable.
+1. FIXTURE SOURCE DEPENDENCY (RESOLVED 2026-09-08): the spec's ACs 3/4 require committed real-runner-captured JSONs containing exactly 17 and 19 findings. The four fixture files are pre-staged in the worktree at testdata-fixtures/ (container path /workspace/testdata-fixtures/) and requirement 5a copies them into pkg/testdata/ — no container git, no GitHub credentials needed. Reconstruction from the private bborbe/pr-review-fixtures repo remains the fallback only if the staged files are missing.
 2. The committed `.diff` files (one per fixture) are the spec's "fixture git repo ... committed into pkg/testdata/" rendered as the hunk output the filter consumes; they make the fixture rows replay from committed data through the REAL parseHunks/filterFindings (AC 1's "call the parser and assert"). This is an extension beyond the two JSON files the ACs grep — flag it if you prefer ranges hardcoded instead.
 3. The malformed-header fail-closed row uses GIT_EXTERNAL_DIFF (verified on this host: git's content diff then emits only the fake driver's stdout, while `git diff --name-only` is unaffected) so the production Run → changedLineRanges → parseHunks path is exercised with real git and a real malformed header, satisfying AC 5's "asserting Ran false, FindingsJSON empty, FailDetail non-empty" for the malformed case without a production test hook.
 4. The contract row (AC 6) asserts the frozen shape on the filtered OUTPUT; the prompt-files byte-identity is by construction (no prompt in this batch touches pkg/prompts/*) — the spec's `git diff` evidence is an operator/audit-side check since the container's .git is masked (hideGit).

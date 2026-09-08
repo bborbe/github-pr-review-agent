@@ -1,0 +1,7 @@
+diff --git a/metrics.go b/metrics.go
+index ac4b344..5062b5a 100644
+--- a/metrics.go
++++ b/metrics.go
+@@ -1 +1 @@
+-// Copyright (c) 2026 Benjamin Borbe All rights reserved.
++// Copyright (c) 2026 Benjamin Borbe All rights reserved. // pinned

@@ -53,8 +53,8 @@ Verified contracts (do not re-derive):
 
 3. **Re-verify the full container-executable acceptance evidence in one pass** (the spec's Verification section) and confirm every check passes:
    - `go test -mod=mod ./pkg/... -count=1` exits 0 with all the spec-006 rows green (hunk-parsing tables, filter table, both fixture rows, the fail-closed rows, the contract row) and all pre-existing rows green;
-   - `grep -c '"findings_count":17' pkg/testdata/funnel_fixture_minimal_diff_debt.json` returns ≥ 1;
-   - `grep -c '"findings_count":19' pkg/testdata/funnel_fixture_diff_introduces_defect.json` returns ≥ 1;
+   - `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*17' pkg/testdata/funnel_fixture_minimal_diff_debt.json` returns ≥ 1;
+   - `grep -cE '"findings_count"[[:space:]]*:[[:space:]]*19' pkg/testdata/funnel_fixture_diff_introduces_defect.json` returns ≥ 1;
    - `grep -c 'Entry(' pkg/funnel_test.go` returns ≥ 1;
    - `pkg/prompts/execution.go` and `pkg/prompts/execution_output-format.md` are unchanged (this batch never touched them — the host-side `git diff` evidence is an operator/audit step, since the container's `.git` is masked).
 
