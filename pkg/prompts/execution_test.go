@@ -76,7 +76,8 @@ var _ = Describe("BuildExecutionInstructions", func() {
 			Expect(workflow).To(ContainSubstring("Procedure body line 1."))
 			Expect(workflow).NotTo(ContainSubstring("description: Test plugin"))
 			Expect(workflow).To(ContainSubstring("Final step — emit verdict JSON"))
-			Expect(workflow).To(ContainSubstring("Severity map"))
+			Expect(workflow).To(ContainSubstring("blocking"))
+			Expect(workflow).To(ContainSubstring("blocking_reason"))
 			Expect(workflow).To(ContainSubstring("Verdict roll-up"))
 		})
 	})
@@ -320,6 +321,12 @@ var _ = Describe("BuildExecutionInstructions", func() {
 
 				outputFormat := instructions[1].Content
 				// The runner receives the embedded schema, not just a doc edit: each
+				// comment carries the new blocking fields, and severity is demoted to
+				// a sorting/labeling role that never decides the verdict.
+				Expect(outputFormat).To(ContainSubstring("\"blocking\""))
+				Expect(outputFormat).To(ContainSubstring("blocking_reason"))
+				Expect(outputFormat).To(ContainSubstring("never decides the verdict"))
+				// The runner receives the embedded schema, not just a doc edit: each
 				// concern is an object with a structured disposition enum.
 				Expect(outputFormat).To(ContainSubstring("\"disposition\""))
 				Expect(outputFormat).To(ContainSubstring("not-an-issue"))
@@ -353,6 +360,34 @@ var _ = Describe("BuildExecutionInstructions", func() {
 				Expect(outputFormat).To(ContainSubstring("addressed"))
 				Expect(outputFormat).To(ContainSubstring("not-an-issue"))
 				Expect(outputFormat).To(ContainSubstring("not-verified"))
+			},
+		)
+
+		It(
+			"assembles the blocking roll-up footer into the workflow instruction",
+			func() {
+				writePlugin(fakePlugin)
+
+				instructions, err := prompts.BuildExecutionInstructions(
+					ctx,
+					claudelib.ClaudeConfigDir(tmpDir),
+					"standard",
+					"main",
+					true,
+					sampleFindings,
+					"",
+					libtime.Duration(25*time.Minute),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				workflow := instructions[0].Content
+				// The footer rewrite is wired into the prompt the runner receives,
+				// not a comment edit: blocking conditions, non-blocking categories,
+				// and the removed severity map all land in the assembled workflow.
+				Expect(workflow).To(ContainSubstring("blocking: true"))
+				Expect(workflow).To(ContainSubstring("never work or never"))
+				Expect(workflow).To(ContainSubstring("surface it, don't block"))
+				Expect(workflow).NotTo(ContainSubstring("Severity map (deterministic)"))
 			},
 		)
 	})

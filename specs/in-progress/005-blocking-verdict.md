@@ -1,6 +1,9 @@
 ---
-status: draft
-created: 2026-09-08
+status: prompted
+approved: "2026-09-08T15:36:05Z"
+generating: "2026-09-08T15:38:45Z"
+prompted: "2026-09-08T15:49:47Z"
+branch: dark-factory/blocking-verdict
 ---
 
 ## Summary
@@ -28,7 +31,7 @@ A finding blocks a PR only when its evidence demonstrates a concrete defect the 
 ## Acceptance Criteria
 
 - [ ] The verdict schema declares per-comment `blocking` (bool, required) and `blocking_reason` (string, required when `blocking` is true), keeps `file`, `line`, `severity`, `message`, and states that `severity` orders and labels comments only and never decides the verdict — evidence: `grep -c 'blocking' pkg/prompts/execution_output-format.md` returns ≥ 3 AND `grep -c 'blocking_reason' pkg/prompts/execution_output-format.md` returns ≥ 1 AND `grep -c '"severity"' pkg/prompts/execution_output-format.md` returns ≥ 1
-- [ ] The execution prompt replaces the deterministic severity map with a blocking roll-up that names the blocking conditions and the non-blocking categories — evidence: `grep -c 'Severity map (deterministic)' pkg/prompts/execution.go` returns 0 AND `grep -c 'blocking' pkg/prompts/execution.go` returns ≥ 1 AND `grep -c 'request-changes' pkg/prompts/execution.go` returns ≥ 1 AND `grep -c 'never (work|fire)' pkg/prompts/execution.go` returns ≥ 1
+- [ ] The execution prompt replaces the deterministic severity map with a blocking roll-up that names the blocking conditions and the non-blocking categories — evidence: `grep -c 'Severity map (deterministic)' pkg/prompts/execution.go` returns 0 AND `grep -c 'blocking' pkg/prompts/execution.go` returns ≥ 1 AND `grep -c 'request-changes' pkg/prompts/execution.go` returns ≥ 1 AND `grep -E -c 'never (work|fire)' pkg/prompts/execution.go` returns ≥ 1
 - [ ] ai_review's verdict-consistency check is re-keyed from severity to blocking, and the mirroring line in the architecture doc follows — evidence: `grep -c 'critical/major' pkg/prompts/review_workflow.md` returns 0 AND `grep -c 'blocking' pkg/prompts/review_workflow.md` returns ≥ 2 AND `grep -c 'match the severity' docs/architecture.md` returns 0 AND `grep -c 'blocking' docs/architecture.md` returns ≥ 1
 - [ ] ai_review's no-hallucination check no longer flags a comment whose line sits outside a diff hunk but inside a changed file — evidence: `grep -c 'actually exist in the inline diff' pkg/prompts/review_workflow.md` returns 0 AND `grep -c 'changed file' pkg/prompts/review_workflow.md` returns ≥ 1
 - [ ] The `pkg/verdict_test.go` table (extending the existing DescribeTable) covers all four cases green: (a) an approve verdict with a critical/major-severity comment marked `blocking: false` (pre-existing debt) yields `approve`; (b) a comment marked `blocking: true` while the model verdict is `approve` yields `request-changes` with reason `ReasonBlockingFindingPresent`; (c) a comment with the `blocking` field absent yields `request-changes` at `critical`/`major` severity and `approve` at `nit`/`minor`; (d) the four fail-closed paths (empty text / no verdict block / malformed JSON / unknown verdict) still yield `request-changes` — evidence: `go test ./pkg/...` exits 0 with all rows green, and reverting the blocking gate flips rows (b) and the (c)-critical row while rows (d) stay green
@@ -48,7 +51,7 @@ A finding blocks a PR only when its evidence demonstrates a concrete defect the 
 - `go test ./pkg/...` — table rows (a)-(d), the chain-precedence row, and all existing rows green
 - `make precommit` — fmt, generate, test, lint, vet, vuln, license clean
 - `grep -c 'blocking' pkg/prompts/execution_output-format.md` ≥ 3 AND `grep -c 'blocking_reason' pkg/prompts/execution_output-format.md` ≥ 1
-- `grep -c 'Severity map (deterministic)' pkg/prompts/execution.go` returns 0 AND `grep -c 'blocking' pkg/prompts/execution.go` ≥ 1 AND `grep -c 'never (work|fire)' pkg/prompts/execution.go` ≥ 1
+- `grep -c 'Severity map (deterministic)' pkg/prompts/execution.go` returns 0 AND `grep -c 'blocking' pkg/prompts/execution.go` ≥ 1 AND `grep -E -c 'never (work|fire)' pkg/prompts/execution.go` ≥ 1
 - `grep -c 'critical/major' pkg/prompts/review_workflow.md` returns 0 AND `grep -c 'blocking' pkg/prompts/review_workflow.md` ≥ 2
 - `sed -n '/## Unreleased/,/## v/p' CHANGELOG.md | grep -ci 'blocking'` ≥ 1
 
