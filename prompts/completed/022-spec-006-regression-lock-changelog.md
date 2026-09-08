@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [006-diff-anchor-funnel-findings]
+summary: 'Added the ## Unreleased changelog entry naming the diff-anchoring change (containing the literal diff-anchor) below the preamble and above ## v0.7.0, and ran the final make ROOTDIR=/workspace precommit sweep which passed exit 0 with all acceptance greps and the full container-executable test suite green.'
+execution_id: github-pr-review-agent-diff-anchor-exec-022-spec-006-regression-lock-changelog
+dark-factory-version: dev
 created: "2026-09-08T20:14:50Z"
 queued: "2026-09-08T20:34:36Z"
+started: "2026-09-08T20:53:07Z"
+completed: "2026-09-08T20:54:45Z"
 branch: dark-factory/diff-anchor-funnel-findings
 ---
 
