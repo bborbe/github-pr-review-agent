@@ -106,3 +106,30 @@ func PRStateCheckForTest(
 ) (*agentlib.Result, error) {
 	return prStateCheck(ctx, md, client)
 }
+
+// LineRangeForTest re-exports the unexported lineRange so funnel_test.go (in
+// the pkg_test package) can assert parsed hunk ranges.
+type LineRangeForTest = lineRange
+
+// ParseHunkHeaderForTest exposes parseHunkHeader for unit testing.
+func ParseHunkHeaderForTest(ctx context.Context, line string) (LineRangeForTest, error) {
+	return parseHunkHeader(ctx, line)
+}
+
+// ParseHunksForTest exposes parseHunks for unit testing.
+func ParseHunksForTest(
+	ctx context.Context,
+	diffOutput string,
+) (map[string][]LineRangeForTest, error) {
+	return parseHunks(ctx, diffOutput)
+}
+
+// FilterFindingsForTest exposes filterFindings for unit testing.
+func FilterFindingsForTest(
+	ctx context.Context,
+	findingsJSON string,
+	changedFiles []string,
+	ranges map[string][]LineRangeForTest,
+) (string, error) {
+	return filterFindings(ctx, findingsJSON, changedFiles, ranges)
+}

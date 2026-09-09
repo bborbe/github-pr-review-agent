@@ -1,0 +1,171 @@
+{
+  "stats": {
+    "yamls_run": 79,
+    "findings_count": 17,
+    "elapsed_ms": 2763
+  },
+  "findings_by_owner": {
+    "go-architecture-assistant": [
+      {
+        "rule_id": "go-architecture/constructor-returns-interface",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 23,
+        "column": 0,
+        "matched_text": "func NewMetrics(db *sql.DB, cli *http.Client) *Metrics {\n\treturn &Metrics{db: db, cli: cli}\n}",
+        "message": "`New*` constructor returns a pointer type (`*concreteStruct`)\ninstead of the interface the struct implements. Returning the\nconcrete pointer leaks implementation: callers can reach for\nnon-interface methods, type-assert downstream, depend on private\nstruct fields via reflection.\nReturn the interface (`UserService`) — consumers see only the\ncontract surface.\nEXEMPT: data-holder structs without a corresponding interface\n(e.g. config / DTO records). The agent decides per-finding by\nchecking whether the same package declares an interface that the\nreturned concrete type implements.\nSee docs/go-architecture-patterns.md\n(RULE go-architecture/constructor-returns-interface)."
+      },
+      {
+        "rule_id": "go-architecture/counterfeiter-directive-on-interface",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 14,
+        "column": 0,
+        "matched_text": "type Reporter interface {\n\tReport(name string, value float64) error\n}",
+        "message": "An exported Go interface in a service package was found. Each interface\nsubstituted via mocks in tests needs a //counterfeiter:generate directive\nso go generate regenerates the fake when the interface drifts. Without\nit, hand-written mocks drift silently — tests pass against a stale\ncontract while the production code adds methods.\nEXEMPT: interfaces that already carry a //counterfeiter:generate\ndirective above them (possibly separated from the interface by its doc\ncomment), and unexported/internal interfaces not used across package\nboundaries. The agent checks the comment block directly above the\ninterface before reporting.\nSee docs/go-architecture-patterns.md (RULE go-architecture/counterfeiter-directive-on-interface)."
+      },
+      {
+        "rule_id": "go-composition/no-package-function-calls-in-business-logic",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 30,
+        "column": 2,
+        "matched_text": "glog.Errorf(\"query failed: %v\", err)",
+        "message": "Method body calls a package-level function (pkg.Function(...)) directly — hidden dependency.\nWrap each capability in a small interface, inject via the constructor, and call through the\ninjected field. Direct package calls are untestable and hide the dependency graph.\nSee docs/go-composition.md (RULE go-composition/no-package-function-calls-in-business-logic)."
+      },
+      {
+        "rule_id": "go-composition/no-package-function-calls-in-business-logic",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 33,
+        "column": 7,
+        "matched_text": "rows.Close()",
+        "message": "Method body calls a package-level function (pkg.Function(...)) directly — hidden dependency.\nWrap each capability in a small interface, inject via the constructor, and call through the\ninjected field. Direct package calls are untestable and hide the dependency graph.\nSee docs/go-composition.md (RULE go-composition/no-package-function-calls-in-business-logic)."
+      },
+      {
+        "rule_id": "go-composition/no-package-function-calls-in-business-logic",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 36,
+        "column": 2,
+        "matched_text": "glog.Errorf(\"push failed: %v\", err)",
+        "message": "Method body calls a package-level function (pkg.Function(...)) directly — hidden dependency.\nWrap each capability in a small interface, inject via the constructor, and call through the\ninjected field. Direct package calls are untestable and hide the dependency graph.\nSee docs/go-composition.md (RULE go-composition/no-package-function-calls-in-business-logic)."
+      },
+      {
+        "rule_id": "go-composition/no-package-function-calls-in-business-logic",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 43,
+        "column": 13,
+        "matched_text": "exec.CommandContext(ctx, \"curl\", \"http://x\")",
+        "message": "Method body calls a package-level function (pkg.Function(...)) directly — hidden dependency.\nWrap each capability in a small interface, inject via the constructor, and call through the\ninjected field. Direct package calls are untestable and hide the dependency graph.\nSee docs/go-composition.md (RULE go-composition/no-package-function-calls-in-business-logic)."
+      },
+      {
+        "rule_id": "go-composition/no-package-function-calls-in-business-logic",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 45,
+        "column": 9,
+        "matched_text": "fmt.Errorf(\"exec failed: %w\", err)",
+        "message": "Method body calls a package-level function (pkg.Function(...)) directly — hidden dependency.\nWrap each capability in a small interface, inject via the constructor, and call through the\ninjected field. Direct package calls are untestable and hide the dependency graph.\nSee docs/go-composition.md (RULE go-composition/no-package-function-calls-in-business-logic)."
+      },
+      {
+        "rule_id": "go-composition/no-package-function-calls-in-business-logic",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 47,
+        "column": 1,
+        "matched_text": "glog.Info(\"done \" + string(out))",
+        "message": "Method body calls a package-level function (pkg.Function(...)) directly — hidden dependency.\nWrap each capability in a small interface, inject via the constructor, and call through the\ninjected field. Direct package calls are untestable and hide the dependency graph.\nSee docs/go-composition.md (RULE go-composition/no-package-function-calls-in-business-logic)."
+      }
+    ],
+    "go-error-assistant": [
+      {
+        "rule_id": "go-errors/no-fmt-errorf",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 45,
+        "column": 9,
+        "matched_text": "fmt.Errorf(\"exec failed: %w\", err)",
+        "message": "fmt.Errorf must not be used in production code.\nUse errors.Wrapf (wrapping) or errors.Errorf (new error) from github.com/bborbe/errors instead.\nSee docs/go-error-wrapping-guide.md (RULE go-errors/no-fmt-errorf)."
+      }
+    ],
+    "go-quality-assistant": [
+      {
+        "rule_id": "go-cli/slog-not-glog-in-new-projects",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 11,
+        "column": 1,
+        "matched_text": "\"github.com/golang/glog\"",
+        "message": "New Go projects should use 'log/slog' (Go 1.21+ stdlib) instead of\n'github.com/golang/glog'. glog registers 8+ flags via init() that\npollute every binary's --help output and emits unstructured strings\nthat log aggregators can't parse reliably.\nEXEMPT: existing projects mid-migration. The agent decides 'is this\na new project?' based on whether the module already uses glog\nelsewhere — this YAML flags every glog import for review.\nSee docs/go-cli-guide.md (RULE go-cli/slog-not-glog-in-new-projects)."
+      },
+      {
+        "rule_id": "go-glog/use-v-for-debug-not-info",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 47,
+        "column": 1,
+        "matched_text": "glog.Info(\"done \" + string(out))",
+        "message": "Bare `glog.Info` / `glog.Infof` runs at V0 (always-on production\nlogging). V0 is reserved for production-default operator info\n(startup, shutdown, health changes, recovered panics).\nUse `glog.V(N).Info...` / `glog.V(N).Infof...` for debug, trace,\ninternal-state, or developer-troubleshooting lines (V1 sysop debug,\nV2 dev default, V3+ deep debug).\nThe agent decides which calls are V0-worthy operator info vs\ndebug-shaped — this YAML flags every glog.Info(f) for review.\nSee docs/go-glog-guide.md (RULE go-glog/use-v-for-debug-not-info)."
+      },
+      {
+        "rule_id": "go-logging/external-call-logs-response",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 28,
+        "column": 14,
+        "matched_text": "m.db.QueryContext(ctx, \"SELECT 1\")",
+        "message": "A boundary call (HTTP client, DB query, subprocess exec) was found\nwithout a log statement summarising the call's outcome. Boundary\ncalls are the audit trail — without a log line per call, runtime\nmysteries (\"did the payment send?\") require redeploying with extra\ninstrumentation. Log: method + path/op + status + latency; add\nerror message on failure.\nEXEMPT: calls already wrapped by a logging middleware, retry loop,\nor helper that emits the audit line. The agent reads the full block\nto decide. Pair with go-logging/no-tight-loop-without-sampler for\nhigh-frequency paths.\nSee docs/go-logging-guide.md (RULE go-logging/external-call-logs-response)."
+      },
+      {
+        "rule_id": "go-logging/external-call-logs-response",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 43,
+        "column": 13,
+        "matched_text": "exec.CommandContext(ctx, \"curl\", \"http://x\")",
+        "message": "A boundary call (HTTP client, DB query, subprocess exec) was found\nwithout a log statement summarising the call's outcome. Boundary\ncalls are the audit trail — without a log line per call, runtime\nmysteries (\"did the payment send?\") require redeploying with extra\ninstrumentation. Log: method + path/op + status + latency; add\nerror message on failure.\nEXEMPT: calls already wrapped by a logging middleware, retry loop,\nor helper that emits the audit line. The agent reads the full block\nto decide. Pair with go-logging/no-tight-loop-without-sampler for\nhigh-frequency paths.\nSee docs/go-logging-guide.md (RULE go-logging/external-call-logs-response)."
+      },
+      {
+        "rule_id": "go-logging/no-log-and-return-error",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 29,
+        "column": 1,
+        "matched_text": "if err != nil {\n\t\tglog.Errorf(\"query failed: %v\", err)\n\t\treturn err\n\t}",
+        "message": "An error is logged AND returned in the same if-err block — the caller\nwill log it again, producing duplicate entries in aggregators.\nPick one: return the error (let the boundary log once) OR log and\nconsume (don't return the error). Never both.\nEXEMPT: documented boundary-audit log lines (one-per-wire-crossing) —\nsee go-logging/external-call-logs-response. The agent reads the\ncall site to decide.\nSee docs/go-logging-guide.md (RULE go-logging/no-log-and-return-error)."
+      },
+      {
+        "rule_id": "go-logging/no-log-and-return-error",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 35,
+        "column": 1,
+        "matched_text": "if err != nil {\n\t\tglog.Errorf(\"push failed: %v\", err)\n\t\treturn err\n\t}",
+        "message": "An error is logged AND returned in the same if-err block — the caller\nwill log it again, producing duplicate entries in aggregators.\nPick one: return the error (let the boundary log once) OR log and\nconsume (don't return the error). Never both.\nEXEMPT: documented boundary-audit log lines (one-per-wire-crossing) —\nsee go-logging/external-call-logs-response. The agent reads the\ncall site to decide.\nSee docs/go-logging-guide.md (RULE go-logging/no-log-and-return-error)."
+      },
+      {
+        "rule_id": "go-library/semver-vprefix-tag-required",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt",
+        "line": 0,
+        "column": 0,
+        "matched_text": "(no tags)",
+        "message": "No git tags found. Go library releases must use vMAJOR.MINOR.PATCH tags. See docs/go-library-guide.md."
+      }
+    ],
+    "go-test-quality-assistant": [
+      {
+        "rule_id": "go-testing/counterfeiter-mocks-required",
+        "rule_level": "MUST",
+        "file": "/tmp/fixture-debt/metrics.go",
+        "line": 14,
+        "column": 0,
+        "matched_text": "type Reporter interface {\n\tReport(name string, value float64) error\n}",
+        "message": "An interface type declaration was found. Each non-trivial interface used\nacross package boundaries should have a Counterfeiter-generated mock in\nmocks/<name>.go with a `//counterfeiter:generate` directive above it.\nHand-written mocks drift from the interface silently; Counterfeiter-\ngenerated fakes fail at `go generate` time when the interface changes.\nEXEMPT: internal interfaces not used in tests, or interfaces already\ncovered by a counterfeiter:generate directive + mocks/*.go file.\nThe agent checks for the directive comment and the mocks/ file.\nSee docs/go-testing-guide.md (RULE go-testing/counterfeiter-mocks-required)."
+      }
+    ]
+  },
+  "errors": []
+}
