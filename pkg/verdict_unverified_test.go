@@ -7,11 +7,19 @@ package pkg_test
 import (
 	"os"
 	"strings"
+	"time"
 
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+// toolchainConcernJSON is the verbatim quickbooks#4 toolchain wording as an
+// object with `disposition: "not-verified"` — the probe body whose benign prose
+// matched the old prose whitelist and wrongly passed the approve. The prose is
+// now inert: the disposition is the admission and only the elapsed/budget ratio
+// decides the demotion.
+const toolchainConcernJSON = `{"verdict":"approve","concerns_addressed":[{"concern":"correctness: go.mod go directive 1.27.0 dep compatibility","detail":"not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate","disposition":"not-verified"}]}`
 
 var _ = Describe("HasUnverifiedConcerns", func() {
 	fence := func(body string) string {
@@ -96,26 +104,30 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 		// benign `not-verified` concern whose gap is toolchain-limited — the model
 		// examined the module files (internally consistent, tidy ran, no
 		// downgrades, all hashes present) but could not run a Go 1.27 toolchain in
-		// the sandbox, and names CI/precommit as the gate. Tier-keyed: no MUST-tier
-		// blocker language → the approve must NOT fail-close. This exact body
-		// posted a false CHANGES_REQUESTED on the octopus fleet on 2026-09-01.
+		// the sandbox, and names CI/precommit as the gate. The prose layer is gone
+		// (migrated, requirement 7a): the `disposition` is the admission and the
+		// toolchain wording is not inspected, so the admission reader returns
+		// true. Whether this approve demotes is now decided by the elapsed/budget
+		// ratio in DemotesUnverifiedConcerns — on a run that finished well inside
+		// its budget the `not-verified` is a mislabel and the approve stands; on a
+		// budget-heavy run it fail-closes (see the budget-keyed table below).
 		Entry(
-			"benign toolchain-limited not verified (Go 1.27 toolchain unavailable, CI is the gate)",
-			fence(
-				`{"verdict":"approve","concerns_addressed":[{"concern":"correctness: go.mod go directive 1.27.0 dep compatibility","detail":"not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate","disposition":"not-verified"}]}`,
-			),
-			false,
+			"toolchain-limited not-verified is an admission (Go 1.27 toolchain unavailable, CI is the gate)",
+			fence(toolchainConcernJSON),
+			true,
 		),
 		// The octopus fleet posts the LEGACY flat-string shape (the model wrote
 		// the whole explanation in one string, no disposition object). Same
-		// quickbooks#4 09:46 content verbatim: the flag wording is the admission,
-		// the explanation names the verifier (CI/precommit) -> must pass.
+		// quickbooks#4 09:46 content verbatim: the flag wording is the admission
+		// (legacy strings.Contains path, spec 004 Desired Behavior 5) and the
+		// explanation is not inspected, so the admission is unconditional —
+		// migrated from the old tier-keyed pass to true (requirement 7a).
 		Entry(
-			"benign toolchain-limited not verified — legacy flat-string shape (octopus posted form)",
+			"toolchain-limited not-verified — legacy flat-string shape (octopus posted form)",
 			fence(
 				`{"verdict":"approve","concerns_addressed":["correctness: go.mod go directive 1.27.0 dep compatibility: not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate"]}`,
 			),
-			false,
+			true,
 		),
 		// No flagged concern → the gate must not over-trigger.
 		Entry(
@@ -204,63 +216,163 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 			),
 			true,
 		),
+
+		// The three prose-inert wordings from the old tier-keyed table, kept at
+		// the admission level: the disposition alone decides, the pairs differ
+		// only in the enum value, and the not-verified variants are admissions
+		// regardless of how benign the wording is (the elapsed/budget ratio in
+		// DemotesUnverifiedConcerns — not the prose — decides the demotion).
+		Entry(
+			"wording 1 not-an-issue passes (prose contains not verified)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested","disposition":"not-an-issue"}]}`,
+			),
+			false,
+		),
+		Entry(
+			"wording 1 not-verified is an admission (bare admission)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested","disposition":"not-verified"}]}`,
+			),
+			true,
+		),
+		Entry(
+			"wording 2 not-an-issue passes (prose contains not verified)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"correctness: could not be cross-checked against the actual controller code. Not verified.","disposition":"not-an-issue"}]}`,
+			),
+			false,
+		),
+		// MIGRATED (requirement 7a): the tier-keyed gate passed this wording-2
+		// `not-verified` row on its benign cross-check explanation; with the
+		// prose layer gone the disposition alone is the admission, so the
+		// expectation flips to true — whether an approve demotes is decided by
+		// the elapsed/budget ratio, never by the wording.
+		Entry(
+			"wording 2 not-verified is an admission (benign cross-check gap explained)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"correctness: could not be cross-checked against the actual controller code. Not verified.","disposition":"not-verified"}]}`,
+			),
+			true,
+		),
+		Entry(
+			"wording 3 not-an-issue passes (prose carries no flag)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"performance: I inspected the vendored copy and the mutex is uncontended in this call graph","disposition":"not-an-issue"}]}`,
+			),
+			false,
+		),
+		Entry(
+			"wording 3 not-verified is an admission (bare admission)",
+			fence(
+				`{"verdict":"approve","concerns_addressed":[{"concern":"performance: I inspected the vendored copy and the mutex is uncontended in this call graph","disposition":"not-verified"}]}`,
+			),
+			true,
+		),
 	)
 
-	// The pairs below differ ONLY in the `disposition` enum value — the concern
-	// prose is byte-identical across each pair. Three distinct organic
-	// explanation wordings: the incident run-2 gap phrasing, the nuke#68
-	// cross-check phrasing that escaped the old benign whitelist, and an
-	// invented phrasing matching no former whitelist entry. Tier-keyed
-	// contract (2026-09-01, Seibert-Data/quickbooks#4): `not-an-issue` always
-	// passes; `not-verified` demotes unless the concern itself explains the gap
-	// as benign — wording 2 ("could not be cross-checked") is a benign
-	// explanation and passes even with `not-verified`; wordings 1 and 3 carry no
-	// benign explanation, so `not-verified` demotes (bare unexamined admission).
-	DescribeTable("tier-keyed: not-verified demotes only when MUST-tier or a bare admission",
-		func(concern, disposition string, expected bool) {
-			Expect(pkg.HasUnverifiedConcerns(fence(
-				`{"verdict":"approve","concerns_addressed":[{"concern":"` + concern + `","disposition":"` + disposition + `"}]}`,
-			))).To(Equal(expected))
+	// The nuke#216 fixture cannot be an Entry of the table above (its closure
+	// takes the body as a string and cannot read a file), so it gets its own It
+	// with the os.ReadFile-in-leaf shape the incident Describe uses — a
+	// missing/drifted fixture fails the row, not the suite construction. Four
+	// `not-verified` dispositions are four admissions.
+	It("flags the nuke#216 fixture as four unexamined admissions", func() {
+		body, err := os.ReadFile("testdata/review_bborbe_nuke_216_run1.md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pkg.HasUnverifiedConcerns(string(body))).To(BeTrue())
+	})
+
+	// The verbatim toolchain wording as an object with `disposition:
+	// "not-verified"` (requirement 7b) — already asserted by the migrated row
+	// above; this row keeps the admission lock explicit for the probe body
+	// shape that carries a `reason` field.
+	DescribeTable("the toolchain wording object is an admission",
+		func(body string) {
+			Expect(pkg.HasUnverifiedConcerns(body)).To(BeTrue())
 		},
-		// Wording 1 — the incident run-2 gap phrasing (bborbe/discord-assistant#37).
 		Entry(
-			"wording 1 not-an-issue passes",
-			"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested",
-			"not-an-issue",
-			false,
+			"toolchain object with disposition not-verified (probe shape)",
+			fence(
+				`{"verdict":"approve","reason":"clean","concerns_addressed":[{"concern":"correctness: go.mod go directive 1.27.0 dep compatibility","detail":"not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate","disposition":"not-verified"}]}`,
+			),
 		),
-		Entry(
-			"wording 1 not-verified demotes (bare admission)",
-			"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested",
-			"not-verified",
-			true,
-		),
-		// Wording 2 — the nuke#68 cross-check phrasing (escaped the old whitelist).
-		Entry(
-			"wording 2 not-an-issue passes",
-			"correctness: could not be cross-checked against the actual controller code. Not verified.",
-			"not-an-issue",
-			false,
-		),
-		Entry(
-			"wording 2 not-verified passes (benign cross-check gap explained)",
-			"correctness: could not be cross-checked against the actual controller code. Not verified.",
-			"not-verified",
-			false,
-		),
-		// Wording 3 — invented phrasing matching no former whitelist entry.
-		Entry(
-			"wording 3 not-an-issue passes",
-			"performance: I inspected the vendored copy and the mutex is uncontended in this call graph",
-			"not-an-issue",
-			false,
-		),
-		Entry(
-			"wording 3 not-verified demotes (bare admission)",
-			"performance: I inspected the vendored copy and the mutex is uncontended in this call graph",
-			"not-verified",
-			true,
-		),
+	)
+
+	// The demotion decision, budget-keyed (spec 004's named follow-up lever):
+	// an `approve` carrying an unexamined concern fail-closes ONLY when the run
+	// consumed at least 0.8 of its soft budget. The rows are (body supplier,
+	// elapsed, budget, expected) with a budget of 30 minutes throughout so the
+	// ratios are explicit; the body supplier reads the fixture in-leaf. The
+	// prose is inert in both directions — the pairs below differ only in the
+	// elapsed value.
+	DescribeTable(
+		"budget-keyed: an unexamined concern demotes only when the run consumed >=0.8 of its soft budget",
+		func(reviewBody func() string, elapsed, budget time.Duration, expected bool) {
+			Expect(pkg.DemotesUnverifiedConcerns(reviewBody(), elapsed, budget)).To(Equal(expected))
+		},
+		// Incident provenance (2026-09-10 bborbe/nuke#216, review_id 5172635280):
+		// the run-1 body carries four `not-verified` dispositions with benign
+		// operational wording (TeamVault revocation). A short run's `not-verified`
+		// is provably a mislabel — the model had budget left and examined the
+		// concern — so the approve stands; on a budget-heavy run the disposition
+		// is credible and the approve fail-closes.
+		Entry("nuke#216 fixture, elapsed 2m of 30m (ratio ~0.07) — approve stands (the incident)",
+			func() string {
+				body, err := os.ReadFile("testdata/review_bborbe_nuke_216_run1.md")
+				Expect(err).NotTo(HaveOccurred())
+				return string(body)
+			},
+			2*time.Minute, 30*time.Minute, false),
+		Entry("nuke#216 fixture, elapsed 27m of 30m (ratio 0.9) — fail-closes",
+			func() string {
+				body, err := os.ReadFile("testdata/review_bborbe_nuke_216_run1.md")
+				Expect(err).NotTo(HaveOccurred())
+				return string(body)
+			},
+			27*time.Minute, 30*time.Minute, true),
+		// The toolchain wording pair differs only in elapsed: prose is inert.
+		Entry("toolchain wording, elapsed 2m of 30m (ratio ~0.07) — approve stands",
+			func() string { return fence(toolchainConcernJSON) },
+			2*time.Minute, 30*time.Minute, false),
+		Entry("toolchain wording, elapsed 27m of 30m (ratio 0.9) — fail-closes",
+			func() string { return fence(toolchainConcernJSON) },
+			27*time.Minute, 30*time.Minute, true),
+		// Bare admissions on a short run are mislabels too (wording 1 and 3
+		// from the deleted tier-keyed table, reused per requirement 7c).
+		Entry("wording 1 bare admission, elapsed 2m of 30m — approve stands (mislabel)",
+			func() string {
+				return fence(
+					`{"verdict":"approve","concerns_addressed":[{"concern":"tests: limit=200 safety valve not directly tested when transcripts are within the age window — not verified: scenario requires 200+ transcripts in same cwd, gap is reasonable to leave untested","disposition":"not-verified"}]}`,
+				)
+			},
+			2*time.Minute, 30*time.Minute, false),
+		Entry("wording 3 bare admission, elapsed 2m of 30m — approve stands (mislabel)",
+			func() string {
+				return fence(
+					`{"verdict":"approve","concerns_addressed":[{"concern":"performance: I inspected the vendored copy and the mutex is uncontended in this call graph","disposition":"not-verified"}]}`,
+				)
+			},
+			2*time.Minute, 30*time.Minute, false),
+		// Threshold boundary: the integer-form comparison is exact at 0.8.
+		Entry("boundary: elapsed 24m of 30m (exactly 0.8) — fail-closes",
+			func() string { return fence(toolchainConcernJSON) },
+			24*time.Minute, 30*time.Minute, true),
+		Entry("boundary: elapsed 23m59s of 30m (just below 0.8) — approve stands",
+			func() string { return fence(toolchainConcernJSON) },
+			23*time.Minute+59*time.Second, 30*time.Minute, false),
+		// Unknown budget: the integer comparison never divides by the budget, so
+		// a zero budget demotes (fail-safe) instead of a NaN silently passing.
+		Entry("unknown budget (elapsed 0, budget 0) — fail-closes (no-division fail-safe)",
+			func() string { return fence(toolchainConcernJSON) },
+			time.Duration(0), time.Duration(0), true),
+		// No admission → no demotion regardless of budget.
+		Entry("disposition not-an-issue, elapsed 27m of 30m — no admission, no demotion",
+			func() string {
+				return fence(
+					`{"verdict":"approve","concerns_addressed":[{"concern":"security: rate-limit","disposition":"not-an-issue"}]}`,
+				)
+			},
+			27*time.Minute, 30*time.Minute, false),
 	)
 })
 
@@ -304,6 +416,22 @@ var _ = Describe("incident regression (bborbe/discord-assistant#37 run 2)", func
 
 	It("parses the as-is fixture verdict as approve", func() {
 		body, err := os.ReadFile("testdata/review_discord_assistant_37_run2.md")
+		Expect(err).NotTo(HaveOccurred())
+		result := pkg.ParseVerdict(string(body))
+		Expect(result.Verdict).To(Equal(pkg.VerdictApprove))
+	})
+})
+
+var _ = Describe("incident regression (bborbe/nuke#216 run 1)", func() {
+	// Regression-lock for the 2026-09-10 false-CHANGES_REQUESTED (review_id
+	// 5172635280): the run-1 body stored verbatim in the fixture yields a clean
+	// approve, and its four `not-verified` dispositions are four admissions. The
+	// demotion rows in the budget-keyed table can only be meaningful against a
+	// fixture whose verdict is an approve — assert that here so a fixture drift
+	// that turns the verdict into request-changes fails loudly instead of making
+	// the budget rows silently vacuous.
+	It("parses the nuke#216 fixture verdict as approve", func() {
+		body, err := os.ReadFile("testdata/review_bborbe_nuke_216_run1.md")
 		Expect(err).NotTo(HaveOccurred())
 		result := pkg.ParseVerdict(string(body))
 		Expect(result.Verdict).To(Equal(pkg.VerdictApprove))

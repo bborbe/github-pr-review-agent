@@ -325,7 +325,12 @@ func (s *checkoutExecutionStep) runClaude(
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
-	runResult, runErr, budgetExpired := runWithSoftBudget(ctx, runner, prompt, s.maxDuration)
+	runResult, runErr, budgetExpired, runElapsed := runWithSoftBudget(
+		ctx,
+		runner,
+		prompt,
+		s.maxDuration,
+	)
 	if runErr != nil {
 		// Budget expiry (a FIRED run-context deadline) routes to human_review
 		// BEFORE ## Review is written or the review posted — never retried here.
@@ -356,11 +361,15 @@ func (s *checkoutExecutionStep) runClaude(
 		worktreePath,
 		time.Time(s.currentDateTime.Now()),
 		funnelRan,
+		runElapsed,
 	)
 }
 
 // postAndRoute handles the posting sequence after ## Review has been written to
 // the vault. Extracted for testability — tests call this directly without Claude.
+// runElapsed is the wall-clock time of the claude run (measured by
+// runWithSoftBudget); the concerns gate keys its demotion decision on the
+// fraction of the soft budget it represents.
 func (s *checkoutExecutionStep) postAndRoute(
 	ctx context.Context,
 	md *agentlib.Markdown,
@@ -368,6 +377,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 	worktreePath string,
 	jobRunTime time.Time,
 	funnelRan bool,
+	runElapsed time.Duration,
 ) (*agentlib.Result, error) {
 	// nil poster = skip posting (cmd/run-task with --skip-post).
 	if s.prPoster == nil {
@@ -396,13 +406,18 @@ func (s *checkoutExecutionStep) postAndRoute(
 		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonFunnelDidNotRun}
 	}
 	// Fail-closed gate: the review flags one or more ## Plan concerns as
-	// `not verified` — the model stopped investigating at the soft time budget
-	// before examining them — yet still emits approve. Override to
-	// request-changes so an incomplete review can never green-light a PR; the
-	// partial output is salvaged for a human. Fires only when the funnel gate
-	// above did not already demote the verdict (i.e. the funnel ran) — an
-	// unverified concern is the more specific diagnosis and keeps its reason.
-	if verdict.Verdict == VerdictApprove && HasUnverifiedConcerns(reviewBody) {
+	// unexamined admissions yet still emits approve. Budget-keyed (spec 004's
+	// named follow-up lever): only a run that consumed at least 0.8 of its soft
+	// budget fail-closes — a budget-heavy run that stopped before examining its
+	// concerns must never green-light a PR, while a `not-verified` on a run that
+	// finished well inside the budget is provably a mislabel (the model had
+	// budget left and examined the concern) and the approve stands. The
+	// disposition is the admission; concern prose is never inspected. Fires only
+	// when the funnel gate above did not already demote the verdict (i.e. the
+	// funnel ran) — an unverified concern is the more specific diagnosis and
+	// keeps its reason.
+	if verdict.Verdict == VerdictApprove &&
+		DemotesUnverifiedConcerns(reviewBody, runElapsed, s.maxDuration.Duration()) {
 		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
 	}
 

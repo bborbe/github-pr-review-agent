@@ -617,6 +617,71 @@ prior review body
 				_, req := fakePoster.PostArgsForCall(0)
 				Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
 			})
+
+			// Budget-keyed posting boundary (the permanent replacement for the
+			// deleted RED probe): the elapsed reaches the gate through the real
+			// demotion site. The nuke#216 body on a run that finished well inside
+			// its 30m budget must post APPROVED — the regression that must never
+			// come back — while the same admission on a budget-heavy run still
+			// fail-closes. These rows assert the VERDICT the poster receives, so
+			// the budget-keyed gate is locked at the posting boundary.
+			It(
+				"posts the nuke#216 body as approve on a short run (budget 30m, elapsed 2m)",
+				func() {
+					body, err := os.ReadFile("testdata/review_bborbe_nuke_216_run1.md")
+					Expect(err).NotTo(HaveOccurred())
+					fakePoster := &mocks.PrPoster{}
+					fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 17})
+
+					md := buildMD(ctx, string(body))
+					_, err = pkg.PostAndRouteWithBudgetForTest(
+						ctx,
+						fakePoster,
+						md,
+						prURL,
+						"",
+						fixedTime,
+						true,
+						libtime.Duration(30*time.Minute),
+						2*time.Minute,
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(fakePoster.PostCallCount()).To(Equal(1))
+					_, req := fakePoster.PostArgsForCall(0)
+					Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+				},
+			)
+
+			It(
+				"fail-closes the toolchain body on a budget-heavy run (budget 30m, elapsed 27m)",
+				func() {
+					fakePoster := &mocks.PrPoster{}
+					fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 18})
+
+					md := buildMD(ctx,
+						"LGTM.\n\n```json\n"+
+							`{"verdict":"approve","reason":"clean","concerns_addressed":[{"concern":"correctness: go.mod go directive 1.27.0 dep compatibility","detail":"not verified - module files internally consistent (tidy ran, no downgrades, all hashes present) but transitive go-directive compatibility requires a Go 1.27 toolchain not available in the review sandbox; repo CI precommit (go mod tidy/verify + build) is the gate","disposition":"not-verified"}]}`+
+							"\n```\n")
+					result, err := pkg.PostAndRouteWithBudgetForTest(
+						ctx,
+						fakePoster,
+						md,
+						prURL,
+						"",
+						fixedTime,
+						true,
+						libtime.Duration(30*time.Minute),
+						27*time.Minute,
+					)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result.NextPhase).To(Equal("ai_review"))
+
+					Expect(fakePoster.PostCallCount()).To(Equal(1))
+					_, req := fakePoster.PostArgsForCall(0)
+					Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+				},
+			)
 		})
 
 		Context("fail-closed gate when a comment is blocking", func() {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agentlib "github.com/bborbe/agent"
+	libtime "github.com/bborbe/time"
 )
 
 // ShouldVerifyPostForTest exposes reviewStep.shouldVerifyPost for unit testing
@@ -40,7 +41,9 @@ func NewGHTokenCheckStepWithURLForTest(token, url string) *ghTokenCheckStep {
 // PostAndRouteForTest calls postAndRoute on a minimal checkoutExecutionStep,
 // bypassing the Claude runner entirely. The md should already have ## Review
 // populated by the test. This allows unit-testing the posting path without
-// a live Claude process.
+// a live Claude process. The step has no configured budget, so the concerns
+// gate fail-closes on any unverified admission regardless of elapsed — that is
+// what its existing rows assert.
 func PostAndRouteForTest(
 	ctx context.Context,
 	prPoster PrPoster,
@@ -51,7 +54,28 @@ func PostAndRouteForTest(
 	funnelRan bool,
 ) (*agentlib.Result, error) {
 	s := &checkoutExecutionStep{prPoster: prPoster}
-	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan)
+	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan, 0)
+}
+
+// PostAndRouteWithBudgetForTest calls postAndRoute on a checkoutExecutionStep
+// configured with a soft budget and an explicit run elapsed, bypassing the
+// Claude runner entirely. This lets the posting tests drive the budget-keyed
+// unverified-concerns gate (DemotesUnverifiedConcerns) with the real demotion
+// site: budget is the step's maxDuration and runElapsed is what postAndRoute
+// compares against it.
+func PostAndRouteWithBudgetForTest(
+	ctx context.Context,
+	prPoster PrPoster,
+	md *agentlib.Markdown,
+	prURLStr string,
+	worktreePath string,
+	jobRunTime time.Time,
+	funnelRan bool,
+	budget libtime.Duration,
+	runElapsed time.Duration,
+) (*agentlib.Result, error) {
+	s := &checkoutExecutionStep{prPoster: prPoster, maxDuration: budget}
+	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan, runElapsed)
 }
 
 // ParsePlanningConcernsForTest exposes parsePlanningConcerns for unit testing.

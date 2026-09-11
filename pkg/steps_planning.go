@@ -111,11 +111,15 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 
 	var lastParseErr error
 	for attempt := 1; attempt <= maxPlanningAttempts; attempt++ {
-		runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
+		runResult, runErr, budgetExpired, _ := runWithSoftBudget(
+			ctx,
+			s.runner,
+			prompt,
+			s.maxDuration,
+		)
 		if runErr != nil {
-			// Budget expiry (a FIRED run-context deadline) routes to human_review
-			// and is never retried, never written to ## Plan. The streamed partial
-			// (if any) is salvaged under ## Salvage before the budget result returns.
+			// Budget expiry (a FIRED run-context deadline) routes to human_review,
+			// never retried or written to ## Plan; a streamed partial is salvaged.
 			if budgetExpired {
 				glog.V(2).
 					Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
@@ -129,7 +133,6 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 				Message: fmt.Sprintf("planning claude run failed: %v", runErr),
 			}, nil
 		}
-
 		if _, parseErr := parsePlanningConcerns(ctx, runResult.Result); parseErr != nil {
 			lastParseErr = parseErr
 			if attempt < maxPlanningAttempts {
