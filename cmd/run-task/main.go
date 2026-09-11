@@ -172,13 +172,18 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		WorkPath:                    workPath,
 		ReviewMode:                  a.ReviewMode,
 		MaxReviewDuration:           a.MaxReviewDuration,
-		RepoAllowlist:               repoAllowlist,
-		AuthSetup:                   authSetup,
-		Phase:                       a.Phase,
-		TaskContent:                 string(taskContent),
-		Deliverer:                   deliverer,
-		BotLogin:                    a.BotLogin,
-		SkipPost:                    a.SkipPost,
+		ReviewChunkConfig: prpkg.ReviewChunkConfig{
+			EngageAdditions: a.ReviewChunkEngageAdditions,
+			MaxAdditions:    a.ReviewChunkMaxAdditions,
+			MaxFiles:        a.ReviewChunkMaxFiles,
+		},
+		RepoAllowlist: repoAllowlist,
+		AuthSetup:     authSetup,
+		Phase:         a.Phase,
+		TaskContent:   string(taskContent),
+		Deliverer:     deliverer,
+		BotLogin:      a.BotLogin,
+		SkipPost:      a.SkipPost,
 	})
 	if err != nil {
 		return errors.Wrap(ctx, err, "agent run failed")

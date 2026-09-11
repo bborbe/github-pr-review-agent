@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bborbe/errors"
 )
@@ -220,6 +222,85 @@ func fits(current, u reviewUnit, cfg ReviewChunkConfig) bool {
 		return false
 	}
 	return len(current.paths)+len(u.paths) <= cfg.MaxFiles
+}
+
+// ChunkDeadline returns the deadline for one chunk run: the earlier of
+// outerDeadline and now + max(remaining time / remainingChunks, 60s), where
+// remaining time is outerDeadline - now. It is pure.
+//
+// remainingChunks is the number of chunk runs left to start, including the one
+// this deadline is for, and must be >= 1; a value <= 0 is defensive-only and
+// returns outerDeadline (a zero divisor would panic). The 60-second floor means
+// a chunk always gets a usable slice even when the remaining budget is nearly
+// exhausted, and the outer-deadline cap means the per-chunk share can never
+// extend the whole-review budget.
+func ChunkDeadline(now, outerDeadline time.Time, remainingChunks int) time.Time {
+	if remainingChunks <= 0 {
+		return outerDeadline
+	}
+	remaining := outerDeadline.Sub(now)
+	share := remaining / time.Duration(remainingChunks)
+	if share < 60*time.Second {
+		share = 60 * time.Second
+	}
+	candidate := now.Add(share)
+	if candidate.After(outerDeadline) {
+		return outerDeadline
+	}
+	return candidate
+}
+
+// FilterFindingsByBasenames rewrites the funnel findings JSON so that only
+// findings whose file's basename is in files survive, recomputing
+// stats.findings_count to the surviving count. The top-level shape and every
+// other field are untouched. It uses the same basename match the diff-anchor
+// filter uses.
+//
+// A chunk with no matching findings is not an error: it returns valid JSON with
+// findings_count 0. Findings with an empty file never survive. errors are
+// returned wrapped when the input is not valid JSON or the result cannot be
+// marshaled.
+func FilterFindingsByBasenames(
+	ctx context.Context,
+	findingsJSON string,
+	files []string,
+) (string, error) {
+	bases := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		bases[filepath.Base(f)] = struct{}{}
+	}
+	var report funnelReport
+	if err := json.Unmarshal([]byte(findingsJSON), &report); err != nil {
+		return "", errors.Wrapf(ctx, err, "unmarshal chunk funnel findings")
+	}
+	surviving := map[string][]funnelFinding{}
+	count := 0
+	for owner, findings := range report.FindingsByOwner {
+		kept := make([]funnelFinding, 0, len(findings))
+		for _, f := range findings {
+			if f.File == "" {
+				continue
+			}
+			if _, ok := bases[filepath.Base(f.File)]; !ok {
+				continue
+			}
+			kept = append(kept, f)
+		}
+		if len(kept) > 0 {
+			surviving[owner] = kept
+			count += len(kept)
+		}
+	}
+	report.FindingsByOwner = surviving
+	if report.Errors == nil {
+		report.Errors = []json.RawMessage{}
+	}
+	report.Stats.FindingsCount = count
+	out, err := json.Marshal(report)
+	if err != nil {
+		return "", errors.Wrapf(ctx, err, "marshal chunk filtered findings")
+	}
+	return string(out), nil
 }
 
 // chunkReviewApprovedReason and chunkReviewChangesReason are the deterministic,

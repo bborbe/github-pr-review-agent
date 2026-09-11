@@ -43,6 +43,7 @@ type checkoutExecutionStep struct {
 	runner          claudelib.ClaudeRunner // nil = build a fresh runner in runClaude (production)
 	maxDuration     libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
 	prState         PRStateClient
+	chunkConfig     ReviewChunkConfig // thresholds deciding whether the review is chunked
 }
 
 // NewCheckoutExecutionStep constructs the execution-phase step that wires
@@ -51,6 +52,8 @@ type checkoutExecutionStep struct {
 // fake. maxDuration is the soft REVIEW_MAX_DURATION budget enforced on the
 // claude run; expiry routes to human_review. prState queries the live GitHub
 // PR state so a merged/closed/superseded PR short-circuits before any work.
+// chunkConfig carries the chunking thresholds; at or below the engage
+// threshold the review runs once, unscoped.
 func NewCheckoutExecutionStep(
 	repoManager git.RepoManager,
 	claudeConfigDir claudelib.ClaudeConfigDir,
@@ -66,6 +69,7 @@ func NewCheckoutExecutionStep(
 	runner claudelib.ClaudeRunner,
 	maxDuration libtime.Duration,
 	prState PRStateClient,
+	chunkConfig ReviewChunkConfig,
 ) agentlib.Step {
 	return &checkoutExecutionStep{
 		repoManager:     repoManager,
@@ -82,6 +86,7 @@ func NewCheckoutExecutionStep(
 		runner:          runner,
 		maxDuration:     maxDuration,
 		prState:         prState,
+		chunkConfig:     chunkConfig,
 	}
 }
 
@@ -215,6 +220,45 @@ func (s *checkoutExecutionStep) Run(
 		}
 	}
 
+	return s.runReview(ctx, md, worktreePath, baseRef, funnel)
+}
+
+// runReview decides how the review runs. When the added-line counts could not
+// be computed the chunk planner has no input, so the review runs once, unscoped,
+// with a warning naming the failure. Otherwise the changed-file inventory is
+// partitioned: one chunk means the review is below the engage threshold and runs
+// once, unscoped (the pre-chunking path, byte-identical); more than one chunk
+// means the chunked path.
+func (s *checkoutExecutionStep) runReview(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	worktreePath string,
+	baseRef string,
+	funnel FunnelResult,
+) (*agentlib.Result, error) {
+	if funnel.InventoryDetail != "" {
+		glog.Warningf("review chunking skipped: %s", funnel.InventoryDetail)
+		return s.runUnscopedReview(ctx, md, worktreePath, baseRef, funnel)
+	}
+	chunks := PartitionReviewChunks(funnel.ChangedFiles, s.chunkConfig)
+	if len(chunks) == 1 {
+		glog.V(2).
+			Infof("review chunk 1/1 files=%d additions=%d", len(chunks[0].Files), chunks[0].Additions)
+		return s.runUnscopedReview(ctx, md, worktreePath, baseRef, funnel)
+	}
+	return s.runChunkedReview(ctx, md, worktreePath, baseRef, funnel, chunks)
+}
+
+// runUnscopedReview is the single-run path: one execution prompt covering the
+// whole diff, one runner invocation, one verdict. Unchanged from the
+// pre-chunking behaviour.
+func (s *checkoutExecutionStep) runUnscopedReview(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	worktreePath string,
+	baseRef string,
+	funnel FunnelResult,
+) (*agentlib.Result, error) {
 	instructions, err := prompts.BuildExecutionInstructions(
 		ctx,
 		s.claudeConfigDir,
@@ -236,6 +280,162 @@ func (s *checkoutExecutionStep) Run(
 	}
 
 	return s.runClaude(ctx, md, worktreePath, instructions, funnel.Ran)
+}
+
+// runChunkedReview runs one scoped review per chunk, sequentially, each under
+// its own fair share of the remaining soft budget, then merges the chunk outputs
+// into one ## Review body carrying exactly one verdict and posts through the
+// unchanged posting path.
+//
+// The clone, the allowlist check, and the mechanical funnel ran once, before
+// this method. The elapsed handed to the concerns gate is the SUM of the chunk
+// runs' elapsed time — a run whose chunks collectively consumed the budget must
+// demote an approve carrying an unverified concern, exactly as a single run
+// that consumed the budget does.
+func (s *checkoutExecutionStep) runChunkedReview(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	worktreePath string,
+	baseRef string,
+	funnel FunnelResult,
+	chunks []ReviewChunk,
+) (*agentlib.Result, error) {
+	// Cache PR URL BEFORE any md mutations to avoid matching URLs that Claude
+	// writes inside the ## Review section body.
+	prURLStr := ExtractPRURL(md)
+
+	runner := s.buildRunner(worktreePath)
+
+	taskContent, err := md.Marshal(ctx)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "execution marshal task")
+	}
+
+	n := len(chunks)
+	outerDeadline := s.currentDateTime.Now().Time().Add(s.maxDuration.Duration())
+	var totalElapsed time.Duration
+	outputs := make([]string, 0, n)
+	for i, chunk := range chunks {
+		output, elapsed, earlyResult, runErr := s.runOneChunk(
+			ctx,
+			md,
+			runner,
+			taskContent,
+			baseRef,
+			funnel,
+			chunk,
+			i,
+			n,
+			outerDeadline,
+		)
+		if earlyResult != nil || runErr != nil {
+			return earlyResult, runErr
+		}
+		totalElapsed += elapsed
+		outputs = append(outputs, output)
+	}
+
+	merged, _ := MergeChunkReviews(outputs)
+	md.ReplaceSection(agentlib.Section{Heading: "## Review", Body: merged})
+
+	return s.postAndRoute(
+		ctx,
+		md,
+		prURLStr,
+		worktreePath,
+		time.Time(s.currentDateTime.Now()),
+		funnel.Ran,
+		totalElapsed,
+	)
+}
+
+// runOneChunk runs the scoped review for a single chunk. index is the 0-based
+// position and count the total chunk count. It returns the chunk's review output
+// and elapsed time, or an early Result (budget expiry → salvage + human_review;
+// runner failure → failed) that the caller must return immediately.
+func (s *checkoutExecutionStep) runOneChunk(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	runner claudelib.ClaudeRunner,
+	taskContent string,
+	baseRef string,
+	funnel FunnelResult,
+	chunk ReviewChunk,
+	index, count int,
+	outerDeadline time.Time,
+) (string, time.Duration, *agentlib.Result, error) {
+	deadline := ChunkDeadline(s.currentDateTime.Now().Time(), outerDeadline, count-index)
+	chunkDuration := libtime.Duration(deadline.Sub(s.currentDateTime.Now().Time()))
+	glog.V(2).
+		Infof("review chunk %d/%d files=%d additions=%d", index+1, count, len(chunk.Files), chunk.Additions)
+
+	chunkFindings, err := FilterFindingsByBasenames(ctx, funnel.FindingsJSON, chunk.Files)
+	if err != nil {
+		return "", 0, &agentlib.Result{
+			Status:  agentlib.AgentStatusFailed,
+			Message: fmt.Sprintf("execution chunk findings filter failed: %v", err),
+		}, nil
+	}
+
+	// The chunk's file paths are PR-author-controlled, so neutralize code fences
+	// before they reach the prompt (pkg/prompts cannot do it: it would cycle).
+	neutralized := make([]string, 0, len(chunk.Files))
+	for _, f := range chunk.Files {
+		neutralized = append(neutralized, neutralizeCodeFences(f))
+	}
+
+	instructions, err := prompts.BuildChunkExecutionInstructions(
+		ctx,
+		s.claudeConfigDir,
+		s.reviewMode,
+		baseRef,
+		index+1,
+		count,
+		neutralized,
+		chunkFindings,
+		s.maxDuration,
+	)
+	if err != nil {
+		return "", 0, nil, errors.Wrapf(
+			ctx,
+			err,
+			"build execution instructions base_ref=%s mode=%s",
+			baseRef,
+			s.reviewMode,
+		)
+	}
+
+	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
+	runResult, runErr, budgetExpired, elapsed := runWithSoftBudget(
+		ctx,
+		runner,
+		prompt,
+		chunkDuration,
+	)
+	if runErr != nil {
+		if budgetExpired {
+			glog.V(2).Infof(
+				"execution: chunk %d/%d soft time budget exceeded nextPhase=human_review",
+				index+1,
+				count,
+			)
+			writeSalvage(
+				md,
+				fmt.Sprintf(
+					"Chunk %d/%d\n\n%s",
+					index+1,
+					count,
+					ExtractBudgetPartial(runResult, runErr),
+				),
+			)
+			return "", elapsed, budgetExpiredResult("execution", s.maxDuration), nil
+		}
+		return "", elapsed, &agentlib.Result{
+			Status:  agentlib.AgentStatusFailed,
+			Message: fmt.Sprintf("execution claude run failed: %v", runErr),
+		}, nil
+	}
+	return runResult.Result, elapsed, nil, nil
 }
 
 // checkAllowlist returns a non-nil Result if the cloneURL is blocked by the
@@ -297,6 +497,22 @@ func ExtractPRURL(md *agentlib.Markdown) string {
 	return ""
 }
 
+// buildRunner returns the injected runner, or builds a fresh ClaudeRunner bound
+// to the worktree when none was injected (production). Shared by the unscoped
+// and the chunked run paths so they cannot drift on runner configuration.
+func (s *checkoutExecutionStep) buildRunner(worktreePath string) claudelib.ClaudeRunner {
+	if s.runner != nil {
+		return s.runner
+	}
+	return claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
+		ClaudeConfigDir:  s.claudeConfigDir,
+		AllowedTools:     s.allowedTools,
+		Model:            s.model,
+		WorkingDirectory: claudelib.AgentDir(worktreePath),
+		Env:              s.env,
+	})
+}
+
 func (s *checkoutExecutionStep) runClaude(
 	ctx context.Context,
 	md *agentlib.Markdown,
@@ -308,16 +524,7 @@ func (s *checkoutExecutionStep) runClaude(
 	// writes inside the ## Review section body.
 	prURLStr := ExtractPRURL(md)
 
-	runner := s.runner
-	if runner == nil {
-		runner = claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
-			ClaudeConfigDir:  s.claudeConfigDir,
-			AllowedTools:     s.allowedTools,
-			Model:            s.model,
-			WorkingDirectory: claudelib.AgentDir(worktreePath),
-			Env:              s.env,
-		})
-	}
+	runner := s.buildRunner(worktreePath)
 
 	taskContent, err := md.Marshal(ctx)
 	if err != nil {

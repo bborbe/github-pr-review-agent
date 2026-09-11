@@ -6,9 +6,11 @@ package pkg_test
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
 	. "github.com/onsi/ginkgo/v2"
@@ -198,4 +200,86 @@ var _ = Describe("ValidateReviewChunkConfig", func() {
 			pkg.ReviewChunkConfig{EngageAdditions: 500, MaxAdditions: 300, MaxFiles: 0},
 			"REVIEW_CHUNK_MAX_FILES"),
 	)
+})
+
+var _ = Describe("ChunkDeadline", func() {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	DescribeTable("per-chunk deadline",
+		func(outerDeadline time.Time, remainingChunks int, want time.Time) {
+			Expect(pkg.ChunkDeadline(now, outerDeadline, remainingChunks)).To(Equal(want))
+		},
+		Entry("equal share of a large remaining budget",
+			now.Add(10*time.Minute), 5, now.Add(2*time.Minute)),
+		Entry("60s floor when the equal share is below 60s",
+			now.Add(90*time.Second), 5, now.Add(60*time.Second)),
+		Entry("capped at the outer deadline when now+share would pass it",
+			now.Add(30*time.Second), 5, now.Add(30*time.Second)),
+		Entry("remainingChunks == 1 gives the whole remaining time",
+			now.Add(10*time.Minute), 1, now.Add(10*time.Minute)),
+		Entry("remainingChunks == 1 with less than 60s left is capped",
+			now.Add(30*time.Second), 1, now.Add(30*time.Second)),
+		Entry("remainingChunks <= 0 is defensive: the outer deadline",
+			now.Add(10*time.Minute), 0, now.Add(10*time.Minute)),
+	)
+})
+
+var _ = Describe("FilterFindingsByBasenames", func() {
+	ctx := context.Background()
+	// Three findings across two files plus one with an empty file: the empty-file
+	// finding must never survive any chunk.
+	const findings = `{"stats":{"yamls_run":66,"findings_count":3,"elapsed_ms":10},` +
+		`"findings_by_owner":{"go-error-assistant":[` +
+		`{"rule_id":"r1","file":"pkg/a.go","line":3},` +
+		`{"rule_id":"r2","file":"pkg/b.go","line":7},` +
+		`{"rule_id":"r3","file":"","line":1}]},"errors":[]}`
+
+	type parsedReport struct {
+		Stats struct {
+			FindingsCount int `json:"findings_count"`
+		} `json:"stats"`
+		FindingsByOwner map[string][]struct {
+			RuleID string `json:"rule_id"`
+		} `json:"findings_by_owner"`
+		Errors []json.RawMessage `json:"errors"`
+	}
+
+	DescribeTable("filters findings to the chunk's basenames",
+		func(files []string, wantCount int, wantRules []string) {
+			out, err := pkg.FilterFindingsByBasenames(ctx, findings, files)
+			Expect(err).NotTo(HaveOccurred())
+
+			var report parsedReport
+			Expect(json.Unmarshal([]byte(out), &report)).To(Succeed())
+			Expect(report.Stats.FindingsCount).To(Equal(wantCount))
+			Expect(report.Errors).NotTo(BeNil())
+
+			rules := make([]string, 0)
+			for _, ownerFindings := range report.FindingsByOwner {
+				for _, f := range ownerFindings {
+					rules = append(rules, f.RuleID)
+				}
+			}
+			sort.Strings(rules)
+			Expect(rules).To(Equal(wantRules))
+		},
+		Entry("a finding whose basename is in the chunk survives",
+			[]string{"pkg/a.go"}, 1, []string{"r1"}),
+		Entry("a finding from another file drops",
+			[]string{"pkg/b.go"}, 1, []string{"r2"}),
+		Entry("findings from both chunk files survive",
+			[]string{"pkg/a.go", "pkg/b.go"}, 2, []string{"r1", "r2"}),
+		Entry("the match is by basename, not full path",
+			[]string{"deep/dir/a.go"}, 1, []string{"r1"}),
+		Entry("a chunk with no matching findings returns findings_count 0",
+			[]string{"pkg/c.go"}, 0, []string{}),
+		Entry("an empty chunk file list drops every finding",
+			[]string{}, 0, []string{}),
+	)
+
+	It("returns a wrapped error for invalid JSON", func() {
+		_, err := pkg.FilterFindingsByBasenames(ctx, "not json", []string{"pkg/a.go"})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("unmarshal chunk funnel findings"))
+	})
 })

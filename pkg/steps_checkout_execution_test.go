@@ -46,6 +46,7 @@ var _ = Describe("checkoutExecutionStep", func() {
 			nil,
 			libtime.Duration(25*time.Minute),
 			nil,
+			pkg.DefaultReviewChunkConfig(),
 		)
 	})
 
@@ -303,6 +304,7 @@ prior review body
 						nil,
 						libtime.Duration(25*time.Minute),
 						nil,
+						pkg.DefaultReviewChunkConfig(),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -332,6 +334,7 @@ prior review body
 						nil,
 						libtime.Duration(25*time.Minute),
 						nil,
+						pkg.DefaultReviewChunkConfig(),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -361,6 +364,7 @@ prior review body
 						nil,
 						libtime.Duration(25*time.Minute),
 						nil,
+						pkg.DefaultReviewChunkConfig(),
 					)
 					const nonMatchingTask = "---\nclone_url: https://github.com/bborbe/maintainer.git\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -393,6 +397,7 @@ prior review body
 						nil,
 						libtime.Duration(25*time.Minute),
 						nil,
+						pkg.DefaultReviewChunkConfig(),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -427,6 +432,7 @@ prior review body
 						nil,
 						libtime.Duration(25*time.Minute),
 						nil,
+						pkg.DefaultReviewChunkConfig(),
 					)
 					const badURLTask = "---\nclone_url: not-a-url\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -999,6 +1005,7 @@ prior review body
 				fakeRunner,
 				libtime.Duration(20*time.Millisecond),
 				nil,
+				pkg.DefaultReviewChunkConfig(),
 			)
 
 			md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1076,6 +1083,7 @@ https://github.com/bborbe/maintainer/pull/14
 					fakeRunner,
 					libtime.Duration(20*time.Millisecond),
 					nil,
+					pkg.DefaultReviewChunkConfig(),
 				)
 
 				md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1149,6 +1157,7 @@ https://github.com/bborbe/maintainer/pull/14
 					fakeRunner,
 					libtime.Duration(20*time.Millisecond),
 					nil,
+					pkg.DefaultReviewChunkConfig(),
 				)
 
 				md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1283,5 +1292,263 @@ complete review body
 				"",
 			),
 		)
+	})
+})
+
+var _ = Describe("checkoutExecutionStep chunked review", func() {
+	var (
+		ctx         context.Context
+		tmpDir      string
+		repoManager *mocks.RepoManager
+	)
+
+	// twoChunkInventory partitions into exactly two chunks under the default
+	// config: 301 + 300 added lines is above the 500 engage threshold, and the
+	// second file does not fit alongside the first under the 300 max-additions
+	// bound.
+	twoChunkFunnel := func() pkg.FunnelResult {
+		return pkg.FunnelResult{
+			Ran: true,
+			FindingsJSON: `{"stats":{"yamls_run":1,"findings_count":1,"elapsed_ms":1},` +
+				`"findings_by_owner":{"go-error-assistant":[{"rule_id":"r1","file":"a.go","line":3}]},` +
+				`"errors":[]}`,
+			ChangedFiles: []pkg.ChangedFile{
+				{Path: "a.go", Additions: 301},
+				{Path: "b.go", Additions: 300},
+			},
+		}
+	}
+
+	// chunkApproveWithUnverifiedConcern is one chunk's output: a clean approve
+	// carrying a single not-verified concern, so the merged body still trips the
+	// concerns gate when the summed elapsed crosses the budget fraction.
+	const chunkApproveWithUnverifiedConcern = "chunk body\n\n```json\n" +
+		`{"verdict":"approve","reason":"ok","concerns_addressed":[{"concern":"c1","disposition":"not-verified"}]}` +
+		"\n```\n"
+
+	buildMD := func() *agentlib.Markdown {
+		md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Review
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+		Expect(err).NotTo(HaveOccurred())
+		return md
+	}
+
+	newStep := func(
+		runner claudelib.ClaudeRunner,
+		poster pkg.PrPoster,
+		funnel pkg.FunnelRunner,
+		budget libtime.Duration,
+	) agentlib.Step {
+		return pkg.NewCheckoutExecutionStep(
+			repoManager,
+			claudelib.ClaudeConfigDir(tmpDir),
+			"agent",
+			"sonnet",
+			map[string]string{},
+			claudelib.AllowedTools{"Read"},
+			"standard",
+			nil,
+			poster,
+			funnel,
+			libtime.NewCurrentDateTime(),
+			runner,
+			budget,
+			nil,
+			pkg.DefaultReviewChunkConfig(),
+		)
+	}
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		repoManager = &mocks.RepoManager{}
+		repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+		var err error
+		tmpDir, err = os.MkdirTemp("", "exec-chunk-*")
+		Expect(err).NotTo(HaveOccurred())
+
+		cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+		Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(cmdDir, "pr-review.md"),
+			[]byte(
+				"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+			),
+			0600,
+		)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	It("salvages the cut-off chunk and routes to human_review when a chunk deadline fires", func() {
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			<-runCtx.Done() // block until the chunk's share of the budget fires
+			return &claudelib.ClaudeResult{Partial: "partial chunk output"}, runCtx.Err()
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(twoChunkFunnel(), nil)
+		fakePoster := &mocks.PrPoster{}
+
+		step := newStep(fakeRunner, fakePoster, funnelRunner, libtime.Duration(20*time.Millisecond))
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+
+		// The cut-off chunk's partial is salvaged under ## Salvage, naming the chunk.
+		section, exists := md.FindSection("## Salvage")
+		Expect(exists).To(BeTrue())
+		Expect(section.Body).To(ContainSubstring("Chunk "))
+		Expect(section.Body).To(ContainSubstring("Chunk 1/2"))
+		Expect(section.Body).To(ContainSubstring("partial chunk output"))
+
+		// No ## Review is written — the run never reaches the merge.
+		_, exists = md.FindSection("## Review")
+		Expect(exists).To(BeFalse())
+		Expect(fakeRunner.RunCallCount()).To(BeNumerically("<", 2))
+		// The clone and the funnel each ran exactly once, never per chunk.
+		Expect(repoManager.EnsureWorktreeCallCount()).To(Equal(1))
+		Expect(funnelRunner.RunCallCount()).To(Equal(1))
+		Expect(fakePoster.PostCallCount()).To(Equal(0))
+	})
+
+	It(
+		"keeps the failed path with no ## Review and no ## Salvage on a non-deadline chunk error",
+		func() {
+			fakeRunner := &mocks.ClaudeRunnerMock{}
+			fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+				return nil, fmt.Errorf("runner exploded")
+			}
+			funnelRunner := &mocks.FunnelRunner{}
+			funnelRunner.RunReturns(twoChunkFunnel(), nil)
+
+			step := newStep(fakeRunner, nil, funnelRunner, libtime.Duration(25*time.Minute))
+
+			md := buildMD()
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusFailed))
+			Expect(result.Message).To(ContainSubstring("execution claude run failed"))
+
+			_, exists := md.FindSection("## Review")
+			Expect(exists).To(BeFalse())
+			_, exists = md.FindSection("## Salvage")
+			Expect(exists).To(BeFalse())
+		},
+	)
+
+	It("runs one unscoped review when the added-line counts could not be computed", func() {
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			return &claudelib.ClaudeResult{
+				Result: "review body\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\"}\n```\n",
+			}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(pkg.FunnelResult{
+			Ran:             true,
+			FindingsJSON:    `{"stats":{"yamls_run":0,"findings_count":0,"elapsed_ms":0},"findings_by_owner":{},"errors":[]}`,
+			InventoryDetail: "could not compute added-line counts for base_ref main",
+		}, nil)
+
+		step := newStep(fakeRunner, nil, funnelRunner, libtime.Duration(25*time.Minute))
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("ai_review"))
+
+		// Exactly one runner call: the review ran once, unscoped.
+		Expect(fakeRunner.RunCallCount()).To(Equal(1))
+		section, exists := md.FindSection("## Review")
+		Expect(exists).To(BeTrue())
+		Expect(section.Body).To(ContainSubstring("review body"))
+	})
+
+	It("neutralizes code fences in the chunk's file paths before they reach the prompt", func() {
+		const rawPath = "a```b.go"
+		var prompts []string
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			prompts = append(prompts, prompt)
+			return &claudelib.ClaudeResult{
+				Result: "review body\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\"}\n```\n",
+			}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelResult := twoChunkFunnel()
+		funnelResult.ChangedFiles = []pkg.ChangedFile{
+			{Path: rawPath, Additions: 301},
+			{Path: "b.go", Additions: 300},
+		}
+		funnelRunner.RunReturns(funnelResult, nil)
+
+		step := newStep(fakeRunner, nil, funnelRunner, libtime.Duration(25*time.Minute))
+
+		result, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(prompts).To(HaveLen(2))
+
+		// The PR-author-controlled path reaches the prompt neutralized, never raw.
+		Expect(prompts[0]).To(ContainSubstring("a[code-fence]b.go"))
+		Expect(prompts[0]).NotTo(ContainSubstring(rawPath))
+	})
+
+	It("hands the concerns gate the SUM of the chunk runs' elapsed time", func() {
+		// Per-chunk sleep 100ms under a 220ms budget: each chunk's deadline is the
+		// outer deadline (the 60s floor caps there), so both complete, but the
+		// summed ~200ms crosses 0.8 × 220ms = 176ms while a single chunk's ~100ms
+		// does not. The merged approve carries a not-verified concern, so the
+		// summed elapsed is what demotes it.
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			time.Sleep(100 * time.Millisecond)
+			return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(twoChunkFunnel(), nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		step := newStep(
+			fakeRunner,
+			fakePoster,
+			funnelRunner,
+			libtime.Duration(220*time.Millisecond),
+		)
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		// One runner call per chunk, and the merged body carries exactly one
+		// verdict block plus the per-chunk concern.
+		Expect(fakeRunner.RunCallCount()).To(Equal(2))
+		section, exists := md.FindSection("## Review")
+		Expect(exists).To(BeTrue())
+		Expect(section.Body).To(ContainSubstring("### Chunk 1/2"))
+		Expect(section.Body).To(ContainSubstring("### Chunk 2/2"))
+		Expect(section.Body).To(ContainSubstring("not-verified"))
+
+		// The summed elapsed demoted the merged approve to request-changes.
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
 	})
 })

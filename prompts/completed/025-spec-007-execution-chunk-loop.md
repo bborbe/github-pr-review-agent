@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [007-chunked-review-for-oversized-prs]
+summary: 'Wired the chunk core into the execution step: chunk-scoped prompts, per-chunk deadlines with salvage routing, deterministic merge, and the summed-elapsed concerns gate, with tests and a CHANGELOG entry.'
+execution_id: github-pr-review-agent-exec-025-spec-007-execution-chunk-loop
+dark-factory-version: dev
 created: "2026-09-11T22:20:00Z"
 queued: "2026-09-11T20:03:46Z"
+started: "2026-09-11T20:18:01Z"
+completed: "2026-09-11T20:27:36Z"
 branch: dark-factory/chunked-review-for-oversized-prs
 ---
 

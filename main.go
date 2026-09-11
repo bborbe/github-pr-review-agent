@@ -282,6 +282,11 @@ func (a *application) dispatchAgent(
 		repoAllowlist,
 		libtime.NewCurrentDateTime(),
 		a.MaxReviewDuration,
+		prpkg.ReviewChunkConfig{
+			EngageAdditions: a.ReviewChunkEngageAdditions,
+			MaxAdditions:    a.ReviewChunkMaxAdditions,
+			MaxFiles:        a.ReviewChunkMaxFiles,
+		},
 	)
 	agent, err := provider.Get(ctx, agentlib.TaskType(a.TaskType))
 	if err != nil {
