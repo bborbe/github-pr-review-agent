@@ -330,6 +330,29 @@ var _ = Describe("HasUnverifiedConcerns", func() {
 				return string(body)
 			},
 			27*time.Minute, 30*time.Minute, true),
+		// Second incident geometry (2026-09-02 bborbe/dark-factory#86, review_id
+		// 5095334370): an `approve` carrying one `not-verified` concern (Docker
+		// Hub image availability) alongside two `not-an-issue` concerns. Same
+		// shape as nuke#216 — the unverified concern is a benign verification
+		// gap on a run well inside its budget, so the approve stands.
+		Entry(
+			"dark-factory#86 fixture, elapsed 2m of 30m (ratio ~0.07) — approve stands (second incident)",
+			func() string {
+				body, err := os.ReadFile("testdata/review_bborbe_dark_factory_86_run1.md")
+				Expect(err).NotTo(HaveOccurred())
+				return string(body)
+			},
+			2*time.Minute,
+			30*time.Minute,
+			false,
+		),
+		Entry("dark-factory#86 fixture, elapsed 27m of 30m (ratio 0.9) — fail-closes",
+			func() string {
+				body, err := os.ReadFile("testdata/review_bborbe_dark_factory_86_run1.md")
+				Expect(err).NotTo(HaveOccurred())
+				return string(body)
+			},
+			27*time.Minute, 30*time.Minute, true),
 		// The toolchain wording pair differs only in elapsed: prose is inert.
 		Entry("toolchain wording, elapsed 2m of 30m (ratio ~0.07) — approve stands",
 			func() string { return fence(toolchainConcernJSON) },
