@@ -58,3 +58,59 @@ var _ = Describe("review max duration resolution", func() {
 		Expect(err).To(HaveOccurred())
 	})
 })
+
+// White-box (package main) specs for the REVIEW_CHUNK_* argument/v2 resolution
+// on the real application struct — the struct-tag → typed-field boundary. They
+// assert the default:"..." tags themselves, not DefaultReviewChunkConfig.
+var _ = Describe("review chunk env knobs", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	validate := func(app *application) error {
+		return prpkg.ValidateReviewChunkConfig(ctx, prpkg.ReviewChunkConfig{
+			EngageAdditions: app.ReviewChunkEngageAdditions,
+			MaxAdditions:    app.ReviewChunkMaxAdditions,
+			MaxFiles:        app.ReviewChunkMaxFiles,
+		})
+	}
+
+	It("resolves the three defaults when unset", func() {
+		defaults, err := libargument.DefaultValues(ctx, &application{})
+		Expect(err).NotTo(HaveOccurred())
+		app := &application{}
+		Expect(libargument.Fill(ctx, app, defaults)).To(Succeed())
+		Expect(app.ReviewChunkEngageAdditions).To(Equal(500))
+		Expect(app.ReviewChunkMaxAdditions).To(Equal(300))
+		Expect(app.ReviewChunkMaxFiles).To(Equal(15))
+		Expect(validate(app)).To(Succeed())
+	})
+
+	DescribeTable("a zero value parses but fails startup validation naming its env var",
+		func(envVar string, read func(app *application) int) {
+			// Seed the defaults first so only the row's variable is zeroed;
+			// ParseEnv on a bare struct would leave the other two at 0 and the
+			// validator would reject a different field.
+			defaults, err := libargument.DefaultValues(ctx, &application{})
+			Expect(err).NotTo(HaveOccurred())
+			app := &application{}
+			Expect(libargument.Fill(ctx, app, defaults)).To(Succeed())
+			Expect(libargument.ParseEnv(ctx, app, []string{envVar + "=0"})).To(Succeed())
+			Expect(read(app)).To(Equal(0))
+			err = validate(app)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(envVar))
+		},
+		Entry("engage additions",
+			"REVIEW_CHUNK_ENGAGE_ADDITIONS",
+			func(app *application) int { return app.ReviewChunkEngageAdditions }),
+		Entry("max additions",
+			"REVIEW_CHUNK_MAX_ADDITIONS",
+			func(app *application) int { return app.ReviewChunkMaxAdditions }),
+		Entry("max files",
+			"REVIEW_CHUNK_MAX_FILES",
+			func(app *application) int { return app.ReviewChunkMaxFiles }),
+	)
+})

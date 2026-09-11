@@ -192,6 +192,8 @@ func CreateReviewVerifier(
 //
 // maxDuration is the soft REVIEW_MAX_DURATION budget threaded into every phase
 // step. The execution step gets a nil runner (runClaude builds a fresh one).
+// chunkConfig carries the chunking thresholds threaded into the execution step;
+// at or below its engage threshold the review runs once, unscoped.
 func CreateAgent(
 	claudeConfigDir claudelib.ClaudeConfigDir,
 	agentDir claudelib.AgentDir,
@@ -205,6 +207,7 @@ func CreateAgent(
 	verifier prpkg.ReviewVerifier,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	maxDuration libtime.Duration,
+	chunkConfig prpkg.ReviewChunkConfig,
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
@@ -232,6 +235,7 @@ func CreateAgent(
 		nil, // runner — production builds a fresh ClaudeRunner in runClaude
 		maxDuration,
 		prStateClient,
+		chunkConfig,
 	)
 	reviewStep := prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools),
@@ -265,6 +269,7 @@ func CreateAgentProvider(
 	repoAllowlist []string,
 	currentDateTime libtime.CurrentDateTimeGetter,
 	maxDuration libtime.Duration,
+	chunkConfig prpkg.ReviewChunkConfig,
 ) agentlib.AgentProvider {
 	botLogin := ResolveBotLogin(env)
 	poster := CreatePrPoster(ghToken, botLogin, currentDateTime)
@@ -282,6 +287,7 @@ func CreateAgentProvider(
 		verifier,
 		currentDateTime,
 		maxDuration,
+		chunkConfig,
 	)
 	healthcheckRunner := CreateClaudeRunner(
 		claudeConfigDir,

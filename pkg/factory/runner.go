@@ -42,6 +42,9 @@ type RunConfig struct {
 	// MaxReviewDuration is the soft time budget for each Claude phase run,
 	// applied below the K8s Job hard deadline. Default 25m (REVIEW_MAX_DURATION).
 	MaxReviewDuration libtime.Duration
+	// ReviewChunkConfig carries the chunking thresholds applied by the execution
+	// step. At or below EngageAdditions the review runs once, unscoped.
+	ReviewChunkConfig prpkg.ReviewChunkConfig
 	RepoAllowlist     []string                // host-qualified repos the agent may clone
 	AuthSetup         githubauth.Configurator // pod: real gh-auth-setup; local-CLI: noop
 	Phase             domain.TaskPhase
@@ -150,6 +153,7 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 			verifier,
 			cfg.CurrentDateTime,
 			cfg.MaxReviewDuration,
+			cfg.ReviewChunkConfig,
 		)
 	}
 	return agent.Run(ctx, cfg.Phase, cfg.TaskContent, cfg.Deliverer)

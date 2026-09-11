@@ -14,6 +14,7 @@ import (
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/agent/delivery"
+	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/factory"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
 	"github.com/bborbe/github-pr-review-agent/pkg/githubauth"
@@ -195,6 +196,7 @@ var _ = Describe("Factory", func() {
 				nil,
 				currentDateTime,
 				libtime.Duration(25*time.Minute),
+				prpkg.DefaultReviewChunkConfig(),
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -215,6 +217,7 @@ var _ = Describe("Factory", func() {
 				nil,
 				currentDateTime,
 				libtime.Duration(25*time.Minute),
+				prpkg.DefaultReviewChunkConfig(),
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -337,6 +340,7 @@ var _ = Describe("Factory", func() {
 				nil,
 				currentDateTime,
 				libtime.Duration(25*time.Minute),
+				prpkg.DefaultReviewChunkConfig(),
 			)
 			Expect(provider).NotTo(BeNil())
 		})

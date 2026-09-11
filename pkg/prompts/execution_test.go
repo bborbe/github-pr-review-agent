@@ -392,3 +392,91 @@ var _ = Describe("BuildExecutionInstructions", func() {
 		)
 	})
 })
+
+var _ = Describe("BuildChunkExecutionInstructions", func() {
+	var (
+		ctx    context.Context
+		tmpDir string
+		cmdDir string
+	)
+
+	const fakePlugin = "---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body line 1.\n"
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		tmpDir, err = os.MkdirTemp("", "prompts-chunk-test-*")
+		Expect(err).NotTo(HaveOccurred())
+
+		cmdDir = filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+		Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+		Expect(
+			os.WriteFile(filepath.Join(cmdDir, "pr-review.md"), []byte(fakePlugin), 0600),
+		).To(Succeed())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	It("scopes the prompt to the chunk's files and carries the chunk's findings", func() {
+		instructions, err := prompts.BuildChunkExecutionInstructions(
+			ctx,
+			claudelib.ClaudeConfigDir(tmpDir),
+			"standard",
+			"main",
+			2,
+			3,
+			[]string{"pkg/a.go", "pkg/b.go"},
+			sampleFindings,
+			libtime.Duration(25*time.Minute),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(instructions).To(HaveLen(2))
+
+		workflow := instructions[0].Content
+		// The chunk-scope preamble names the chunk and its file list.
+		Expect(workflow).To(ContainSubstring("## Chunk scope"))
+		Expect(workflow).To(ContainSubstring("chunk 2/3"))
+		Expect(workflow).To(ContainSubstring("- pkg/a.go"))
+		Expect(workflow).To(ContainSubstring("- pkg/b.go"))
+		// The chunk's own findings JSON is injected, and the shared assembly
+		// (header + plugin procedure + footers) still runs.
+		Expect(workflow).To(ContainSubstring(sampleFindings))
+		Expect(workflow).To(ContainSubstring("Procedure body line 1."))
+		Expect(workflow).To(ContainSubstring("TARGET_BRANCH"))
+		Expect(workflow).To(ContainSubstring("## Final step — emit verdict JSON"))
+	})
+
+	It("rejects an empty base_ref like the unscoped builder", func() {
+		_, err := prompts.BuildChunkExecutionInstructions(
+			ctx,
+			claudelib.ClaudeConfigDir(tmpDir),
+			"standard",
+			"",
+			1,
+			1,
+			[]string{"pkg/a.go"},
+			sampleFindings,
+			libtime.Duration(25*time.Minute),
+		)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("base_ref is empty"))
+	})
+
+	It("rejects an empty reviewMode like the unscoped builder", func() {
+		_, err := prompts.BuildChunkExecutionInstructions(
+			ctx,
+			claudelib.ClaudeConfigDir(tmpDir),
+			"",
+			"main",
+			1,
+			1,
+			[]string{"pkg/a.go"},
+			sampleFindings,
+			libtime.Duration(25*time.Minute),
+		)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("reviewMode is empty"))
+	})
+})
