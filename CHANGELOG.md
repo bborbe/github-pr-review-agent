@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: add the chunked-review core — `FunnelResult` now carries a changed-file inventory (`ChangedFiles`, path + added-line count over the funnel's resolved diff base, binary entries count 0, with `InventoryDetail` set and chunking skipped when the numstat call fails), and `pkg/chunk.go` adds `PartitionReviewChunks` (path-sorted greedy partition with `_test.go` sibling pairing, ~300 added lines / ~15 files per chunk, never splitting a file, one chunk at or below the 500-line engage threshold) plus `MergeChunkReviews` (deterministic worst-wins merge into one body with one `### Chunk <i>/<n>` section per chunk and exactly one verdict block, applying `ApplyBlockingGate` per chunk and carrying the union of `concerns_addressed` entries into the synthesized block); the three thresholds are read from `REVIEW_CHUNK_ENGAGE_ADDITIONS` / `REVIEW_CHUNK_MAX_ADDITIONS` / `REVIEW_CHUNK_MAX_FILES` and validated at startup (`ValidateReviewChunkConfig` rejects any value below 1, naming the variable) in both `main.go` and `cmd/run-task/main.go`
+
 ## v0.10.1
 
 - test: add the `bborbe/dark-factory#86` geometry as a second fixture and budget-keyed row pair in the unverified-concerns table — a clean `approve` carrying one benign `not-verified` concern (Docker Hub image availability) alongside two `not-an-issue` concerns must stand on a short run and fail closed on a budget-heavy one

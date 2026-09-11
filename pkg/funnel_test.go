@@ -575,3 +575,89 @@ var _ = Describe("Funnel diff-anchoring (spec-006)", func() {
 		)
 	})
 })
+
+var _ = Describe("FunnelRunner changed-file inventory", func() {
+	var (
+		ctx    context.Context
+		tmpDir string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		tmpDir, err = os.MkdirTemp("", "funnel-inventory-*")
+		Expect(err).NotTo(HaveOccurred())
+	})
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	// writeRunner installs a fake ast-grep-runner.sh returning valid JSON.
+	writeRunner := func() claudelib.ClaudeConfigDir {
+		cfg := filepath.Join(tmpDir, "cfg")
+		scripts := filepath.Join(cfg, "plugins", "marketplaces", "coding", "scripts")
+		Expect(os.MkdirAll(scripts, 0750)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(scripts, "ast-grep-runner.sh"),
+			[]byte(
+				"#!/usr/bin/env bash\necho '{\"stats\":{\"findings_count\":0},\"errors\":[]}'\n",
+			),
+			0700, // #nosec G306 -- test fixture must be executable
+		)).To(Succeed())
+		return claudelib.ClaudeConfigDir(cfg)
+	}
+
+	// inventoryOf returns the inventory entry for path.
+	inventoryOf := func(files []pkg.ChangedFile, path string) (pkg.ChangedFile, bool) {
+		for _, f := range files {
+			if f.Path == path {
+				return f, true
+			}
+		}
+		return pkg.ChangedFile{}, false
+	}
+
+	It("reports added-line counts over the resolved base and 0 for binary entries", func() {
+		work := filepath.Join(tmpDir, "work")
+		Expect(os.MkdirAll(work, 0750)).To(Succeed())
+		run := func(args ...string) {
+			// #nosec G204 -- test helper; git args are hardcoded literals in this file.
+			cmd := exec.CommandContext(ctx, "git", append([]string{"-C", work}, args...)...)
+			cmd.Env = append(os.Environ(),
+				"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+				"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+			)
+			out, err := cmd.CombinedOutput()
+			Expect(err).NotTo(HaveOccurred(), string(out))
+		}
+		run("init", "-q")
+		run("checkout", "-q", "-b", "main")
+		Expect(
+			os.WriteFile(filepath.Join(work, "base.go"), []byte("package p\n"), 0600),
+		).To(Succeed())
+		run("add", "-A")
+		run("commit", "-q", "-m", "base")
+		run("checkout", "-q", "-b", "feature")
+
+		added := "package p\n\nfunc A() {}\n\nfunc B() {}\n\nfunc C() {}\n"
+		Expect(os.WriteFile(filepath.Join(work, "added.go"), []byte(added), 0600)).To(Succeed())
+		Expect(
+			os.WriteFile(filepath.Join(work, "bin.dat"), []byte("a\x00b\x00c"), 0600),
+		).To(Succeed())
+		run("add", "-A")
+		run("commit", "-q", "-m", "change")
+
+		result, err := pkg.NewFunnelRunner(writeRunner()).Run(ctx, work, "main")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Ran).To(BeTrue())
+		Expect(result.InventoryDetail).To(BeEmpty())
+
+		got, ok := inventoryOf(result.ChangedFiles, "added.go")
+		Expect(ok).To(BeTrue(), "added.go must be in the inventory")
+		Expect(got.Additions).To(Equal(7))
+
+		bin, ok := inventoryOf(result.ChangedFiles, "bin.dat")
+		Expect(ok).To(BeTrue(), "bin.dat must be in the inventory")
+		Expect(bin.Additions).To(Equal(0))
+	})
+})

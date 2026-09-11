@@ -35,6 +35,14 @@ type FunnelResult struct {
 	// execution prompt surfaces it as a fail-closed condition so a review can
 	// never silently approve as though the mechanical pass had succeeded.
 	FailDetail string
+	// ChangedFiles is the PR's changed-file inventory (path + added lines)
+	// computed against the same resolved base the changed-file scan uses. Nil
+	// when the inventory could not be computed.
+	ChangedFiles []ChangedFile
+	// InventoryDetail is non-empty when the added-line counts could not be
+	// computed; the execution step then skips chunking and runs one unscoped
+	// review (today's behavior).
+	InventoryDetail string
 }
 
 //counterfeiter:generate -o ../mocks/funnel-runner.go --fake-name FunnelRunner . FunnelRunner
@@ -96,11 +104,12 @@ func (r *funnelRunner) Run(
 	if preambleDetail != "" {
 		return FunnelResult{Ran: false, FailDetail: preambleDetail}, nil
 	}
+	// Additive inventory for the chunked-review path: a failure here must never
+	// fail the funnel closed — the review still runs, just unscoped.
+	inventory, inventoryDetail := r.changedFileInventory(ctx, worktreePath, resolved, files)
+
 	if len(files) == 0 {
-		return FunnelResult{
-			Ran:          true,
-			FindingsJSON: `{"stats":{"yamls_run":0,"findings_count":0,"elapsed_ms":0},"findings_by_owner":{},"errors":[]}`,
-		}, nil
+		return emptyFindingsResult(inventory, inventoryDetail), nil
 	}
 
 	args := append([]string{worktreePath}, files...)
@@ -167,7 +176,62 @@ func (r *funnelRunner) Run(
 		return FunnelResult{Ran: false, FailDetail: detail}, nil
 	}
 	glog.Infof("funnel diff-anchor kept findings over files=%d", len(files))
-	return FunnelResult{Ran: true, FindingsJSON: neutralizeCodeFences(filtered)}, nil
+	return FunnelResult{
+		Ran:             true,
+		FindingsJSON:    neutralizeCodeFences(filtered),
+		ChangedFiles:    inventory,
+		InventoryDetail: inventoryDetail,
+	}, nil
+}
+
+// emptyFindingsResult is the Ran=true result for a PR with no changed files:
+// an empty findings object plus the (empty) changed-file inventory.
+func emptyFindingsResult(inventory []ChangedFile, inventoryDetail string) FunnelResult {
+	return FunnelResult{
+		Ran:             true,
+		FindingsJSON:    `{"stats":{"yamls_run":0,"findings_count":0,"elapsed_ms":0},"findings_by_owner":{},"errors":[]}`,
+		ChangedFiles:    inventory,
+		InventoryDetail: inventoryDetail,
+	}
+}
+
+// changedFileInventory returns one ChangedFile per entry of files (the
+// funnel's changed-file list) carrying the added-line count from
+// `git diff --numstat <resolvedBase>...HEAD`. Binary entries (`-`) count 0;
+// a path absent from the numstat output counts 0 (including a rename entry
+// whose `old => new` form does not match the changed-file path — the fallback
+// only defers chunking). A non-empty detail means the numstat call failed and
+// the caller must skip chunking (the funnel result itself stays Ran=true — the
+// review still runs, just unscoped).
+func (r *funnelRunner) changedFileInventory(
+	ctx context.Context,
+	worktreePath string,
+	resolvedBase string,
+	files []string,
+) ([]ChangedFile, string) {
+	out, err := r.gitOutput(ctx, worktreePath, "diff", "--numstat", resolvedBase+"...HEAD")
+	if err != nil {
+		return nil, "could not compute added-line counts for base_ref " +
+			resolvedBase + ": " + err.Error()
+	}
+
+	additions := make(map[string]int, len(files))
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		path, count := parseNumstatAdditions(line)
+		if path == "" {
+			continue
+		}
+		additions[path] = count
+	}
+
+	inventory := make([]ChangedFile, 0, len(files))
+	for _, f := range files {
+		inventory = append(inventory, ChangedFile{Path: f, Additions: additions[f]})
+	}
+	return inventory, ""
 }
 
 // neutralizeCodeFences replaces any run of three-or-more backticks with a

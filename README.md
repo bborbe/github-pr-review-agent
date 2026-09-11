@@ -46,6 +46,9 @@ Env-driven (Kubernetes) — key variables:
 | `BOT_GITHUB_LOGIN` | The App's bot login, used to detect its own prior reviews |
 | `REVIEW_MODE` | Review depth (e.g. `selector`) |
 | `REVIEW_MAX_DURATION` | Soft time budget per Claude phase run (default `25m`, floor `60s`); an overrun routes the phase to `human_review` with a budget-naming message and salvages any streamed partial into the task's `## Salvage` section (never a retry, never posted to GitHub); keep below the K8s Job `ActiveDeadlineSeconds` |
+| `REVIEW_CHUNK_ENGAGE_ADDITIONS` | Total reviewable added lines above which a PR is reviewed in chunks (default `500`, must be ≥ 1) |
+| `REVIEW_CHUNK_MAX_ADDITIONS` | Maximum added lines per review chunk (default `300`, must be ≥ 1) |
+| `REVIEW_CHUNK_MAX_FILES` | Maximum changed files per review chunk (default `15`, must be ≥ 1) |
 | `BITBUCKET_TOKEN` | Bitbucket Server bearer token (Bitbucket PRs only) |
 
 The target repo's `.maintainer.yaml` (`prReviewer.autoApprove`) is read from
