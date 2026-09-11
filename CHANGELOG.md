@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.10.1
 
 - test: add the `bborbe/dark-factory#86` geometry as a second fixture and budget-keyed row pair in the unverified-concerns table — a clean `approve` carrying one benign `not-verified` concern (Docker Hub image availability) alongside two `not-an-issue` concerns must stand on a short run and fail closed on a budget-heavy one
 - docs: correct three stale evidence commands in spec 004 — AC 10's review selector named the *prod* bot login on a dev-stage check, AC 11's pod selector (`-l app=pr-reviewer-agent`) matched no pods at all, and AC 8's CHANGELOG grep was scoped to `## Unreleased`, which stops existing the moment the release cuts
