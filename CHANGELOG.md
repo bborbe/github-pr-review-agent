@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: key the unverified-concerns fail-close gate on the run's elapsed time against the soft budget (≥0.8 consumed) instead of on concern prose — a `not-verified` concern on a run that finished well inside its budget is provably a mislabel and no longer demotes a clean `approve` to `CHANGES_REQUESTED` (2026-09-10 bborbe/nuke#216, review_id 5172635280), a budget-heavy run that left concerns unexamined still fails closed, and the two prose-matching regexes (`mustTierBlockerPattern`, `benignVerificationGapPattern`) are deleted so no pattern matches concern prose anywhere in the demotion path; `runWithSoftBudget` now returns the run's elapsed wall-clock time and the model-facing schema drops the "explains the gap as benign" escape hatch
+
 ## v0.9.0
 
 - feat: diff-anchor the mechanical funnel findings — the ast-grep findings injected into the execution prompt are now filtered to the exact lines a PR changed (basename match plus 0-based-to-1-based line-in-range against `git diff --unified=0` hunks), so pre-existing debt on untouched lines never reaches the model, never blocks, and costs no review tokens; a diff that introduces a genuine defect still surfaces it; any failure to compute the changed lines fails closed (`Ran: false`), so a broken filter can never silently un-block a diff

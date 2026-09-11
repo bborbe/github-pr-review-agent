@@ -140,9 +140,12 @@ const timeBudgetFooter = "---\n\n" +
 	"- `not-verified` — the time budget stopped you before you could examine it\n\n" +
 	"The values are mutually exclusive: a concern you examined is `not-an-issue`, " +
 	"never `not-verified` — `not-verified` means only that you never looked at it.\n\n" +
-	"A concern listed as `not-verified` means the review is incomplete: the verdict " +
-	"will be fail-closed to request-changes and the partial output is salvaged for a " +
-	"human. Never silently drop a concern because investigation ended.\n\n"
+	"A concern listed as `not-verified` means you stopped before examining it, so the " +
+	"review is incomplete: an `approve` carrying one fail-closes to request-changes " +
+	"when this run consumed its time budget. Do not try to argue your way out of the " +
+	"disposition with wording — the gate reads the disposition field, never the " +
+	"detail prose; pick the disposition that is true. Never silently drop a concern " +
+	"because investigation ended.\n\n"
 
 // BuildExecutionInstructions assembles the execution-phase prompt by reading
 // the /coding:pr-review plugin file at runtime, stripping its YAML frontmatter,

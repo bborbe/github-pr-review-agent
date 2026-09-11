@@ -7,6 +7,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"time"
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
@@ -14,25 +15,31 @@ import (
 )
 
 // runWithSoftBudget runs the claude runner under a context whose deadline is
-// the soft REVIEW_MAX_DURATION budget. Returns the run result/error plus
-// whether the budget expired — detected PRECISELY from the run context's own
-// deadline (runCtx.Err() == context.DeadlineExceeded), never inferred from the
-// returned error. A non-expired runner error (crash, network, or an error that
-// merely wraps context.DeadlineExceeded without the deadline firing) keeps the
-// existing failed/controller-retry path.
+// the soft REVIEW_MAX_DURATION budget. Returns the run result/error, whether
+// the budget expired, and the elapsed wall-clock time of the run. Expiry is
+// detected PRECISELY from the run context's own deadline (runCtx.Err() ==
+// context.DeadlineExceeded), never inferred from the returned error — a
+// non-expired runner error (crash, network, or an error that merely wraps
+// context.DeadlineExceeded without the deadline firing) keeps the existing
+// failed/controller-retry path. The elapsed is measured around runner.Run with
+// the same start := time.Now() / time.Since(start) shape pkg/funnel.go uses
+// and is what the execution concerns gate keys its demotion decision on
+// (DemotesUnverifiedConcerns compares it against the soft budget).
 //
-//nolint:revive // error-return: the (result, error, expired) triple is the deliberate budget contract.
+//nolint:revive,staticcheck // error-return: the (result, error, expired, elapsed) quadruple is the deliberate budget contract (ST1008 tolerates a trailing bool but not a fourth value).
 func runWithSoftBudget(
 	ctx context.Context,
 	runner claudelib.ClaudeRunner,
 	prompt string,
 	maxDuration libtime.Duration,
-) (*claudelib.ClaudeResult, error, bool) {
+) (*claudelib.ClaudeResult, error, bool, time.Duration) {
 	runCtx, cancel := context.WithTimeout(ctx, maxDuration.Duration())
 	defer cancel()
+	start := time.Now()
 	result, err := runner.Run(runCtx, prompt)
+	elapsed := time.Since(start)
 	expired := runCtx.Err() == context.DeadlineExceeded
-	return result, err, expired
+	return result, err, expired, elapsed
 }
 
 // budgetExpiredResult builds the bounded-outcome routing for a budget-terminated

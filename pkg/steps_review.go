@@ -121,7 +121,9 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 
 	prompt := claudelib.BuildPrompt(s.instructions.String(), envContext, taskContent)
 
-	runResult, runErr, budgetExpired := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
+	// The elapsed is discarded here: the ai-review phase posts no review and has
+	// no concerns gate — only the execution phase keys on the budget fraction.
+	runResult, runErr, budgetExpired, _ := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
 	if runErr != nil {
 		// Budget expiry (fired deadline) → human_review before ## Verdict/post; never retried.
 		// The streamed partial (if any) is salvaged under ## Salvage; never written to ## Verdict.

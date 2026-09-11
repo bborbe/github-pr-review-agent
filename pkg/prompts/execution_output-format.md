@@ -61,13 +61,14 @@ Field rules:
     dependency-graph check) and CI/precommit is the verifier, that is STILL
     `not-an-issue`: write `detail` naming the verifier (e.g. "CI precommit
     runs go mod tidy/verify + build") that will exercise it.
-- A concern listed as `not-verified` fail-closes an `approve` to
-  `request-changes` ONLY when it is a MUST-tier / load-bearing blocker (the
-  merge depends on verifying it — "must verify", "will never fire",
-  "blocking") or a bare unexamined admission with no explanation. A
-  `not-verified` concern that explains the gap as benign — e.g. the
-  toolchain is unavailable in the sandbox but the diff is otherwise clean and
-  CI/precommit is the gate — must NOT fail-close: disposition it
-  `not-an-issue` with the verifier named in `detail`; the CI gate decides.
+- A concern listed as `not-verified` means the run stopped before you
+  examined it. An `approve` carrying one fail-closes to `request-changes`
+  when the run consumed its time budget — an incomplete review must never
+  green-light a PR. Do NOT argue your way out of the disposition with
+  wording: the gate reads the `disposition` field, never the `detail` prose,
+  so no explanation can pass a genuine `not-verified`. Pick the disposition
+  that is true — a concern you examined is `not-an-issue` even when the
+  sandbox could not complete the verification (name the verifier in
+  `detail`); only a concern you never examined is `not-verified`.
 
 Output the JSON inside a fenced code block (```json ... ```). No prose before or after the fence. The fence renders the JSON readably in Obsidian and other markdown viewers; downstream consumers strip the fence before parsing.
