@@ -86,11 +86,11 @@ Operator-side: detect via `gh pr view <n> --json reviewDecision,reviews`, re-run
 - [ ] **Post-Deploy (Rung-2):** on a dev-allowlist PR (`github.com/bborbe/go-skeleton`) whose review yields `"verdict": "approve"` with every concern dispositioned `addressed` or `not-an-issue`, the posted GitHub review state is `APPROVED` — evidence: `gh pr view <n> --repo bborbe/go-skeleton --json reviews --jq '[.reviews[] | select(.author.login=="ben-s-pull-request-reviewer-dev")] | last | .state'` returns `APPROVED`, and `gh pr view <n> --repo bborbe/go-skeleton --json mergeStateStatus` is not `BLOCKED`.
   - The **dev** stage posts under its own identity, `ben-s-pull-request-reviewer-dev`; the bare `ben-s-pull-request-reviewer` is the *prod* login and returns empty on this repo. Corrected 2026-09-11 after the original selector was found to return empty on the very repo the AC names (verified on `bborbe/go-skeleton#111`).
   - `deploy_check:` `kubectlnukedev -n dev get config.agent.benjamin-borbe.de github-pr-review-agent -o jsonpath='{.spec.image}' | awk -F: '{print $NF}'`
-  - `deploy_target:` `$(git fetch --tags -q; git describe --tags --abbrev=0 origin/master)`
+  - `deploy_target:` `v0.10.0` — the release carrying the fix (`5b566b7`, merged `3f73c58d`), **not** `git describe --tags --abbrev=0`. On this `autoRelease: true` repo the newest tag advances on *every* merge, so the precondition re-breaks on any commit — including test-only ones — and the gate can never be closed on. The claim is "the fixed binary produced this review"; `v0.10.0` establishes it, "newest tag" only proxies it. Corrected 2026-09-11 after the verifier refused at Phase 0.5 against `v0.10.1`, cut one minute after the PR #39 merge with no production-code delta.
 - [ ] **Post-Deploy (Rung-3):** the same check on a prod-allowlist PR. Prod's allowlist is `github.com/bborbe/*,!github.com/bborbe/go-skeleton` — **`go-skeleton` is explicitly excluded from prod**, so the Rung-2 repo cannot be reused here or the review is silently skipped; pick another `bborbe/*` repo. Evidence: newest bot review `state` is `APPROVED`; and that Job's pod log contains 0 occurrences of the fail-closed reason — `kubectlnukeprod -n prod logs $(kubectlnukeprod -n prod get pods --sort-by=.metadata.creationTimestamp -l agent.benjamin-borbe.de/assignee=pr-reviewer-agent -o name | tail -1) --since=15m | grep -c 'concerns not verified'` returns 0.
   - `-l app=pr-reviewer-agent` matches **nothing** — the Job pods carry `app=agent` plus `agent.benjamin-borbe.de/assignee=pr-reviewer-agent`. Corrected 2026-09-11; the original selector yields an empty pod list, so the `kubectl logs` argument collapses and the command cannot produce evidence either way.
   - `deploy_check:` `kubectlnukeprod -n prod get config.agent.benjamin-borbe.de github-pr-review-agent -o jsonpath='{.spec.image}' | awk -F: '{print $NF}'`
-  - `deploy_target:` `$(git fetch --tags -q; git describe --tags --abbrev=0 origin/master)`
+  - `deploy_target:` `v0.10.0` — same correction as Rung-2, same reason: the newest tag is a moving target on an `autoRelease: true` repo and re-breaks the precondition on any merge. `v0.10.0` is the release carrying the fix (`5b566b7`, merged `3f73c58d`).
 
 # Verification
 
@@ -168,3 +168,16 @@ Prompts should be generated in this order — each row is a single prompt with a
 | — | Operator ladder (no prompt — runs on the host after merge) | — | 10, 11 | prompt 3 merged + deployed |
 
 Rationale: the schema defines the contract, the gate consumes it, the tests lock it. Splitting schema from gate keeps each prompt's research surface to one file pair; the ladder is operator-executable and deliberately carries no prompt.
+
+## Verification Result
+
+**Verified:** 2026-09-11T16:57:05Z (HEAD 55ebca9)
+**Binary:** deployed `github-pr-review-agent:v0.10.0` — dev + prod `deploy_check` both read `v0.10.0` (release carrying the fix `5b566b7`, merge `3f73c58d`)
+**Scenario:** Rung-2/Rung-3 replay on the deployed v0.10.0 stages + regression suite, structural greps and precommit at HEAD
+**Evidence:**
+- dev Rung-2: `gh pr view 111 --repo bborbe/go-skeleton --json reviews --jq '[.reviews[] | select(.author.login=="ben-s-pull-request-reviewer-dev")] | last | .state'` → `APPROVED` (14:07:35Z, after the 13:00:41Z dev config apply); body carries `"disposition": "not-an-issue"`; `mergeStateStatus` `UNKNOWN` ≠ `BLOCKED` (PR `MERGED`, `reviewDecision` `APPROVED`)
+- prod Rung-3: newest bot review on `bborbe/nuke#223` → `APPROVED` (review `5179247817`, 13:37:08Z, after the 13:06:29Z prod config apply); vault diagnostics `outcome: success`; ai_review `pass`
+- Rung-3 log sub-check inconclusive, not failed (spec Failure Modes: pod GC'd before collection; cluster-wide `-l agent.benjamin-borbe.de/assignee=pr-reviewer-agent` empty). Posted `APPROVED` entails no fail-closed line — it fires only on request-changes + fail-closed reason (`pkg/steps_checkout_execution.go:440`)
+- structural: schema greps 8/6/6/5; footer `not-an-issue`=2, `mutually exclusive`=2; prose-pattern grep = 0 lines; `MustCompile` pkg/verdict.go = 1; docs `BRANCH=master`=2, `values-prod.yaml`=1, `verified against bborbe/nuke`=1
+- `go test ./pkg/... -count=1` exit 0 (incident pair, prose-inert pairs, spec-002 rows, legacy rows green); `make precommit` exit 0; CHANGELOG `changes_requested` entries = 8
+**Verdict:** PASS
