@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -1295,6 +1297,11 @@ complete review body
 	})
 })
 
+// chunkHeadingPattern matches the one "### Chunk <i>/<n>" section heading
+// MergeChunkReviews emits per chunk, so a merged body's section count is
+// countable exactly.
+var chunkHeadingPattern = regexp.MustCompile(`(?m)^### Chunk `)
+
 var _ = Describe("checkoutExecutionStep chunked review", func() {
 	var (
 		ctx         context.Context
@@ -1325,6 +1332,60 @@ var _ = Describe("checkoutExecutionStep chunked review", func() {
 	const chunkApproveWithUnverifiedConcern = "chunk body\n\n```json\n" +
 		`{"verdict":"approve","reason":"ok","concerns_addressed":[{"concern":"c1","disposition":"not-verified"}]}` +
 		"\n```\n"
+
+	// approveChunkOutput and requestChangesChunkOutput are minimal valid chunk
+	// review outputs — one parseable verdict block each.
+	const approveChunkOutput = "chunk body\n\n```json\n" +
+		`{"verdict":"approve","reason":"ok"}` + "\n```\n"
+	const requestChangesChunkOutput = "chunk body\n\n```json\n" +
+		`{"verdict":"request-changes","reason":"bad"}` + "\n```\n"
+
+	// thirtyFileFunnel is a 30-file inventory of 20 added lines each. 600 added
+	// lines is above the 500 engage threshold and the 300-line / 15-file bounds
+	// split the path-sorted files into exactly two chunks: f00–f14 and f15–f29.
+	// The findings straddle both chunks (f00.go, f20.go) so each chunk's prompt
+	// can be checked for carrying only its own filtered findings.
+	thirtyFileFunnel := func() pkg.FunnelResult {
+		files := make([]pkg.ChangedFile, 0, 30)
+		for i := 0; i < 30; i++ {
+			files = append(
+				files,
+				pkg.ChangedFile{Path: fmt.Sprintf("f%02d.go", i), Additions: 20},
+			)
+		}
+		return pkg.FunnelResult{
+			Ran: true,
+			FindingsJSON: `{"stats":{"yamls_run":1,"findings_count":2,"elapsed_ms":1},` +
+				`"findings_by_owner":{"go-error-assistant":[` +
+				`{"rule_id":"rule-chunk1","file":"f00.go","line":3},` +
+				`{"rule_id":"rule-chunk2","file":"f20.go","line":5}]},` +
+				`"errors":[]}`,
+			ChangedFiles: files,
+		}
+	}
+
+	// belowThresholdFunnel is 500 added lines over two files — at (not above)
+	// the 500 engage threshold, so the partition yields exactly one chunk and
+	// the review runs once, unscoped. Its findings span both files.
+	belowThresholdFunnel := func() pkg.FunnelResult {
+		return pkg.FunnelResult{
+			Ran: true,
+			FindingsJSON: `{"stats":{"yamls_run":1,"findings_count":2,"elapsed_ms":1},` +
+				`"findings_by_owner":{"go-error-assistant":[` +
+				`{"rule_id":"rule-chunk1","file":"a.go","line":3},` +
+				`{"rule_id":"rule-chunk2","file":"b.go","line":5}]},` +
+				`"errors":[]}`,
+			ChangedFiles: []pkg.ChangedFile{
+				{Path: "a.go", Additions: 300},
+				{Path: "b.go", Additions: 200},
+			},
+		}
+	}
+
+	// chunkHeadingCount counts the merged body's per-chunk section headings.
+	chunkHeadingCount := func(body string) int {
+		return len(chunkHeadingPattern.FindAllString(body, -1))
+	}
 
 	buildMD := func() *agentlib.Markdown {
 		md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1547,6 +1608,192 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(section.Body).To(ContainSubstring("not-verified"))
 
 		// The summed elapsed demoted the merged approve to request-changes.
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
+	})
+
+	It("invokes the runner once per chunk, with the clone and funnel each running once", func() {
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(thirtyFileFunnel(), nil)
+
+		step := newStep(fakeRunner, nil, funnelRunner, libtime.Duration(25*time.Minute))
+
+		result, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		// Two chunks, two runner invocations — no extra synthesis invocation.
+		Expect(fakeRunner.RunCallCount()).To(Equal(2))
+		// The clone and the mechanical funnel run once per review, never per chunk.
+		Expect(repoManager.EnsureWorktreeCallCount()).To(Equal(1))
+		Expect(funnelRunner.RunCallCount()).To(Equal(1))
+	})
+
+	It("scopes each chunk's prompt to its own files and its own funnel findings", func() {
+		var prompts []string
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			prompts = append(prompts, prompt)
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(thirtyFileFunnel(), nil)
+
+		step := newStep(fakeRunner, nil, funnelRunner, libtime.Duration(25*time.Minute))
+
+		_, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(prompts).To(HaveLen(2))
+
+		// Each prompt carries the chunk-scope preamble naming its own chunk.
+		Expect(prompts[0]).To(ContainSubstring("## Chunk scope"))
+		Expect(prompts[0]).To(ContainSubstring("chunk 1/2"))
+		Expect(prompts[1]).To(ContainSubstring("## Chunk scope"))
+		Expect(prompts[1]).To(ContainSubstring("chunk 2/2"))
+
+		// Chunk 1 owns f00–f14, chunk 2 owns f15–f29; neither prompt names a file
+		// that belongs only to the other chunk.
+		for i := 0; i < 15; i++ {
+			Expect(prompts[0]).To(ContainSubstring(fmt.Sprintf("- f%02d.go", i)))
+		}
+		for i := 15; i < 30; i++ {
+			Expect(prompts[0]).NotTo(ContainSubstring(fmt.Sprintf("f%02d.go", i)))
+			Expect(prompts[1]).To(ContainSubstring(fmt.Sprintf("- f%02d.go", i)))
+		}
+		for i := 0; i < 15; i++ {
+			Expect(prompts[1]).NotTo(ContainSubstring(fmt.Sprintf("f%02d.go", i)))
+		}
+
+		// Each prompt carries only its chunk's filtered findings (count 1), never
+		// the whole-review findings (count 2).
+		Expect(prompts[0]).To(ContainSubstring("rule-chunk1"))
+		Expect(prompts[0]).NotTo(ContainSubstring("rule-chunk2"))
+		Expect(prompts[0]).To(ContainSubstring(`"findings_count":1`))
+		Expect(prompts[0]).NotTo(ContainSubstring(`"findings_count":2`))
+		Expect(prompts[1]).To(ContainSubstring("rule-chunk2"))
+		Expect(prompts[1]).NotTo(ContainSubstring("rule-chunk1"))
+		Expect(prompts[1]).To(ContainSubstring(`"findings_count":1`))
+		Expect(prompts[1]).NotTo(ContainSubstring(`"findings_count":2`))
+	})
+
+	It("runs once with the unscoped prompt at or below the engage threshold", func() {
+		var prompts []string
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			prompts = append(prompts, prompt)
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(belowThresholdFunnel(), nil)
+
+		step := newStep(fakeRunner, nil, funnelRunner, libtime.Duration(25*time.Minute))
+
+		result, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		// Exactly one run, with no chunk-scope preamble and the unfiltered findings.
+		Expect(fakeRunner.RunCallCount()).To(Equal(1))
+		Expect(prompts).To(HaveLen(1))
+		Expect(prompts[0]).NotTo(ContainSubstring("## Chunk scope"))
+		Expect(prompts[0]).To(ContainSubstring(`"findings_count":2`))
+
+		// Identity: the below-threshold prompt is byte-identical to the prompt the
+		// forced-unscoped path (inventory unavailable) produces for the same run.
+		unscoped := belowThresholdFunnel()
+		unscoped.InventoryDetail = "could not compute added-line counts for base_ref main"
+		var unscopedPrompts []string
+		unscopedRunner := &mocks.ClaudeRunnerMock{}
+		unscopedRunner.RunStub = func(
+			_ context.Context,
+			prompt string,
+		) (*claudelib.ClaudeResult, error) {
+			unscopedPrompts = append(unscopedPrompts, prompt)
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		unscopedFunnel := &mocks.FunnelRunner{}
+		unscopedFunnel.RunReturns(unscoped, nil)
+		unscopedStep := newStep(
+			unscopedRunner,
+			nil,
+			unscopedFunnel,
+			libtime.Duration(25*time.Minute),
+		)
+
+		_, err = unscopedStep.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(unscopedPrompts).To(HaveLen(1))
+		Expect(prompts[0]).To(Equal(unscopedPrompts[0]))
+	})
+
+	It("merges two approving chunks into one posted review with a single verdict block", func() {
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(thirtyFileFunnel(), nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		step := newStep(fakeRunner, fakePoster, funnelRunner, libtime.Duration(25*time.Minute))
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		// One section per chunk, exactly one verdict block, parsing to approve.
+		section, exists := md.FindSection("## Review")
+		Expect(exists).To(BeTrue())
+		Expect(chunkHeadingCount(section.Body)).To(Equal(2))
+		Expect(strings.Count(section.Body, "```json")).To(Equal(1))
+		Expect(pkg.ParseVerdict(section.Body).Verdict).To(Equal(pkg.VerdictApprove))
+
+		// Posted exactly once through the unchanged posting path, carrying the
+		// merged body (verdict block stripped) and the merged verdict.
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictApprove))
+		Expect(postReq.Summary).To(ContainSubstring("### Chunk 1/2"))
+		Expect(postReq.Summary).To(ContainSubstring("### Chunk 2/2"))
+		Expect(strings.Count(postReq.Summary, "```json")).To(Equal(0))
+	})
+
+	It("merges a request-changes chunk into a posted request-changes verdict", func() {
+		call := 0
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			call++
+			if call == 1 {
+				return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+			}
+			return &claudelib.ClaudeResult{Result: requestChangesChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(thirtyFileFunnel(), nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		step := newStep(fakeRunner, fakePoster, funnelRunner, libtime.Duration(25*time.Minute))
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		// Worst-wins: the single merged verdict block parses to request-changes.
+		section, exists := md.FindSection("## Review")
+		Expect(exists).To(BeTrue())
+		Expect(chunkHeadingCount(section.Body)).To(Equal(2))
+		Expect(strings.Count(section.Body, "```json")).To(Equal(1))
+		Expect(pkg.ParseVerdict(section.Body).Verdict).To(Equal(pkg.VerdictRequestChanges))
+
 		Expect(fakePoster.PostCallCount()).To(Equal(1))
 		_, postReq := fakePoster.PostArgsForCall(0)
 		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))

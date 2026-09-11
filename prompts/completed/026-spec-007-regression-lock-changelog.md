@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [007-chunked-review-for-oversized-prs]
+summary: 'Locked the chunked review loop with five end-to-end fake-runner integration rows (runner call count = n, clone+funnel once, per-chunk prompt scoping, below-threshold unscoped identity, merged body with one verdict block posted once) and added the chunked-review bullet to CHANGELOG.md''s existing ## Unreleased section; make ROOTDIR=/workspace precommit exits 0.'
+execution_id: github-pr-review-agent-exec-026-spec-007-regression-lock-changelog
+dark-factory-version: dev
 created: "2026-09-11T22:35:00Z"
 queued: "2026-09-11T20:03:46Z"
+started: "2026-09-11T20:27:38Z"
+completed: "2026-09-11T20:34:14Z"
 branch: dark-factory/chunked-review-for-oversized-prs
 ---
 
