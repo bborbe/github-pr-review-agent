@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-09-11T19:39:07Z"
 generating: "2026-09-11T19:41:14Z"
 prompted: "2026-09-11T19:52:00Z"
 verifying: "2026-09-11T20:34:14Z"
+completed: "2026-09-12T06:10:58Z"
 branch: dark-factory/chunked-review-for-oversized-prs
 ---
 
