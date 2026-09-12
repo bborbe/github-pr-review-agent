@@ -1,8 +1,10 @@
 ---
-status: prompted
+status: completed
 approved: "2026-09-11T19:39:07Z"
 generating: "2026-09-11T19:41:14Z"
 prompted: "2026-09-11T19:52:00Z"
+verifying: "2026-09-11T20:34:14Z"
+completed: "2026-09-12T06:10:58Z"
 branch: dark-factory/chunked-review-for-oversized-prs
 ---
 
@@ -129,3 +131,19 @@ Rationale: prompt 1 lands the pure, unit-testable core (partition, gate, merge) 
 ## Do-Nothing Option
 
 Keep the single-run path. Every PR the watcher lets through gets one review pass over the whole diff, so the reviewer's context window and the 25m budget remain the binding constraint: PRs near the ceiling get a single shallow or budget-expired run, and PRs above the park ceiling stay unreviewed by the bot — 112 parks in 17 days, 77 of the resolved ones merged without the review ever running. The park ceiling cannot be relaxed safely while the agent has no way to review a large diff in bounded pieces, so the park stays the first answer to any big PR. The current approach is not acceptable.
+
+## Verification Result
+
+**Verified:** 2026-09-12T06:10:24Z (HEAD 932f070)
+**Binary:** installed `dark-factory` (spec targets `github.com/bborbe/github-pr-review-agent`, not dark-factory itself); deployed target `github-pr-review-agent:v0.11.0` on dev + prod
+**Scenario:** no scenario file (the spec declares none) — walked the spec's own Verification section: container checks at HEAD plus the Rung-2/Rung-3 deployed observation on the two live chunked review runs
+**Evidence:**
+- container: `go test ./pkg/... -count=1` exit 0; focused spec rows 44/44 green (partition table incl. both anchors, merge table, deadline math, findings filter, fake-runner chunk loop) + root env-knob rows 4/4 + funnel inventory row; `make precommit` exit 0; `grep -n 'review chunk' pkg/*.go` → 3 matches (steps_checkout_execution.go:240, 246, 370)
+- Rung-2 (dev): live config `docker.prod.nuke.benjamin-borbe.de:443/bborbe/github-pr-review-agent:v0.11.0`; `bborbe/go-skeleton#112` (739 added lines, 9 files, head 7c1093f4) posted a 3-chunk review — `### Chunk 1/3` / `2/3` / `3/3` plus one merged block `{"verdict":"approve","reason":"chunked review: all 3 chunks approved",…}`; bot `APPROVED` at 2026-09-11T22:51:12Z at the head, after the 22:17:11Z nuke v0.11.0 pin
+- Rung-3 (prod): live config `…:v0.11.0`; `bborbe/agent-task-controller#31` (767 added lines, 9 files, head cd9162d1) posted the same 3-chunk shape; bot `APPROVED` at 2026-09-11T23:22:14Z at the head, superseding the 2026-08-31 `CHANGES_REQUESTED`
+- chunk-line pod-log sub-check inconclusive, not failed: both review Job pods GC'd before collection (NotFound; label selector empty; no log stack) — substituted the durable posted bodies, which carry the same `<i>/<n>` pairs (1/3, 2/3, 3/3) and the merged verdict, proving all three chunk runs completed and merged
+- partition re-derived from the PR file lists: prod chunk 1 = {CHANGELOG.md, main.go, mocks/redrive_sweep.go, pkg/metrics/metrics.go, pkg/redrive/redrive_suite_test.go} = 5 files / 238 additions, matching the reported `review chunk 1/3 files=5 additions=238`; `mocks/` inclusion is documented behavior (spec constraint: the agent does not subtract the watcher's `.reviewignore`)
+**Deviations:**
+- AC 6 literal grep `sed -n '/## Unreleased/,/## v/p' CHANGELOG.md | grep -ci 'chunk'` → 0 post-release (the v0.11.0 cut renamed the section — the stale-recipe class spec 004's AC 8 hit); requirement met: `## v0.11.0` names the change (3 entries)
+- AC 3: no unit row asserts the literal `review chunk <i>/<n> files=<F> additions=<A>` string (no test captures glog); the exact format is verified at the emission sites (`grep`, the spec's own prescribed check) plus the live 3-chunk bodies above
+**Verdict:** PASS
