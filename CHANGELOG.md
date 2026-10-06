@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- docs: Remove the dark-factory approval gate from this repo's `CLAUDE.md`. It contradicted the global `execution-phase-no-reask` carve-out and would have stopped every spec and prompt approval.
+
 ## v0.11.0
 
 - feat: wire the chunk core into the execution step — a PR whose `PartitionReviewChunks` reports more than one chunk is now reviewed one scoped pass per chunk, sequentially, each prompt naming its own files (code-fence-neutralized) and carrying only that chunk's funnel findings (`FilterFindingsByBasenames`); each chunk runs under its own deadline (`ChunkDeadline`: the earlier of the whole-review budget and an equal share of the remaining time with a 60s floor), a deadline-cut chunk salvages its partial under `## Salvage` naming the chunk and routes to `human_review` exactly as a whole-review budget expiry does, a non-deadline chunk error keeps the failed/controller-retry path and writes no review, and the chunk outputs merge deterministically into one `## Review` carrying one verdict (the worst of the chunk verdicts) posted through the unchanged posting path; the concerns gate is handed the SUM of the chunk runs' elapsed time, and below the threshold — or when the added-line counts could not be computed — the review still runs once, unscoped, with the clone and the mechanical funnel each running exactly once per review
