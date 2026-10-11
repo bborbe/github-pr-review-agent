@@ -655,7 +655,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 
 	// No-review gate — see noReviewResult for why this is keyed on
 	// IsNoReviewReason and not the wider isFailClosedReason set.
-	if skipResult, skip := noReviewResult(md, verdict, reviewBody, jobRunTime); skip {
+	if skipResult, skip := s.noReviewResult(md, verdict, reviewBody, jobRunTime); skip {
 		return skipResult, nil
 	}
 
@@ -721,7 +721,10 @@ func (s *checkoutExecutionStep) postAndRoute(
 // a new posting path and mapVerdictAndSummary must never emit COMMENT (spec 060).
 // The skip is not silent: the diagnostic block and the human_review routing keep a
 // no-review run visible to the operator.
-func noReviewResult(
+// A method rather than a package function, matching its sibling guard
+// resolvePRInfo directly below — both are "decide something about this run, or
+// return an early result from postAndRoute".
+func (s *checkoutExecutionStep) noReviewResult(
 	md *agentlib.Markdown,
 	verdict Result,
 	reviewBody string,
