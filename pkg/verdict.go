@@ -209,7 +209,7 @@ func ParseVerdict(reviewText string) Result {
 	if reviewText == "" {
 		return Result{
 			Verdict: VerdictRequestChanges,
-			Reason:  "empty review text",
+			Reason:  ReasonEmptyReviewText,
 		}
 	}
 
@@ -217,7 +217,7 @@ func ParseVerdict(reviewText string) Result {
 	if !ok {
 		return Result{
 			Verdict: VerdictRequestChanges,
-			Reason:  "no verdict block",
+			Reason:  ReasonNoVerdictBlock,
 		}
 	}
 
@@ -244,6 +244,73 @@ func ParseVerdict(reviewText string) Result {
 	default:
 		return Result{Verdict: VerdictRequestChanges, Reason: "unknown verdict: " + jv.Verdict}
 	}
+}
+
+// ReasonNoVerdictBlock and ReasonEmptyReviewText are the two ParseVerdict
+// fail-closed reasons that mean the run produced NO review at all. They are the
+// crash signature: a run whose result carries no verdict block (for example a
+// tool-error marker such as `(tool 'WebFetch' unavailable)`) fail-closes to
+// request-changes, and posting that would publish a blocking review the model
+// never wrote — indistinguishable from a real change request, and it blocks the
+// merge exactly like one (bborbe/nuke#446).
+//
+// They are deliberately separated from the other fail-closed reasons: those are
+// legitimate code-side demotions whose review MUST still post. The string values
+// are compared literally by ParseVerdict and isFailClosedReason and must not change.
+const (
+	ReasonNoVerdictBlock  = "no verdict block"
+	ReasonEmptyReviewText = "empty review text"
+)
+
+// IsNoReviewReason reports whether a ParseVerdict fail-closed result means the
+// run produced no review at all — the only case in which the post may be
+// suppressed.
+//
+// `empty review text` always qualifies: there is no review.
+//
+// `no verdict block` does NOT qualify on its own, and this is the subtle half.
+// ParseVerdict returns that reason both for a tool-error marker (the crash
+// signature, `(tool 'WebFetch' unavailable)`) AND for a real review whose model
+// omitted the JSON verdict block — for example a body whose only content is a
+// `### Must Fix` section. The second is a review the model DID write: before
+// this gate existed it posted its fail-closed request-changes, which is the
+// correct outcome for a review that found must-fix issues. Suppressing it would
+// hide real blocking findings, a worse failure than the one being fixed. So the
+// body is consulted: only a body with no review content at all is suppressed.
+//
+// The discriminating marker is a markdown heading. The review rubric is
+// heading-structured (`## Review`, `### Must Fix`, `## Blocking`) and the
+// documented fallback verdict path is a section-header scan, so a heading is
+// what a real review has and a tool-error marker does not.
+func IsNoReviewReason(reason, reviewBody string) bool {
+	if reason == ReasonEmptyReviewText {
+		return true
+	}
+	if reason != ReasonNoVerdictBlock {
+		return false
+	}
+	return !hasReviewContent(reviewBody)
+}
+
+// hasReviewContent reports whether a review body carries anything a reader would
+// recognise as a review, i.e. at least one ATX markdown heading. A bare
+// tool-error marker such as `(tool 'WebFetch' unavailable)` has none.
+func hasReviewContent(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		hashes := 0
+		for hashes < len(trimmed) && trimmed[hashes] == '#' {
+			hashes++
+		}
+		// ATX heading: 1-6 '#', then whitespace or end of line. A longer run of
+		// '#' is not a heading, and '#'-prefixed prose without a space is not
+		// one either — neither should count as review content.
+		if hashes >= 1 && hashes <= 6 &&
+			(hashes == len(trimmed) || trimmed[hashes] == ' ' || trimmed[hashes] == '\t') {
+			return true
+		}
+	}
+	return false
 }
 
 // ReasonFunnelDidNotRun is the fail-closed Result.Reason set when the Go-side
@@ -424,8 +491,8 @@ func ApplyBlockingGate(verdict Result, reviewText string) Result {
 //
 // Keep the literals/prefixes in sync with the Reason strings ParseVerdict emits.
 func isFailClosedReason(reason string) bool {
-	return reason == "empty review text" ||
-		reason == "no verdict block" ||
+	return reason == ReasonEmptyReviewText ||
+		reason == ReasonNoVerdictBlock ||
 		reason == ReasonFunnelDidNotRun ||
 		reason == ReasonConcernsNotVerified ||
 		reason == ReasonBlockingFindingPresent ||

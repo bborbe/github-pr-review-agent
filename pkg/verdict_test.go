@@ -972,3 +972,63 @@ var _ = Describe("Blocking verdict roll-up (spec-005)", func() {
 		),
 	)
 })
+
+var _ = Describe("IsNoReviewReason", func() {
+	// The no-review gate suppresses the post only when the run produced no review
+	// at all. Every other fail-closed reason is a legitimate code-side demotion of
+	// a review the model DID write and must keep posting.
+	//
+	// `no verdict block` is the subtle one: ParseVerdict returns it BOTH for a
+	// tool-error marker and for a real review whose model omitted the JSON block.
+	// Only the former may be suppressed — suppressing the latter hides real
+	// blocking findings, which is worse than the bug the gate fixes.
+	DescribeTable("classifies a fail-closed reason against its body",
+		func(reason, body string, expected bool) {
+			Expect(pkg.IsNoReviewReason(reason, body)).To(Equal(expected))
+		},
+		Entry("empty review text → true", pkg.ReasonEmptyReviewText, "", true),
+		Entry("no verdict block + tool-error marker body → true",
+			pkg.ReasonNoVerdictBlock, "(tool 'WebFetch' unavailable)", true),
+		Entry("no verdict block + whitespace-only body → true",
+			pkg.ReasonNoVerdictBlock, "   \n\t\n", true),
+		Entry("no verdict block + a Must Fix heading → false (regression guard)",
+			pkg.ReasonNoVerdictBlock,
+			"### Must Fix (Critical)\n\n- Security issue in authentication", false),
+		Entry("no verdict block + a Blocking heading → false",
+			pkg.ReasonNoVerdictBlock, "## Blocking\n\n- SQL injection vulnerability", false),
+		Entry("'#' without a following space is not a heading → true",
+			pkg.ReasonNoVerdictBlock, "#hashtag is not a heading", true),
+		Entry("funnel did not run → false", pkg.ReasonFunnelDidNotRun, "## Review\n\nprose", false),
+		Entry("concerns not verified → false",
+			pkg.ReasonConcernsNotVerified, "## Review\n\nprose", false),
+		Entry("blocking finding present → false",
+			pkg.ReasonBlockingFindingPresent, "## Review\n\nprose", false),
+		Entry("malformed JSON → false",
+			"malformed JSON: unexpected end of JSON input", "## Review\n\nprose", false),
+		Entry("unknown verdict → false", "unknown verdict: comment", "## Review\n\nprose", false),
+		Entry("model-authored reason → false", "looks good to me", "## Review\n\nprose", false),
+		Entry("empty reason → false", "", "", false),
+	)
+
+	It("agrees with the reasons ParseVerdict actually emits", func() {
+		// Guards the coupling: if ParseVerdict's literals drift from the exported
+		// constants, the gate silently stops firing.
+		Expect(pkg.IsNoReviewReason(pkg.ParseVerdict("").Reason, "")).To(BeTrue())
+
+		const crashBody = "(tool 'WebFetch' unavailable)"
+		crash := pkg.ParseVerdict(crashBody)
+		Expect(crash.Reason).To(Equal(pkg.ReasonNoVerdictBlock))
+		Expect(pkg.IsNoReviewReason(crash.Reason, crashBody)).To(BeTrue())
+
+		// The regression the gate must NOT cause: a real review whose model
+		// omitted the JSON verdict block parses to the same reason, and must
+		// still post its fail-closed request-changes.
+		const mustFixBody = "### Must Fix (Critical)\n\n- Security issue in authentication"
+		mustFixResult := pkg.ParseVerdict(mustFixBody)
+		Expect(mustFixResult.Reason).To(Equal(pkg.ReasonNoVerdictBlock))
+		Expect(pkg.IsNoReviewReason(mustFixResult.Reason, mustFixBody)).To(BeFalse())
+
+		approve := `{"verdict":"approve"}`
+		Expect(pkg.IsNoReviewReason(pkg.ParseVerdict(approve).Reason, approve)).To(BeFalse())
+	})
+})
