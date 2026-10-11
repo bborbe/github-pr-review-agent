@@ -21,6 +21,22 @@ COPY --from=build /main /main
 COPY agent/ /agent/
 ENV HOME=/home/claude
 ENV CLAUDE_CONFIG_DIR=/home/claude/.claude
+# Deny WebSearch/WebFetch for every session in this image (see
+# claude-config/settings.json). A vLLM-backed backend — the reviewer routes via
+# claude-code-router to seibert-vllm-external — rejects the `server_tool_use`
+# content block the CLI emits when WebSearch runs, with
+# `400 Content-Block-Typ "server_tool_use" wird nicht unterstützt`. That kills
+# the run mid-flight, and the resulting no-verdict review body used to post as
+# CHANGES_REQUESTED (bborbe/nuke#446).
+#
+# `permissions.deny` is the lever, NOT `--allowedTools`: the allowlist is
+# permission-only and never removes a tool from the toolset, so the reviewer's
+# existing `executionTools` list never excluded WebSearch in the first place.
+# `permissions.deny` removes both tools from the toolset outright, so the model
+# cannot call WebSearch and the CLI never issues the side-query that carries the
+# `web_search_20250305` server tool. (Verified against claude-code 2.1.296 by
+# reading the `tools` array of the `system`/init event.)
+COPY claude-config/settings.json /home/claude/.claude/settings.json
 RUN set -eux \
  && mkdir -p /home/claude/.claude \
  && timeout 300 claude plugin marketplace add bborbe/coding@v0.51.0 \

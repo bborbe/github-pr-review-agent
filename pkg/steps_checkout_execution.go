@@ -653,6 +653,12 @@ func (s *checkoutExecutionStep) postAndRoute(
 		)
 	}
 
+	// No-review gate — see noReviewResult for why this is keyed on
+	// IsNoReviewReason and not the wider isFailClosedReason set.
+	if skipResult, skip := noReviewResult(md, verdict, reviewBody, jobRunTime); skip {
+		return skipResult, nil
+	}
+
 	prInfo, earlyResult := s.resolvePRInfo(ctx, md, prURLStr, jobRunTime)
 	if earlyResult != nil {
 		return earlyResult, nil
@@ -689,6 +695,65 @@ func (s *checkoutExecutionStep) postAndRoute(
 		NextPhase: "human_review",
 		Message:   "posting failed: " + result.ErrorMessage,
 	}, nil
+}
+
+// noReviewResult reports whether the run produced no review at all and, when it
+// did, returns the terminal result for it: nothing is posted to the PR, an
+// `outcome: skipped` diagnostic block is appended, and the task routes to
+// human_review.
+//
+// The qualifying reasons are an empty `## Review` body and a body carrying no
+// verdict block — ParseVerdict's only two fail-closed reasons that mean the model
+// wrote no review. Posting their fail-closed request-changes publishes a blocking
+// review the model never wrote: indistinguishable from a real change request, and
+// it blocks the merge exactly like one. Observed 2026-10-11 on bborbe/nuke#446,
+// where a run whose result was the literal `(tool 'WebFetch' unavailable)` posted
+// a review with that body and GitHub state CHANGES_REQUESTED, holding the PR from
+// merge.
+//
+// Deliberately keyed on IsNoReviewReason, NOT the wider isFailClosedReason set:
+// its other five reasons (funnel did not run, concerns not verified, blocking
+// finding present, malformed JSON, unknown verdict) demote a review the model DID
+// write and must keep posting. Keying on the wider set would silently stop the
+// agent publishing its real blocking reviews.
+//
+// Nothing is posted rather than a COMMENT — this repo's Definition of Done forbids
+// a new posting path and mapVerdictAndSummary must never emit COMMENT (spec 060).
+// The skip is not silent: the diagnostic block and the human_review routing keep a
+// no-review run visible to the operator.
+func noReviewResult(
+	md *agentlib.Markdown,
+	verdict Result,
+	reviewBody string,
+	jobRunTime time.Time,
+) (*agentlib.Result, bool) {
+	if !IsNoReviewReason(verdict.Reason) {
+		return nil, false
+	}
+	glog.Warningf(
+		"pr-reviewer skipping post: run produced no review (reason=%q reviewBody_len=%d reviewBody_tail=%q)",
+		verdict.Reason,
+		len(reviewBody),
+		lastChars(reviewBody, 300),
+	)
+	appendDiagnosticsSection(
+		md,
+		buildDiagnosticBlock(jobRunTime, md.Frontmatter.TriggerCount(), PostResult{
+			Outcome:      "skipped",
+			FailureStep:  "no_review_produced",
+			Class:        ErrorClassPermanent,
+			EscalateHint: true,
+			ErrorMessage: fmt.Sprintf(
+				"run produced no review (%s) — nothing posted, so no false blocking review can block the merge",
+				verdict.Reason,
+			),
+		}),
+	)
+	return &agentlib.Result{
+		Status:    agentlib.AgentStatusDone,
+		NextPhase: "human_review",
+		Message:   "no review produced — post skipped",
+	}, true
 }
 
 // resolvePRInfo validates and parses the PR URL, writes diagnostics on failure,
@@ -768,6 +833,18 @@ func buildDiagnosticBlock(jobRunTime time.Time, triggerCount int, result PostRes
 	if result.Outcome == "success" {
 		return fmt.Sprintf("job_run: %s outcome: success review_id: %d\n",
 			jobRunTime.UTC().Format(time.RFC3339), result.ReviewID)
+	}
+	// A deliberate no-post (the run produced no review) is not a failure and must
+	// not be reported as one — the reader of ## Diagnostics would otherwise see
+	// `outcome: failed` for a run that behaved correctly.
+	if result.Outcome == "skipped" {
+		return fmt.Sprintf(
+			"```yaml\njob_run: %s\ntrigger_count: %d\noutcome: skipped\nfailure_step: %s\nerror_message: %q\n```\n",
+			jobRunTime.UTC().Format(time.RFC3339),
+			triggerCount,
+			result.FailureStep,
+			result.ErrorMessage,
+		)
 	}
 	httpStatusStr := "null"
 	if result.HTTPStatus != 0 {

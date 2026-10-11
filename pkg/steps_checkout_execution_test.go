@@ -519,6 +519,88 @@ prior review body
 			})
 		})
 
+		Context("no-review gate: a run that produced no review posts nothing", func() {
+			// Regression lock for bborbe/nuke#446 (2026-10-11). A run whose result
+			// was the literal `(tool 'WebFetch' unavailable)` carries no verdict
+			// block, so ParseVerdict fail-closes to request-changes. Posting that
+			// published a CHANGES_REQUESTED review the model never wrote — which
+			// blocks the merge exactly like a real change request. The gate must
+			// suppress the post for exactly the two "no review at all" reasons, and
+			// for nothing else.
+			It("posts nothing and routes to human_review for the crash body", func() {
+				fakePoster := &mocks.PrPoster{}
+
+				md := buildMD(ctx, "(tool 'WebFetch' unavailable)")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+
+				// The whole point: nothing reaches GitHub, so no false blocking
+				// review can hold the merge.
+				Expect(fakePoster.PostCallCount()).To(Equal(0))
+
+				// The skip stays visible rather than failing silently, and is not
+				// mislabelled as a failure.
+				diag, ok := md.FindSection("## Diagnostics")
+				Expect(ok).To(BeTrue())
+				Expect(diag.Body).To(ContainSubstring("outcome: skipped"))
+				Expect(diag.Body).To(ContainSubstring("no_review_produced"))
+				Expect(diag.Body).NotTo(ContainSubstring("outcome: failed"))
+			})
+
+			It("posts nothing when the ## Review section is absent (empty review text)", func() {
+				fakePoster := &mocks.PrPoster{}
+
+				md := buildMD(ctx, "") // buildMD skips ReplaceSection -> no ## Review
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(fakePoster.PostCallCount()).To(Equal(0))
+			})
+
+			It("still posts a legitimate fail-closed demotion (unknown verdict)", func() {
+				// Over-trigger guard. `unknown verdict` is a fail-closed reason, but
+				// the model DID write a review — it must post as request-changes, not
+				// be swallowed by the no-review gate.
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 11})
+
+				md := buildMD(ctx, "Some review prose.\n\n{\"verdict\":\"maybe\"}")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
+		})
+
 		Context("fail-closed gate when a concern is flagged not verified", func() {
 			// funnelRan=true so the funnel gate does not interfere — the unverified-
 			// concerns gate must be what demotes the approve.

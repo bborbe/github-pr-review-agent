@@ -972,3 +972,32 @@ var _ = Describe("Blocking verdict roll-up (spec-005)", func() {
 		),
 	)
 })
+
+var _ = Describe("IsNoReviewReason", func() {
+	// The no-review gate keys on exactly these two reasons. Every other
+	// fail-closed reason is a legitimate code-side demotion of a review the model
+	// DID write and must keep posting — keying the gate on isFailClosedReason
+	// instead would silently stop the agent publishing its real blocking reviews.
+	DescribeTable("classifies each fail-closed reason",
+		func(reason string, expected bool) {
+			Expect(pkg.IsNoReviewReason(reason)).To(Equal(expected))
+		},
+		Entry("no verdict block → true", pkg.ReasonNoVerdictBlock, true),
+		Entry("empty review text → true", pkg.ReasonEmptyReviewText, true),
+		Entry("funnel did not run → false", pkg.ReasonFunnelDidNotRun, false),
+		Entry("concerns not verified → false", pkg.ReasonConcernsNotVerified, false),
+		Entry("blocking finding present → false", pkg.ReasonBlockingFindingPresent, false),
+		Entry("malformed JSON → false", "malformed JSON: unexpected end of JSON input", false),
+		Entry("unknown verdict → false", "unknown verdict: comment", false),
+		Entry("model-authored reason → false", "looks good to me", false),
+		Entry("empty string → false", "", false),
+	)
+
+	It("agrees with the literal reasons ParseVerdict actually emits", func() {
+		// Guards the coupling: if ParseVerdict's literals drift from the exported
+		// constants, the gate silently stops firing.
+		Expect(pkg.IsNoReviewReason(pkg.ParseVerdict("").Reason)).To(BeTrue())
+		Expect(pkg.IsNoReviewReason(pkg.ParseVerdict("no verdict here").Reason)).To(BeTrue())
+		Expect(pkg.IsNoReviewReason(pkg.ParseVerdict(`{"verdict":"approve"}`).Reason)).To(BeFalse())
+	})
+})

@@ -97,6 +97,12 @@ The `not-a-failure` class covers expected non-error states: 422 Unprocessable En
 
 After spec 034, every PR that reaches the planning phase produces at least one visible artifact on the GitHub PR — there is no silent-skip path.
 
+**Carve-out — a run that produced no review posts nothing.** The invariant covers reviews the agent actually wrote. A run whose result carries no verdict block (for example a tool-error marker such as `(tool 'WebFetch' unavailable)`) produces no review at all, and posting its fail-closed `request-changes` publishes a blocking review the model never wrote — indistinguishable from a real change request, and it blocks the merge exactly like one (bborbe/nuke#446, 2026-10-11).
+
+`postAndRoute` therefore suppresses the post for exactly the two "no review at all" reasons `ParseVerdict` emits — `no verdict block` and `empty review text`, recognised by `pkg.IsNoReviewReason` — appends an `outcome: skipped` diagnostic block, and routes to `human_review`. Every other fail-closed reason (funnel did not run, concerns not verified, blocking finding present, malformed JSON, unknown verdict) demotes a review the model **did** write and still posts.
+
+This is not the silent skip the invariant forbids: the skip is recorded in `## Diagnostics` as `outcome: skipped` / `failure_step: no_review_produced`, and the task lands in `human_review` so the operator sees it. Nothing is posted to the PR — deliberately, since the repo's own Definition of Done forbids a new posting path and `mapVerdictAndSummary` must never emit `COMMENT` (spec 060).
+
 **Empty-concerns path (LGTM):** When the planning phase's `## Plan` JSON has `concerns: []` (no concerns flagged), the agent POSTs a `COMMENT` review with body `Reviewed by <BotLogin> — no concerns flagged.` via `PrPoster.PostLGTM`. The `## Verdict` section is written to the vault after the POST succeeds, naming the review id and `COMMENT` event. The task advances to `phase: done`.
 
 **Non-empty-concerns path:** When concerns are non-empty, the existing planning → execution → ai_review flow proceeds unchanged. `## Verdict` is written by the `ai_review` phase after the full review is posted.

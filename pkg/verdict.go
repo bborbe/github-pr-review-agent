@@ -209,7 +209,7 @@ func ParseVerdict(reviewText string) Result {
 	if reviewText == "" {
 		return Result{
 			Verdict: VerdictRequestChanges,
-			Reason:  "empty review text",
+			Reason:  ReasonEmptyReviewText,
 		}
 	}
 
@@ -217,7 +217,7 @@ func ParseVerdict(reviewText string) Result {
 	if !ok {
 		return Result{
 			Verdict: VerdictRequestChanges,
-			Reason:  "no verdict block",
+			Reason:  ReasonNoVerdictBlock,
 		}
 	}
 
@@ -244,6 +244,32 @@ func ParseVerdict(reviewText string) Result {
 	default:
 		return Result{Verdict: VerdictRequestChanges, Reason: "unknown verdict: " + jv.Verdict}
 	}
+}
+
+// ReasonNoVerdictBlock and ReasonEmptyReviewText are the two ParseVerdict
+// fail-closed reasons that mean the run produced NO review at all. They are the
+// crash signature: a run whose result carries no verdict block (for example a
+// tool-error marker such as `(tool 'WebFetch' unavailable)`) fail-closes to
+// request-changes, and posting that would publish a blocking review the model
+// never wrote — indistinguishable from a real change request, and it blocks the
+// merge exactly like one (bborbe/nuke#446).
+//
+// They are deliberately separated from the other fail-closed reasons: those are
+// legitimate code-side demotions whose review MUST still post. The string values
+// are compared literally by ParseVerdict and isFailClosedReason and must not change.
+const (
+	ReasonNoVerdictBlock  = "no verdict block"
+	ReasonEmptyReviewText = "empty review text"
+)
+
+// IsNoReviewReason reports whether a ParseVerdict fail-closed reason means the
+// run produced no review at all. Only these two reasons may suppress the post —
+// every other reason isFailClosedReason recognises (funnel did not run, concerns
+// not verified, blocking finding present, malformed JSON, unknown verdict) is a
+// legitimate demotion of a review the model DID write, and suppressing those
+// would silently stop the agent posting its real blocking reviews.
+func IsNoReviewReason(reason string) bool {
+	return reason == ReasonNoVerdictBlock || reason == ReasonEmptyReviewText
 }
 
 // ReasonFunnelDidNotRun is the fail-closed Result.Reason set when the Go-side
@@ -424,8 +450,8 @@ func ApplyBlockingGate(verdict Result, reviewText string) Result {
 //
 // Keep the literals/prefixes in sync with the Reason strings ParseVerdict emits.
 func isFailClosedReason(reason string) bool {
-	return reason == "empty review text" ||
-		reason == "no verdict block" ||
+	return reason == ReasonEmptyReviewText ||
+		reason == ReasonNoVerdictBlock ||
 		reason == ReasonFunnelDidNotRun ||
 		reason == ReasonConcernsNotVerified ||
 		reason == ReasonBlockingFindingPresent ||
