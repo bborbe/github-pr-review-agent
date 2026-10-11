@@ -702,14 +702,21 @@ func (s *checkoutExecutionStep) postAndRoute(
 // `outcome: skipped` diagnostic block is appended, and the task routes to
 // human_review.
 //
-// The qualifying reasons are an empty `## Review` body and a body carrying no
-// verdict block — ParseVerdict's only two fail-closed reasons that mean the model
-// wrote no review. Posting their fail-closed request-changes publishes a blocking
-// review the model never wrote: indistinguishable from a real change request, and
-// it blocks the merge exactly like one. Observed 2026-10-11 on bborbe/nuke#446,
-// where a run whose result was the literal `(tool 'WebFetch' unavailable)` posted
-// a review with that body and GitHub state CHANGES_REQUESTED, holding the PR from
-// merge.
+// The qualifying case is a run that produced no review at all — an empty body, or
+// a body with no review content (no markdown heading), which is the shape a
+// tool-error marker such as `(tool 'WebFetch' unavailable)` has. Posting such a
+// run's fail-closed request-changes publishes a blocking review the model never
+// wrote: indistinguishable from a real change request, and it blocks the merge
+// exactly like one. Observed 2026-10-11 on bborbe/nuke#446, where a run whose
+// result was that marker posted a review with that body and GitHub state
+// CHANGES_REQUESTED, holding the PR from merge.
+//
+// Note the deliberate narrowness: `no verdict block` alone is NOT the signal.
+// ParseVerdict returns it just as readily for a real review whose model omitted
+// the JSON block (e.g. a body whose only content is a `### Must Fix` section).
+// That review DID happen and must keep posting — suppressing it would hide real
+// blocking findings, a worse failure than the one this gate fixes. IsNoReviewReason
+// therefore consults the body.
 //
 // Deliberately keyed on IsNoReviewReason, NOT the wider isFailClosedReason set:
 // its other five reasons (funnel did not run, concerns not verified, blocking
@@ -730,7 +737,7 @@ func (s *checkoutExecutionStep) noReviewResult(
 	reviewBody string,
 	jobRunTime time.Time,
 ) (*agentlib.Result, bool) {
-	if !IsNoReviewReason(verdict.Reason) {
+	if !IsNoReviewReason(verdict.Reason, reviewBody) {
 		return nil, false
 	}
 	glog.Warningf(
@@ -742,10 +749,8 @@ func (s *checkoutExecutionStep) noReviewResult(
 	appendDiagnosticsSection(
 		md,
 		buildDiagnosticBlock(jobRunTime, md.Frontmatter.TriggerCount(), PostResult{
-			Outcome:      "skipped",
-			FailureStep:  "no_review_produced",
-			Class:        ErrorClassPermanent,
-			EscalateHint: true,
+			Outcome:     "skipped",
+			FailureStep: "no_review_produced",
 			ErrorMessage: fmt.Sprintf(
 				"run produced no review (%s) — nothing posted, so no false blocking review can block the merge",
 				verdict.Reason,

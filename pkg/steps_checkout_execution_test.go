@@ -599,6 +599,34 @@ prior review body
 				_, req := fakePoster.PostArgsForCall(0)
 				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
 			})
+
+			It("still posts a real review that omitted the JSON verdict block", func() {
+				// The sharpest over-trigger guard, and the regression this gate must
+				// not cause. A body whose only content is a `### Must Fix` section
+				// parses to the SAME reason as the crash marker (`no verdict block`),
+				// but the model DID find must-fix issues — suppressing it would hide
+				// them, which is worse than the false blocking review being fixed.
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 12})
+
+				md := buildMD(ctx,
+					"### Must Fix (Critical)\n\n- Security issue in authentication")
+				result, err := pkg.PostAndRouteForTest(
+					ctx,
+					fakePoster,
+					md,
+					prURL,
+					"",
+					fixedTime,
+					true,
+				)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.NextPhase).To(Equal("ai_review"))
+
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+				_, req := fakePoster.PostArgsForCall(0)
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			})
 		})
 
 		Context("fail-closed gate when a concern is flagged not verified", func() {

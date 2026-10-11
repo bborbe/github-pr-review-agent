@@ -67,17 +67,22 @@ The Claude Code review must emit a JSON block:
 Fallback: a heuristic section-header scan (`## Must Fix`, `## Blocking`).
 Horizontal rules (`---`) are not treated as must-fix content.
 
-**A run that produced no review posts nothing.** When the review output carries no
-verdict block at all — for example a tool-error marker such as
+**A run that produced no review posts nothing.** When the review output has no
+review content at all — an empty body, or a bare tool-error marker such as
 `(tool 'WebFetch' unavailable)` — `ParseVerdict` fail-closes to `request-changes`,
 but posting that would publish a blocking review the model never wrote, which blocks
 the merge exactly like a real change request. `postAndRoute` suppresses the post for
-exactly that case (`pkg.IsNoReviewReason`: `no verdict block`, `empty review text`),
-records an `outcome: skipped` diagnostic, and routes the task to `human_review`. Every
-other fail-closed reason (funnel did not run, concerns not verified, blocking finding
-present, malformed JSON, unknown verdict) demotes a review the model **did** write and
-still posts. See [`docs/pr-post-back.md`](docs/pr-post-back.md) § Always-Post Review
-Invariant for the carve-out.
+exactly that case (`pkg.IsNoReviewReason(reason, body)`), records an `outcome: skipped`
+diagnostic, and routes the task to `human_review`.
+
+`no verdict block` alone is deliberately *not* the signal: `ParseVerdict` returns it
+just as readily for a real review whose model omitted the JSON block — for example a
+body whose only content is a `### Must Fix` section. That review did happen and still
+posts its fail-closed `request-changes`; suppressing it would hide real blocking
+findings. Every other fail-closed reason (funnel did not run, concerns not verified,
+blocking finding present, malformed JSON, unknown verdict) likewise still posts. See
+[`docs/pr-post-back.md`](docs/pr-post-back.md) § Always-Post Review Invariant, which
+also records the known gap on the chunked-review path.
 
 The image also denies `WebSearch`/`WebFetch` for every session
 (`claude-config/settings.json` → `permissions.deny`), because a vLLM-backed backend
