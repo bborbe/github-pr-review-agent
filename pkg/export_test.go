@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agentlib "github.com/bborbe/agent"
+	claudelib "github.com/bborbe/agent/claude"
 	libtime "github.com/bborbe/time"
 )
 
@@ -156,4 +157,11 @@ func FilterFindingsForTest(
 	ranges map[string][]LineRangeForTest,
 ) (string, error) {
 	return filterFindings(ctx, findingsJSON, changedFiles, ranges)
+}
+
+// ReviewBodyFromRunForTest exposes reviewBodyFromRun so review_body_test.go (in
+// the pkg_test package) can assert the Result/Partial fallback without a live
+// claude run.
+func ReviewBodyFromRunForTest(result *claudelib.ClaudeResult) string {
+	return reviewBodyFromRun(result)
 }
