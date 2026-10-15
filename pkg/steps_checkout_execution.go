@@ -558,7 +558,7 @@ func (s *checkoutExecutionStep) runClaude(
 	// Vault-first invariant: write ## Review BEFORE any API call.
 	md.ReplaceSection(agentlib.Section{
 		Heading: "## Review",
-		Body:    runResult.Result,
+		Body:    reviewBodyFromRun(runResult),
 	})
 
 	return s.postAndRoute(
@@ -570,6 +570,36 @@ func (s *checkoutExecutionStep) runClaude(
 		funnelRan,
 		runElapsed,
 	)
+}
+
+// reviewBodyFromRun returns the text to write as the review body. It prefers the
+// run's final Result, but falls back to the streamed Partial when the final text
+// carries no verdict block.
+//
+// The model can emit the review — verdict block and all — mid-run and then end on
+// a follow-up turn (e.g. reacting to a background test run finishing), so the final
+// Result holds only that closing remark. ParseVerdict then fail-closes on it with
+// "no verdict block" and the review is skipped rather than posted, which reads
+// downstream as a PR that simply got no review. Observed on bborbe/nuke#495
+// (2026-10-15): the run produced a complete `approve` review at 14:08 and ended at
+// 14:14 on "The background test run completed successfully ... The review stands as
+// written above." (116 chars), so nothing was posted.
+//
+// Falling back here rather than in postAndRoute keeps the vault's ## Review section
+// holding the text the verdict was actually parsed from.
+func reviewBodyFromRun(result *claudelib.ClaudeResult) string {
+	if result == nil {
+		return ""
+	}
+	if _, _, ok := findVerdictBlock(result.Result); ok {
+		return result.Result
+	}
+	if result.Partial != "" {
+		if _, _, ok := findVerdictBlock(result.Partial); ok {
+			return result.Partial
+		}
+	}
+	return result.Result
 }
 
 // postAndRoute handles the posting sequence after ## Review has been written to
