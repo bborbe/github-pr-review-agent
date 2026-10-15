@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.5
 
 - fix: fall back to the streamed `Partial` text when the run's final `Result` carries no verdict block, so a review the model wrote mid-run still posts instead of being skipped. The model can emit the whole review — verdict block and all — and then end on a follow-up turn (e.g. reacting to a background test run finishing), leaving `Result` holding only that closing remark. `ParseVerdict` then fail-closes on it with `no verdict block`, and the no-review gate suppresses the post, so the PR reads downstream as one that simply never got reviewed. Observed on `bborbe/nuke#495` (2026-10-15): the run produced a complete `approve` review at 14:08 and ended at 14:14 on "The background test run completed successfully ... The review stands as written above." (116 chars), so nothing posted and the PR sat at `REVIEW_REQUIRED` until a second run happened to end on the block. `reviewBodyFromRun` prefers `Result` whenever it carries a block, so an ordinary run is unchanged; the fallback is strictly additive and `## Review` keeps holding the text the verdict was parsed from. This is the same defect class `bborbe/agent-sentry-issue-analyzer#85` fixes in that agent's resolver — `Result` is the final turn only, and the streamed `Partial` is where a mid-run block survives. ⚠️ The v0.11.4 note that "`no verdict block` alone is deliberately not the signal" still holds and is untouched: this changes which text the verdict is parsed *from*, never whether a block-less review posts.
 
