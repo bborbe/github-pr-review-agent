@@ -224,26 +224,36 @@ func fits(current, u reviewUnit, cfg ReviewChunkConfig) bool {
 	return len(current.paths)+len(u.paths) <= cfg.MaxFiles
 }
 
-// ChunkDeadline returns the deadline for one chunk run: the earlier of
-// outerDeadline and now + max(remaining time / remainingChunks, 60s), where
-// remaining time is outerDeadline - now. It is pure.
+// minChunkSlice is the smallest run a chunk may be granted. It is both the floor
+// for a chunk whose reservation exceeds the remaining budget and the unit
+// reserved for each chunk after this one.
+const minChunkSlice = 60 * time.Second
+
+// ChunkDeadline returns the deadline for one chunk run: outerDeadline less a
+// minChunkSlice reservation for each chunk after this one, floored at
+// now + minChunkSlice and capped at outerDeadline. It is pure.
+//
+// A chunk is deliberately NOT capped at an equal share of the remaining budget.
+// The equal share starved the first chunk of a multi-chunk review — the one
+// carrying the setup cost — and because a chunk cut at its deadline ends the
+// WHOLE review as a salvage, the first chunk's cap decided every later chunk's
+// fate. Reserving only the floor keeps the outer deadline the hard stop for the
+// whole review while letting a chunk that needs more than its equal share take
+// it. A review whose first chunk genuinely needs the whole budget cannot fit in
+// maxDuration under any allocation, so reserving more than the floor would buy
+// nothing. The CHANGELOG carries the measurement that motivated this.
 //
 // remainingChunks is the number of chunk runs left to start, including the one
 // this deadline is for, and must be >= 1; a value <= 0 is defensive-only and
-// returns outerDeadline (a zero divisor would panic). The 60-second floor means
-// a chunk always gets a usable slice even when the remaining budget is nearly
-// exhausted, and the outer-deadline cap means the per-chunk share can never
-// extend the whole-review budget.
+// returns outerDeadline.
 func ChunkDeadline(now, outerDeadline time.Time, remainingChunks int) time.Time {
 	if remainingChunks <= 0 {
 		return outerDeadline
 	}
-	remaining := outerDeadline.Sub(now)
-	share := remaining / time.Duration(remainingChunks)
-	if share < 60*time.Second {
-		share = 60 * time.Second
+	candidate := outerDeadline.Add(-time.Duration(remainingChunks-1) * minChunkSlice)
+	if floor := now.Add(minChunkSlice); candidate.Before(floor) {
+		candidate = floor
 	}
-	candidate := now.Add(share)
 	if candidate.After(outerDeadline) {
 		return outerDeadline
 	}
