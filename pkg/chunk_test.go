@@ -205,15 +205,24 @@ var _ = Describe("ValidateReviewChunkConfig", func() {
 var _ = Describe("ChunkDeadline", func() {
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 
-	DescribeTable("per-chunk deadline",
+	DescribeTable(
+		"per-chunk deadline",
 		func(outerDeadline time.Time, remainingChunks int, want time.Time) {
 			Expect(pkg.ChunkDeadline(now, outerDeadline, remainingChunks)).To(Equal(want))
 		},
-		Entry("equal share of a large remaining budget",
-			now.Add(10*time.Minute), 5, now.Add(2*time.Minute)),
-		Entry("60s floor when the equal share is below 60s",
+		Entry("a chunk is not capped at an equal share — the budget less a floor per later chunk",
+			now.Add(10*time.Minute), 5, now.Add(6*time.Minute)),
+		Entry(
+			"the first chunk of a 25m review may use 21m, reserving 60s for each of the four after it",
+			now.Add(25*time.Minute),
+			5,
+			now.Add(21*time.Minute),
+		),
+		Entry("a chunk past the reservation keeps its own floor rather than a negative slice",
+			now.Add(5*time.Minute), 3, now.Add(3*time.Minute)),
+		Entry("60s floor when the reservation exceeds the remaining budget",
 			now.Add(90*time.Second), 5, now.Add(60*time.Second)),
-		Entry("capped at the outer deadline when now+share would pass it",
+		Entry("capped at the outer deadline when now+floor would pass it",
 			now.Add(30*time.Second), 5, now.Add(30*time.Second)),
 		Entry("remainingChunks == 1 gives the whole remaining time",
 			now.Add(10*time.Minute), 1, now.Add(10*time.Minute)),
