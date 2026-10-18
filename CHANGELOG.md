@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.6
 
 - fix: **stop capping each review chunk at an equal share of the time budget.** `ChunkDeadline` granted chunk *i* of *N* `(outerDeadline - now) / remainingChunks`, and because a chunk cut at its deadline ends the **whole** review as a salvage, the first chunk's cap decided every later chunk's fate. Measured 2026-10-18 on `bborbe/coding#172`: chunk 1/5 was cut at `5m00.059s` against a `25m/5 = 5m00s` share, mid-verification, and the review salvaged to `human_review` with no verdict — three consecutive `bborbe/coding` reviews died this way (chunks 1/5, 1/7, 1/8). The same arithmetic is why splitting the PR made it worse rather than better (`25m/8 = 3m07s`). A chunk now gets the outer deadline less a 60s floor reserved for each chunk after it, so the first chunk — the one carrying the setup cost (guide read, repo orientation) — may take the time it needs while the outer `MaxReviewDuration` stays the hard stop for the whole review. A review whose first chunk genuinely needs the whole budget cannot fit under any allocation, so reserving more than the floor would buy nothing. ⚠️ The original report attributed these salvages to the selector-guide lookup; that diagnosis is falsified — the guide resolves at both candidate paths, and the hunt cost ~16s of a 300s chunk budget.
 
