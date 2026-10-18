@@ -226,28 +226,22 @@ func fits(current, u reviewUnit, cfg ReviewChunkConfig) bool {
 
 // minChunkSlice is the smallest run a chunk may be granted. It is both the floor
 // for a chunk whose reservation exceeds the remaining budget and the unit
-// reserved for every chunk still to start.
+// reserved for each chunk after this one.
 const minChunkSlice = 60 * time.Second
 
 // ChunkDeadline returns the deadline for one chunk run: outerDeadline less a
-// minChunkSlice reservation for every chunk still to start, floored at
+// minChunkSlice reservation for each chunk after this one, floored at
 // now + minChunkSlice and capped at outerDeadline. It is pure.
 //
 // A chunk is deliberately NOT capped at an equal share of the remaining budget.
 // The equal share starved the first chunk of a multi-chunk review — the one
-// carrying the setup cost (guide read, repo orientation) — and because a chunk
-// cut at its deadline ends the WHOLE review as a salvage, the first chunk's cap
-// decided every later chunk's fate. Measured 2026-10-18 on bborbe/coding#172:
-// chunk 1/5 was cut at 5m00.059s against a 25m/5 = 5m00s equal share, mid
-// verification, and the review salvaged to human_review with no verdict. The
-// same arithmetic is why splitting the PR made it worse (25m/8 = 3m07s), not
-// better.
-//
-// Reserving only the floor per remaining chunk keeps the outer deadline the hard
-// stop for the whole review while letting a chunk that needs more than its equal
-// share take it. A review whose first chunk genuinely needs the whole budget
-// cannot fit in maxDuration under any allocation, so reserving more than the
-// floor there would buy nothing.
+// carrying the setup cost — and because a chunk cut at its deadline ends the
+// WHOLE review as a salvage, the first chunk's cap decided every later chunk's
+// fate. Reserving only the floor keeps the outer deadline the hard stop for the
+// whole review while letting a chunk that needs more than its equal share take
+// it. A review whose first chunk genuinely needs the whole budget cannot fit in
+// maxDuration under any allocation, so reserving more than the floor would buy
+// nothing. The CHANGELOG carries the measurement that motivated this.
 //
 // remainingChunks is the number of chunk runs left to start, including the one
 // this deadline is for, and must be >= 1; a value <= 0 is defensive-only and

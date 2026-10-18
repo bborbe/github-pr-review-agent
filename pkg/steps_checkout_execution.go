@@ -283,9 +283,10 @@ func (s *checkoutExecutionStep) runUnscopedReview(
 }
 
 // runChunkedReview runs one scoped review per chunk, sequentially, each under
-// its own fair share of the remaining soft budget, then merges the chunk outputs
-// into one ## Review body carrying exactly one verdict and posts through the
-// unchanged posting path.
+// its own deadline from ChunkDeadline — the outer soft budget less a floor
+// reserved for the chunks after it, never an equal share — then merges the chunk
+// outputs into one ## Review body carrying exactly one verdict and posts through
+// the unchanged posting path.
 //
 // The clone, the allowlist check, and the mechanical funnel ran once, before
 // this method. The elapsed handed to the concerns gate is the SUM of the chunk

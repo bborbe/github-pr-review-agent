@@ -218,7 +218,7 @@ var _ = Describe("ChunkDeadline", func() {
 			5,
 			now.Add(21*time.Minute),
 		),
-		Entry("a chunk past the reservation keeps its own floor rather than a negative slice",
+		Entry("the reservation is subtracted from the outer deadline, not an equal share",
 			now.Add(5*time.Minute), 3, now.Add(3*time.Minute)),
 		Entry("60s floor when the reservation exceeds the remaining budget",
 			now.Add(90*time.Second), 5, now.Add(60*time.Second)),
