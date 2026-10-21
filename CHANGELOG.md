@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.113.0, github.com/bborbe/kafka to v1.28.5, github.com/bborbe/service to v1.11.1, github.com/bborbe/time to v1.27.18
+
 ## v0.11.8
 
 - fix: skip the review POST when the bot already has an APPROVED / CHANGES_REQUESTED review at the head SHA, so a re-run after a lost claim posts no second, possibly contradicting review (older-SHA reviews are still dismissed)
