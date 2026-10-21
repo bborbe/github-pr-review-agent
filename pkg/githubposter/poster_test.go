@@ -225,6 +225,69 @@ var _ = Describe("PrPoster", func() {
 		})
 	})
 
+	Context("bot verdict review already at head SHA (re-run after a lost claim)", func() {
+		DescribeTable("dismisses older-SHA reviews, keeps the head-SHA review, skips the POST",
+			func(state string) {
+				writeYAML(true)
+				fakeClient.DoStub = seqStub([]callSpec{
+					{200, reviewListJSON(
+						reviewJSON(99, testBotLogin, testPriorSHA, "APPROVED"),
+						reviewJSON(77, testBotLogin, testHeadSHA, state),
+					), nil},
+					{200, `{}`, nil}, // PUT dismissal for the older-SHA review
+				})
+				result := poster.Post(ctx, pkg.PostRequest{
+					PR: pr, HeadSHA: testHeadSHA, Verdict: pkg.VerdictApprove,
+					Summary: "ok", WorkDir: tmpDir,
+				})
+				Expect(result.Outcome).To(Equal("success"))
+				Expect(result.ReviewID).To(Equal(int64(77)))
+				Expect(result.FailureStep).To(Equal("skip-existing-at-head"))
+				Expect(fakeClient.DoCallCount()).To(Equal(2))
+				for _, call := range fakeClient.Invocations()["Do"] {
+					req, ok := call[0].(*http.Request)
+					Expect(ok).To(BeTrue())
+					Expect(req.Method).NotTo(Equal("POST"))
+					Expect(req.URL.Path).NotTo(ContainSubstring("/reviews/77/"))
+				}
+			},
+			Entry("APPROVED", "APPROVED"),
+			Entry("CHANGES_REQUESTED", "CHANGES_REQUESTED"),
+		)
+
+		It("still posts when the only head-SHA bot review is COMMENTED", func() {
+			writeYAML(true)
+			fakeClient.DoStub = seqStub([]callSpec{
+				{200, reviewListJSON(reviewJSON(77, testBotLogin, testHeadSHA, "COMMENTED")), nil},
+				{201, postRespJSON(42), nil},
+				{200, reviewListJSON(reviewJSON(42, testBotLogin, testHeadSHA, "APPROVED")), nil},
+			})
+			result := poster.Post(ctx, pkg.PostRequest{
+				PR: pr, HeadSHA: testHeadSHA, Verdict: pkg.VerdictApprove,
+				Summary: "ok", WorkDir: tmpDir,
+			})
+			Expect(result.Outcome).To(Equal("success"))
+			Expect(result.ReviewID).To(Equal(int64(42)))
+			Expect(fakeClient.DoCallCount()).To(Equal(3))
+		})
+
+		It("still posts when the head-SHA verdict review belongs to another user", func() {
+			writeYAML(true)
+			fakeClient.DoStub = seqStub([]callSpec{
+				{200, reviewListJSON(reviewJSON(77, "someone-else", testHeadSHA, "APPROVED")), nil},
+				{201, postRespJSON(42), nil},
+				{200, reviewListJSON(reviewJSON(42, testBotLogin, testHeadSHA, "APPROVED")), nil},
+			})
+			result := poster.Post(ctx, pkg.PostRequest{
+				PR: pr, HeadSHA: testHeadSHA, Verdict: pkg.VerdictApprove,
+				Summary: "ok", WorkDir: tmpDir,
+			})
+			Expect(result.Outcome).To(Equal("success"))
+			Expect(result.ReviewID).To(Equal(int64(42)))
+			Expect(fakeClient.DoCallCount()).To(Equal(3))
+		})
+	})
+
 	Context("phantom POST → retry succeeds", func() {
 		It("retries verify-GET and succeeds on second attempt", func() {
 			writeYAML(true)
