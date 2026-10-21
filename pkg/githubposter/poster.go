@@ -132,55 +132,83 @@ func (p *prPoster) Post(ctx context.Context, req prpkg.PostRequest) prpkg.PostRe
 			ElapsedMs:    time.Since(start).Milliseconds(),
 		}
 	}
-	if result, ok := p.dismissPriorReviews(ctx, req.PR, req.HeadSHA); !ok {
+	existing, result, ok := p.dismissPriorReviews(ctx, req.PR, req.HeadSHA)
+	if !ok {
 		result.ElapsedMs = time.Since(start).Milliseconds()
 		return result
 	}
+	if existing != nil {
+		// A bot verdict review already exists at this head SHA: a previous run
+		// posted it and lost its claim before ## Review reached the vault.
+		// Posting again would stack a second, possibly contradicting verdict.
+		glog.Infof(
+			"post: bot review %d already at head %s — skipping duplicate post",
+			existing.ID,
+			req.HeadSHA,
+		)
+		return prpkg.PostResult{
+			Outcome:     "success",
+			ReviewID:    existing.ID,
+			FailureStep: "skip-existing-at-head",
+			ElapsedMs:   time.Since(start).Milliseconds(),
+		}
+	}
 	event, body, warnings := mapVerdictAndSummary(req.Verdict, autoApprove, req.Summary)
-	result := p.postAndVerify(ctx, req.PR, req.HeadSHA, event, body, warnings)
+	result = p.postAndVerify(ctx, req.PR, req.HeadSHA, event, body, warnings)
 	result.ElapsedMs = time.Since(start).Milliseconds()
 	return result
 }
 
+// dismissPriorReviews dismisses bot verdict reviews at superseded SHAs and
+// returns the bot verdict review already at headSHA, if any. A non-nil
+// review tells the caller to skip its POST: the review at the head SHA is
+// never touched, so the PR keeps the verdict the earlier run left.
 func (p *prPoster) dismissPriorReviews(
 	ctx context.Context,
 	pr prurl.PRInfo,
 	headSHA string,
-) (prpkg.PostResult, bool) {
+) (*reviewEntry, prpkg.PostResult, bool) {
 	step := "GET /pulls/N/reviews (dismiss-list)"
-	reviews, result, ok := p.listBotReviews(ctx, pr, headSHA, step)
+	reviews, atHead, result, ok := p.listBotReviews(ctx, pr, headSHA, step)
 	if !ok {
-		return result, false
+		return nil, result, false
 	}
 	for _, r := range reviews {
 		if r.State == "DISMISSED" {
 			continue
 		}
 		if result, ok := p.dismissOne(ctx, pr, r.ID); !ok {
-			return result, false
+			return nil, result, false
 		}
 	}
-	return prpkg.PostResult{}, true
+	return atHead, prpkg.PostResult{}, true
+}
+
+// botReviewList is the listBotReviews payload: verdict reviews at prior SHAs
+// (dismissal candidates) plus the first verdict review at the head SHA.
+type botReviewList struct {
+	prior  []reviewEntry
+	atHead *reviewEntry
 }
 
 func (p *prPoster) listBotReviews(
 	ctx context.Context,
 	pr prurl.PRInfo,
 	headSHA, step string,
-) ([]reviewEntry, prpkg.PostResult, bool) {
+) ([]reviewEntry, *reviewEntry, prpkg.PostResult, bool) {
 	url := fmt.Sprintf(
 		"https://api.github.com/repos/%s/%s/pulls/%d/reviews",
 		pr.Owner,
 		pr.Repo,
 		pr.Number,
 	)
-	cr := retryCall(ctx, step, func(ctx context.Context) ([]reviewEntry, int, string, error) {
+	cr := retryCall(ctx, step, func(ctx context.Context) (botReviewList, int, string, error) {
 		status, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
 		if err != nil {
-			return nil, status, truncateBody(body), err
+			return botReviewList{}, status, truncateBody(body), err
 		}
 		if status != 200 {
-			return nil, status, truncateBody(
+			return botReviewList{}, status, truncateBody(
 					body,
 				), errors.Errorf(
 					ctx,
@@ -190,10 +218,20 @@ func (p *prPoster) listBotReviews(
 		}
 		var all []reviewEntry
 		if err := json.Unmarshal(body, &all); err != nil {
-			return nil, status, truncateBody(body), errors.Wrapf(ctx, err, "parse reviews")
+			return botReviewList{}, status, truncateBody(
+					body,
+				), errors.Wrapf(
+					ctx,
+					err,
+					"parse reviews",
+				)
 		}
-		var filtered []reviewEntry
-		for _, r := range all {
+		var list botReviewList
+		for i, r := range all {
+			if list.atHead == nil && r.User.Login == p.botLogin && r.CommitID == headSHA &&
+				(r.State == "APPROVED" || r.State == "CHANGES_REQUESTED") {
+				list.atHead = &all[i]
+			}
 			// Skip COMMENTED reviews: GitHub's API rejects dismissal of comment-state
 			// reviews with HTTP 422 "Can not dismiss a commented pull request review".
 			// Comment reviews don't block merges anyway, so leaving them stacked is harmless.
@@ -203,15 +241,15 @@ func (p *prPoster) listBotReviews(
 			// superseded (prior) SHAs are eligible. A re-spawned pod must not wipe the
 			// review that a previous pod left at the same head.
 			if r.User.Login == p.botLogin && r.CommitID != headSHA && r.State != "COMMENTED" {
-				filtered = append(filtered, r)
+				list.prior = append(list.prior, r)
 			}
 		}
-		return filtered, status, truncateBody(body), nil
+		return list, status, truncateBody(body), nil
 	})
 	if cr.Err != nil {
-		return nil, buildFailedResult(step, cr), false
+		return nil, nil, buildFailedResult(step, cr), false
 	}
-	return cr.Value, prpkg.PostResult{}, true
+	return cr.Value.prior, cr.Value.atHead, prpkg.PostResult{}, true
 }
 
 func (p *prPoster) dismissOne(

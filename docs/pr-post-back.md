@@ -151,7 +151,7 @@ reason: <meta-verdict reason>
   - state filter: `COMMENTED` reviews are never dismissed — the GitHub API rejects their dismissal with HTTP 422
   - state filter: `DISMISSED` reviews are skipped in the caller loop (already inactive)
 
-**Re-spawn safety:** if a controller re-spawns a pod on the same head SHA, the second pod's dismissal step returns an empty list (the first pod's review is at the current head SHA, which is preserved). The second pod short-circuits on vault idempotency and the PR ends with the first pod's review intact. This is the intended behavior; the original bug (`commit_id == headSHA` instead of `!=`) caused the second pod to wipe the first pod's review, leaving the PR with zero reviews despite a successful agent run.
+**Re-spawn safety:** if a controller re-spawns a pod on the same head SHA, the second pod's dismissal step returns an empty list (the first pod's review is at the current head SHA, which is preserved). The second pod short-circuits on vault idempotency and the PR ends with the first pod's review intact. This is the intended behavior. When the vault short-circuit does not fire — the first pod POSTed but lost its claim before `## Review` reached the vault — `Post` finds the bot's `APPROVED` / `CHANGES_REQUESTED` review at the head SHA, still dismisses older-SHA reviews, skips its own POST, and logs `post: bot review <id> already at head <sha> — skipping duplicate post` (diagnostic step `skip-existing-at-head`). A `COMMENTED`-only review at the head SHA is not a verdict and does not suppress the POST. The original bug (`commit_id == headSHA` instead of `!=`) caused the second pod to wipe the first pod's review, leaving the PR with zero reviews despite a successful agent run.
 
 ## Key Files
 
