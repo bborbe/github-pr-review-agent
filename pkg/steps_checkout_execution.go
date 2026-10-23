@@ -50,6 +50,7 @@ type checkoutExecutionStep struct {
 	// SetCheckBeforeChunkForTest. The mid-run PR-state check is the intended
 	// production filler and needs no change to the dispatch loop.
 	checkBeforeChunkFn func(ctx context.Context, md *agentlib.Markdown) *agentlib.Result
+	pollInterval       libtime.Duration // mid-run PR-state poll; <= 0 disables the watch
 }
 
 // NewCheckoutExecutionStep constructs the execution-phase step that wires
@@ -59,7 +60,9 @@ type checkoutExecutionStep struct {
 // claude run; expiry routes to human_review. prState queries the live GitHub
 // PR state so a merged/closed/superseded PR short-circuits before any work.
 // chunkConfig carries the chunking thresholds; at or below the engage
-// threshold the review runs once, unscoped.
+// threshold the review runs once, unscoped. pollInterval is how often a
+// running claude call re-reads the PR state; a merged/closed/superseded PR
+// cancels the call mid-run. A pollInterval <= 0 disables the mid-run watch.
 func NewCheckoutExecutionStep(
 	repoManager git.RepoManager,
 	claudeConfigDir claudelib.ClaudeConfigDir,
@@ -76,8 +79,10 @@ func NewCheckoutExecutionStep(
 	maxDuration libtime.Duration,
 	prState PRStateClient,
 	chunkConfig ReviewChunkConfig,
+	pollInterval libtime.Duration,
 ) agentlib.Step {
 	return &checkoutExecutionStep{
+		pollInterval:    pollInterval,
 		repoManager:     repoManager,
 		claudeConfigDir: claudeConfigDir,
 		agentDir:        agentDir,
@@ -315,7 +320,8 @@ type chunkRunResult struct {
 	elapsed       time.Duration
 	budget        time.Duration // this chunk's own soft budget (WaveChunkDeadline)
 	budgetExpired bool
-	partial       string
+	mooted        bool             // the PR-state watch cancelled this chunk's call
+	partial       string           // streamed partial of a budget-expired run
 	earlyResult   *agentlib.Result // pre-run terminal result (findings filter failure)
 	stepErr       error            // prompt-build failure, propagated as the step error
 	err           error            // runner error
@@ -432,6 +438,10 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		concurrency = 1
 	}
 	outerDeadline := s.currentDateTime.Now().Time().Add(s.maxDuration.Duration())
+	// Built once, before dispatch, so no chunk goroutine touches the shared
+	// markdown: the watch only reads the PR URL and ref. It is immutable after
+	// construction, so one value serves every chunk.
+	watch := newPRStateWatch(md, s.prState, s.pollInterval, CancelledDuringExecution)
 
 	glog.V(2).Infof("fan-out start concurrency=%d chunks=%d", concurrency, n)
 
@@ -445,6 +455,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		chunks,
 		outerDeadline,
 		concurrency,
+		watch,
 	)
 
 	// A pre-chunk check's terminal result wins regardless of what the in-flight
@@ -453,7 +464,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		return checkResult, nil
 	}
 
-	if outcome, done, err := s.chunkOutcome(md, results, n, causeErr); done {
+	if outcome, done, err := s.chunkOutcome(ctx, md, results, n, causeErr); done {
 		return outcome, err
 	}
 
@@ -488,6 +499,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 // results. The first matching rule wins, scanning by ascending index so the
 // outcome is deterministic; done is false when every chunk produced output.
 func (s *checkoutExecutionStep) chunkOutcome(
+	ctx context.Context,
 	md *agentlib.Markdown,
 	results []*chunkRunResult,
 	n int,
@@ -502,6 +514,17 @@ func (s *checkoutExecutionStep) chunkOutcome(
 		return r.earlyResult != nil
 	}); i >= 0 {
 		return results[i].earlyResult, true, nil
+	}
+	// A mooted chunk is a deliberate terminal verdict (the PR merged, closed, or
+	// moved), so it wins over the budget and failure rules that its own cancel
+	// may have provoked in its siblings. Written here, in the collector, because
+	// the verdict lands in the shared markdown.
+	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
+		return r.mooted
+	}); i >= 0 {
+		glog.V(2).Infof("execution: chunk %d/%d cancelled mid-run — PR is moot", i+1, n)
+		mootResult, mootErr := mootCancelledResult(ctx, md, s.prState, CancelledDuringExecution)
+		return mootResult, true, mootErr
 	}
 	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
 		return r.budgetExpired
@@ -542,6 +565,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 	chunks []ReviewChunk,
 	outerDeadline time.Time,
 	concurrency int,
+	watch *prStateWatch,
 ) ([]*chunkRunResult, *agentlib.Result, error) {
 	n := len(chunks)
 	chunkCtx, cancel := context.WithCancel(ctx)
@@ -600,6 +624,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 				n,
 				chunkDuration,
 				concurrency,
+				watch,
 			)
 			mu.Lock()
 			results[i] = &result
@@ -608,7 +633,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 			}
 			mu.Unlock()
 			if result.stepErr != nil || result.earlyResult != nil ||
-				result.budgetExpired ||
+				result.budgetExpired || result.mooted ||
 				(result.err != nil && !isCancellation(result.err)) {
 				triggerCancel()
 			}
@@ -632,6 +657,7 @@ func (s *checkoutExecutionStep) runOneChunk(
 	index, count int,
 	chunkDuration libtime.Duration,
 	concurrency int,
+	watch *prStateWatch,
 ) chunkRunResult {
 	glog.V(2).
 		Infof("review chunk %d/%d files=%d additions=%d", index+1, count, len(chunk.Files), chunk.Additions)
@@ -669,42 +695,39 @@ func (s *checkoutExecutionStep) runOneChunk(
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
-	runResult, runErr, budgetExpired, elapsed := runWithSoftBudget(
+	run := runWatchedWithSoftBudget(
 		ctx,
 		runner,
 		prompt,
 		chunkDuration,
+		watch,
 	)
-	glog.V(2).Infof("fan-out chunk %d/%d finished elapsed=%s", index+1, count, elapsed)
-	if runErr != nil {
-		if budgetExpired {
-			glog.V(2).Infof(
-				"execution: chunk %d/%d soft time budget exceeded nextPhase=human_review",
-				index+1,
-				count,
-			)
-			return chunkRunResult{
-				index:         index,
-				elapsed:       elapsed,
-				budget:        chunkDuration.Duration(),
-				budgetExpired: true,
-				partial:       ExtractBudgetPartial(runResult, runErr),
-				err:           runErr,
-			}
-		}
-		return chunkRunResult{
-			index:   index,
-			elapsed: elapsed,
-			budget:  chunkDuration.Duration(),
-			err:     runErr,
-		}
-	}
-	return chunkRunResult{
+	glog.V(2).Infof("fan-out chunk %d/%d finished elapsed=%s", index+1, count, run.Elapsed)
+	result := chunkRunResult{
 		index:   index,
-		output:  runResult.Result,
-		elapsed: elapsed,
+		elapsed: run.Elapsed,
 		budget:  chunkDuration.Duration(),
 	}
+	switch {
+	case run.Mooted:
+		// The collector records the terminal verdict: a chunk goroutine never
+		// writes the shared markdown.
+		result.mooted = true
+	case run.Err != nil && run.Expired:
+		glog.V(2).Infof(
+			"execution: chunk %d/%d soft time budget exceeded nextPhase=human_review",
+			index+1,
+			count,
+		)
+		result.budgetExpired = true
+		result.partial = ExtractBudgetPartial(run.Result, run.Err)
+		result.err = run.Err
+	case run.Err != nil:
+		result.err = run.Err
+	default:
+		result.output = run.Result.Result
+	}
+	return result
 }
 
 // neutralizeChunkFiles returns the chunk's file paths with code fences
@@ -811,13 +834,21 @@ func (s *checkoutExecutionStep) runClaude(
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
-	runResult, runErr, budgetExpired, runElapsed := runWithSoftBudget(
+	run := runWatchedWithSoftBudget(
 		ctx,
 		runner,
 		prompt,
 		s.maxDuration,
+		newPRStateWatch(md, s.prState, s.pollInterval, CancelledDuringExecution),
 	)
+	runResult, runErr, budgetExpired, runElapsed := run.Result, run.Err, run.Expired, run.Elapsed
 	if runErr != nil {
+		// A cancelled call (PR merged / closed / moved mid-run) writes the
+		// terminal verdict BEFORE ## Review — nothing is posted.
+		if run.Mooted {
+			glog.V(2).Infof("execution: claude run cancelled mid-run — PR is moot")
+			return mootCancelledResult(ctx, md, s.prState, CancelledDuringExecution)
+		}
 		// Budget expiry (a FIRED run-context deadline) routes to human_review
 		// BEFORE ## Review is written or the review posted — never retried here.
 		// The streamed partial (if any) is salvaged under ## Salvage so the run

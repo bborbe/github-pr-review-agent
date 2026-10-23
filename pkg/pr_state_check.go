@@ -39,6 +39,10 @@ type ResolutionOutput struct {
 	PRState    string `json:"pr_state"`
 	MergedAt   string `json:"merged_at,omitempty"`
 	HeadRefOid string `json:"head_ref_oid,omitempty"`
+	// CancelledDuring names the phase whose claude call the mid-run PR-state
+	// watch cancelled (CancelledDuringExecution / CancelledDuringAIReview).
+	// Empty for a resolution written by a pre- or post-flight check.
+	CancelledDuring string `json:"cancelled_during,omitempty"`
 }
 
 // Verdict values for ResolutionOutput.Verdict. Exhaustive: every
@@ -78,6 +82,19 @@ func prStateCheck(
 	md *agentlib.Markdown,
 	client PRStateClient,
 ) (*agentlib.Result, error) {
+	return prStateCheckCancelled(ctx, md, client, "")
+}
+
+// prStateCheckCancelled is prStateCheck for a claude call the mid-run watch
+// cancelled: cancelledDuring is recorded on the ## Resolution so a mid-run
+// stop is distinguishable from a pre-/post-flight one. An empty
+// cancelledDuring is exactly prStateCheck.
+func prStateCheckCancelled(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+	cancelledDuring string,
+) (*agentlib.Result, error) {
 	// 0. Nil client = check disabled (tests without PR-state concern).
 	if client == nil {
 		return nil, nil
@@ -113,7 +130,16 @@ func prStateCheck(
 	ref, _ := md.Frontmatter.String("ref")
 	switch {
 	case state == "MERGED":
-		return closeMoot(ctx, md, ResolutionVerdictMerged, "completed", state, mergedAt, headRefOid)
+		return closeMoot(
+			ctx,
+			md,
+			ResolutionVerdictMerged,
+			"completed",
+			state,
+			mergedAt,
+			headRefOid,
+			cancelledDuring,
+		)
 	case state == "CLOSED":
 		return closeMoot(
 			ctx,
@@ -123,6 +149,7 @@ func prStateCheck(
 			state,
 			mergedAt,
 			headRefOid,
+			cancelledDuring,
 		)
 	case state == "OPEN" && ref != headRefOid:
 		return closeMoot(
@@ -133,6 +160,7 @@ func prStateCheck(
 			state,
 			mergedAt,
 			headRefOid,
+			cancelledDuring,
 		)
 	default:
 		// OPEN at the reviewed ref — the review may still matter.
@@ -156,15 +184,17 @@ func closeMoot(
 	prState string,
 	mergedAt string,
 	headRefOid string,
+	cancelledDuring string,
 ) (*agentlib.Result, error) {
 	section, marshalErr := agentlib.MarshalSectionTyped(
 		ctx,
 		"## Resolution",
 		ResolutionOutput{
-			Verdict:    verdict,
-			PRState:    prState,
-			MergedAt:   mergedAt,
-			HeadRefOid: headRefOid,
+			Verdict:         verdict,
+			PRState:         prState,
+			MergedAt:        mergedAt,
+			HeadRefOid:      headRefOid,
+			CancelledDuring: cancelledDuring,
 		},
 	)
 	if marshalErr != nil {

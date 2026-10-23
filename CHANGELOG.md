@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - feat: review a multi-chunk PR's chunks concurrently, up to `REVIEW_CHUNK_CONCURRENCY` (default 3), so a large PR finishes inside `REVIEW_MAX_DURATION` instead of salvaging without a verdict; chunk outputs still merge in chunk order into one posted verdict, the concerns gate keys on the worst chunk's own budget consumption (`max(elapsed_i / budget_i)`), each chunk's prompt states its own budget and warns when the worktree is shared, and a budget expiry or runner failure cancels every in-flight chunk
 
+## v0.12.0
+
+- feat: stop a running execution / ai_review claude call when its PR merges, closes or its head moves — a poll every `PR_STATE_POLL_INTERVAL` (default 60s, 0 disables) cancels the call and writes the existing `## Resolution` with a new `cancelled_during` field, instead of finishing the review and discarding it; planning is not watched
+
 ## v0.11.9
 
 - chore: update github.com/bborbe/agent to v0.113.0, github.com/bborbe/kafka to v1.28.5, github.com/bborbe/service to v1.11.1, github.com/bborbe/time to v1.27.18

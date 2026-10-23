@@ -122,6 +122,7 @@ var _ = Describe("reviewStep", func() {
 			"",
 			libtime.Duration(25*time.Minute),
 			nil,
+			libtime.Duration(0),
 		)
 	})
 
@@ -262,6 +263,7 @@ prior verdict body
 				"test-bot",
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			runner.RunReturns(&claudelib.ClaudeResult{Result: passVerdict}, nil)
 		})
@@ -390,6 +392,7 @@ prior verdict body
 					"",
 					libtime.Duration(25*time.Minute),
 					nil,
+					libtime.Duration(0),
 				)
 				content := "---\nref: abc123\n---\n\nReview the PR at " + prURL + "\n\n" +
 					"## Review\n\nsome content\n"
@@ -421,6 +424,7 @@ prior verdict body
 				"",
 				libtime.Duration(20*time.Millisecond),
 				nil,
+				libtime.Duration(0),
 			)
 			md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
 			Expect(err).NotTo(HaveOccurred())
@@ -457,6 +461,7 @@ prior verdict body
 					"",
 					libtime.Duration(20*time.Millisecond),
 					nil,
+					libtime.Duration(0),
 				)
 				md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
 				Expect(err).NotTo(HaveOccurred())
@@ -492,6 +497,7 @@ prior verdict body
 					"",
 					libtime.Duration(20*time.Millisecond),
 					nil,
+					libtime.Duration(0),
 				)
 				md, err := agentlib.ParseMarkdown(ctx, "# Task\n\nsome content")
 				Expect(err).NotTo(HaveOccurred())
@@ -550,6 +556,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 					botLogin,
 					libtime.Duration(25*time.Minute),
 					nil,
+					libtime.Duration(0),
 				)
 				md, err := agentlib.ParseMarkdown(
 					ctx,
@@ -594,6 +601,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
@@ -629,6 +637,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
@@ -665,6 +674,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 					botLogin,
 					libtime.Duration(25*time.Minute),
 					nil,
+					libtime.Duration(0),
 				)
 				md, err := agentlib.ParseMarkdown(
 					ctx,
@@ -695,6 +705,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
@@ -725,6 +736,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			md, err := agentlib.ParseMarkdown(
 				ctx,
@@ -752,6 +764,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			// Bitbucket URL in preamble
 			md, err := agentlib.ParseMarkdown(
@@ -780,6 +793,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			md, err := agentlib.ParseMarkdown(ctx,
 				"---\n---\n\nReview the PR at "+prURL+"\n\nsome content")
@@ -805,6 +819,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 			// Preamble has no GitHub PR URL at all — neither GitHub nor Bitbucket
 			md, err := agentlib.ParseMarkdown(ctx,
@@ -834,6 +849,7 @@ var _ = Describe("dismiss-and-comment routing", func() {
 					botLogin,
 					libtime.Duration(25*time.Minute),
 					nil,
+					libtime.Duration(0),
 				)
 				md, err := agentlib.ParseMarkdown(ctx,
 					"---\nref: "+headSHA+"\n---\n\nReview the PR at "+prURL+"\n\nsome content")
@@ -897,6 +913,7 @@ var _ = Describe("verifier diff embedding", func() {
 			"test-bot",
 			libtime.Duration(25*time.Minute),
 			prState,
+			libtime.Duration(0),
 		)
 	})
 

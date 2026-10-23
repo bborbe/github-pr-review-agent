@@ -59,7 +59,11 @@ type application struct {
 	// and be >= 60s. The default 25m sits below the executor's default
 	// ZombieJobTimeoutSeconds (1800s) with headroom for salvage + Kafka delivery;
 	// operators who lower zombieJobTimeoutSeconds must keep this below it.
-	MaxReviewDuration libtime.Duration `required:"false" arg:"review-max-duration" env:"REVIEW_MAX_DURATION" usage:"Soft time budget per Claude phase run; keep below the K8s Job ActiveDeadlineSeconds / ZombieJobTimeoutSeconds (default 1800s) with headroom for salvage + Kafka delivery; must be >= 60s" default:"25m"`
+	MaxReviewDuration libtime.Duration `required:"false" arg:"review-max-duration"    env:"REVIEW_MAX_DURATION"    usage:"Soft time budget per Claude phase run; keep below the K8s Job ActiveDeadlineSeconds / ZombieJobTimeoutSeconds (default 1800s) with headroom for salvage + Kafka delivery; must be >= 60s" default:"25m"`
+	// PRStatePollInterval is how often a running execution / ai_review claude
+	// call re-reads the PR state; a merged, closed or superseded PR cancels
+	// the call mid-run. 0 disables the mid-run watch.
+	PRStatePollInterval libtime.Duration `required:"false" arg:"pr-state-poll-interval" env:"PR_STATE_POLL_INTERVAL" usage:"How often a running review re-reads the PR state and stops when the PR merged, closed or moved; 0 disables"                                                                               default:"60s"`
 
 	// Chunked review thresholds. A PR whose reviewable added lines exceed
 	// ReviewChunkEngageAdditions is partitioned into bounded chunks; each value
@@ -113,12 +117,13 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return err
 	}
 	glog.V(2).Infof("review max duration=%s", a.MaxReviewDuration)
-	if err := prpkg.ValidateReviewChunkConfig(ctx, prpkg.ReviewChunkConfig{
+	chunkConfig := prpkg.ReviewChunkConfig{
 		EngageAdditions: a.ReviewChunkEngageAdditions,
 		MaxAdditions:    a.ReviewChunkMaxAdditions,
 		MaxFiles:        a.ReviewChunkMaxFiles,
 		Concurrency:     a.ReviewChunkConcurrency,
-	}); err != nil {
+	}
+	if err := prpkg.ValidateReviewChunkConfig(ctx, chunkConfig); err != nil {
 		return err
 	}
 
@@ -173,19 +178,15 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		WorkPath:                    workPath,
 		ReviewMode:                  a.ReviewMode,
 		MaxReviewDuration:           a.MaxReviewDuration,
-		ReviewChunkConfig: prpkg.ReviewChunkConfig{
-			EngageAdditions: a.ReviewChunkEngageAdditions,
-			MaxAdditions:    a.ReviewChunkMaxAdditions,
-			MaxFiles:        a.ReviewChunkMaxFiles,
-			Concurrency:     a.ReviewChunkConcurrency,
-		},
-		RepoAllowlist: repoAllowlist,
-		AuthSetup:     authSetup,
-		Phase:         a.Phase,
-		TaskContent:   string(taskContent),
-		Deliverer:     deliverer,
-		BotLogin:      a.BotLogin,
-		SkipPost:      a.SkipPost,
+		PRStatePollInterval:         a.PRStatePollInterval,
+		ReviewChunkConfig:           chunkConfig,
+		RepoAllowlist:               repoAllowlist,
+		AuthSetup:                   authSetup,
+		Phase:                       a.Phase,
+		TaskContent:                 string(taskContent),
+		Deliverer:                   deliverer,
+		BotLogin:                    a.BotLogin,
+		SkipPost:                    a.SkipPost,
 	})
 	if err != nil {
 		return errors.Wrap(ctx, err, "agent run failed")
