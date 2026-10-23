@@ -2727,6 +2727,55 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(exists).To(BeFalse())
 	})
 
+	It("reports the genuine failure, not a sibling it cancelled", func() {
+		const chunkCount = 7
+		entered := make(chan int, chunkCount)
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			entered <- idx
+			switch idx {
+			case 3:
+				// The genuine failure, at a HIGHER index than the siblings it
+				// will cancel — the shape an index-ordered scan gets wrong.
+				seen := map[int]bool{}
+				for len(seen) < 2 {
+					got := <-entered
+					if got == 1 || got == 2 {
+						seen[got] = true
+					}
+				}
+				return nil, errors.New("genuine cause: the patch does not compile")
+			default:
+				<-runCtx.Done()
+				// Production shape: the real runner wraps the CLI's exit error and
+				// does NOT chain the context error, so this is indistinguishable
+				// from an ordinary failure by inspection.
+				return nil, fmt.Errorf("claude CLI failed: %s", "signal: killed")
+			}
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusFailed))
+		Expect(result.Message).To(ContainSubstring("genuine cause: the patch does not compile"))
+		Expect(result.Message).NotTo(ContainSubstring("signal: killed"))
+	})
+
 	It("stops every in-flight chunk on external cancellation and joins them", func() {
 		const chunkCount = 7
 		var entered int32

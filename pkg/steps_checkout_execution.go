@@ -392,7 +392,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 
 	glog.V(2).Infof("fan-out start concurrency=%d chunks=%d", concurrency, n)
 
-	results, checkResult := s.dispatchChunks(
+	results, checkResult, causeErr := s.dispatchChunks(
 		ctx,
 		md,
 		runner,
@@ -410,7 +410,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		return checkResult, nil
 	}
 
-	if outcome, done, err := s.chunkOutcome(md, results, n); done {
+	if outcome, done, err := s.chunkOutcome(md, results, n, causeErr); done {
 		return outcome, err
 	}
 
@@ -449,6 +449,7 @@ func (s *checkoutExecutionStep) chunkOutcome(
 	md *agentlib.Markdown,
 	results []*chunkRunResult,
 	n int,
+	causeErr error,
 ) (result *agentlib.Result, done bool, err error) {
 	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
 		return r.stepErr != nil
@@ -465,6 +466,12 @@ func (s *checkoutExecutionStep) chunkOutcome(
 	}); i >= 0 {
 		writeSalvage(md, fmt.Sprintf("Chunk %d/%d\n\n%s", i+1, n, results[i].partial))
 		return budgetExpiredResult("execution", s.maxDuration), true, nil
+	}
+	// The genuine failure that triggered the cancel wins over a sibling it
+	// killed: siblings are recorded with a wrapped CLI exit error that does not
+	// chain the context error, so an index scan would name a casualty.
+	if causeErr != nil {
+		return chunkRunFailure(causeErr), true, nil
 	}
 	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
 		return r.err != nil && !isCancellation(r.err)
@@ -493,7 +500,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 	chunks []ReviewChunk,
 	outerDeadline time.Time,
 	concurrency int,
-) ([]*chunkRunResult, *agentlib.Result) {
+) ([]*chunkRunResult, *agentlib.Result, error) {
 	n := len(chunks)
 	chunkCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -503,6 +510,12 @@ func (s *checkoutExecutionStep) dispatchChunks(
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var cancelOnce sync.Once
+	// causeErr is the first genuine runner failure, recorded BEFORE it cancels
+	// its siblings. The real runner wraps the CLI's exit error
+	// (agent/claude.ClaudeRunner.Run) and does not chain the context error, so a
+	// sibling killed by the cancel looks like an ordinary failure — reporting it
+	// would name a casualty instead of the cause.
+	var causeErr error
 	triggerCancel := func() { cancelOnce.Do(cancel) }
 
 	sem := make(chan struct{}, concurrency)
@@ -548,6 +561,9 @@ func (s *checkoutExecutionStep) dispatchChunks(
 			)
 			mu.Lock()
 			results[i] = &result
+			if causeErr == nil && result.err != nil && !isCancellation(result.err) {
+				causeErr = result.err
+			}
 			mu.Unlock()
 			if result.stepErr != nil || result.earlyResult != nil ||
 				result.budgetExpired ||
@@ -557,7 +573,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 		}(i, chunkDuration)
 	}
 	wg.Wait()
-	return results, checkResult
+	return results, checkResult, causeErr
 }
 
 // runOneChunk runs the scoped review for a single chunk. index is the 0-based
