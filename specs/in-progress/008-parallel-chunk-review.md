@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-23T19:04:06Z"
 generating: "2026-10-23T19:06:12Z"
 prompted: "2026-10-23T19:21:30Z"
+verifying: "2026-10-23T20:10:52Z"
 branch: dark-factory/parallel-chunk-review
 ---
 
