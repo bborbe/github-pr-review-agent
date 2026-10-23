@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [008-parallel-chunk-review]
+summary: Added the checkBeforeChunk seam, hardened cancellation/salvage semantics, added race-clean tests for AC7-AC10, and updated the changelog
+execution_id: github-pr-review-agent-parallel-chunks-exec-029-spec-008-chunk-cancellation
+dark-factory-version: v0.198.7
 created: "2026-10-23T19:12:02Z"
 queued: "2026-10-23T19:27:14Z"
+started: "2026-10-23T20:02:15Z"
+completed: "2026-10-23T20:10:52Z"
 ---
 
 # Chunk cancellation guarantees, the pre-chunk seam, and the changelog

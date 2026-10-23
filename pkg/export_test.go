@@ -165,3 +165,15 @@ func FilterFindingsForTest(
 func ReviewBodyFromRunForTest(result *claudelib.ClaudeResult) string {
 	return reviewBodyFromRun(result)
 }
+
+// SetCheckBeforeChunkForTest installs fn as the step's pre-chunk check so the
+// dispatcher's call count, ordering, and abort behaviour are testable without
+// exposing the field to production callers.
+func SetCheckBeforeChunkForTest(
+	step agentlib.Step,
+	fn func(ctx context.Context, md *agentlib.Markdown) *agentlib.Result,
+) {
+	if s, ok := step.(*checkoutExecutionStep); ok {
+		s.checkBeforeChunkFn = fn
+	}
+}

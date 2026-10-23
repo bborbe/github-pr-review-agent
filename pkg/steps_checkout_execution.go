@@ -45,6 +45,11 @@ type checkoutExecutionStep struct {
 	maxDuration     libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
 	prState         PRStateClient
 	chunkConfig     ReviewChunkConfig // thresholds deciding whether the review is chunked
+	// checkBeforeChunkFn is the pre-chunk seam body. nil in production (the
+	// placeholder returns nil); tests install a spy through
+	// SetCheckBeforeChunkForTest. The mid-run PR-state check is the intended
+	// production filler and needs no change to the dispatch loop.
+	checkBeforeChunkFn func(ctx context.Context, md *agentlib.Markdown) *agentlib.Result
 }
 
 // NewCheckoutExecutionStep constructs the execution-phase step that wires
@@ -93,6 +98,24 @@ func NewCheckoutExecutionStep(
 
 // Name implements agentlib.Step.
 func (s *checkoutExecutionStep) Name() string { return "pr-execute" }
+
+// checkBeforeChunk is the single pre-chunk seam. A concurrent fan-out has no
+// "between chunks" moment, so the dispatcher calls this exactly once per
+// chunk, from its own goroutine, immediately before that chunk starts and
+// before its concurrency slot is filled. nil means continue; a non-nil Result
+// aborts the whole review with it: no further chunk starts, the in-flight
+// chunks are cancelled, and the step returns this result after every chunk
+// goroutine has exited. The body is deliberately a placeholder — the mid-run
+// PR-state check is the intended filler and needs no change to the loop.
+func (s *checkoutExecutionStep) checkBeforeChunk(
+	ctx context.Context,
+	md *agentlib.Markdown,
+) *agentlib.Result {
+	if s.checkBeforeChunkFn == nil {
+		return nil
+	}
+	return s.checkBeforeChunkFn(ctx, md)
+}
 
 // ShouldRun always returns true. Idempotency for the "## Review already
 // present" case is enforced inside Run (skip clone+claude, publish
@@ -369,8 +392,9 @@ func (s *checkoutExecutionStep) runChunkedReview(
 
 	glog.V(2).Infof("fan-out start concurrency=%d chunks=%d", concurrency, n)
 
-	results := s.dispatchChunks(
+	results, checkResult := s.dispatchChunks(
 		ctx,
+		md,
 		runner,
 		taskContent,
 		baseRef,
@@ -379,6 +403,12 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		outerDeadline,
 		concurrency,
 	)
+
+	// A pre-chunk check's terminal result wins regardless of what the in-flight
+	// chunks reported.
+	if checkResult != nil {
+		return checkResult, nil
+	}
 
 	if outcome, done, err := s.chunkOutcome(md, results, n); done {
 		return outcome, err
@@ -456,18 +486,20 @@ func (s *checkoutExecutionStep) chunkOutcome(
 // further chunk starts; results are collected by chunk index.
 func (s *checkoutExecutionStep) dispatchChunks(
 	ctx context.Context,
+	md *agentlib.Markdown,
 	runner claudelib.ClaudeRunner,
 	taskContent, baseRef string,
 	funnel FunnelResult,
 	chunks []ReviewChunk,
 	outerDeadline time.Time,
 	concurrency int,
-) []*chunkRunResult {
+) ([]*chunkRunResult, *agentlib.Result) {
 	n := len(chunks)
 	chunkCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	results := make([]*chunkRunResult, n)
+	var checkResult *agentlib.Result
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var cancelOnce sync.Once
@@ -481,6 +513,14 @@ func (s *checkoutExecutionStep) dispatchChunks(
 		now := s.currentDateTime.Now().Time()
 		deadline := WaveChunkDeadline(now, outerDeadline, n-i, concurrency)
 		chunkDuration := libtime.Duration(deadline.Sub(now))
+
+		// The seam runs on this dispatching goroutine, outside the concurrent
+		// region, before the chunk's slot is filled.
+		if early := s.checkBeforeChunk(chunkCtx, md); early != nil {
+			checkResult = early
+			triggerCancel()
+			break
+		}
 
 		select {
 		case sem <- struct{}{}:
@@ -517,7 +557,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 		}(i, chunkDuration)
 	}
 	wg.Wait()
-	return results
+	return results, checkResult
 }
 
 // runOneChunk runs the scoped review for a single chunk. index is the 0-based
