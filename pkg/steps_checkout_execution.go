@@ -44,6 +44,7 @@ type checkoutExecutionStep struct {
 	maxDuration     libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
 	prState         PRStateClient
 	chunkConfig     ReviewChunkConfig // thresholds deciding whether the review is chunked
+	pollInterval    libtime.Duration  // mid-run PR-state poll; <= 0 disables the watch
 }
 
 // NewCheckoutExecutionStep constructs the execution-phase step that wires
@@ -53,7 +54,9 @@ type checkoutExecutionStep struct {
 // claude run; expiry routes to human_review. prState queries the live GitHub
 // PR state so a merged/closed/superseded PR short-circuits before any work.
 // chunkConfig carries the chunking thresholds; at or below the engage
-// threshold the review runs once, unscoped.
+// threshold the review runs once, unscoped. pollInterval is how often a
+// running claude call re-reads the PR state; a merged/closed/superseded PR
+// cancels the call mid-run. A pollInterval <= 0 disables the mid-run watch.
 func NewCheckoutExecutionStep(
 	repoManager git.RepoManager,
 	claudeConfigDir claudelib.ClaudeConfigDir,
@@ -70,8 +73,10 @@ func NewCheckoutExecutionStep(
 	maxDuration libtime.Duration,
 	prState PRStateClient,
 	chunkConfig ReviewChunkConfig,
+	pollInterval libtime.Duration,
 ) agentlib.Step {
 	return &checkoutExecutionStep{
+		pollInterval:    pollInterval,
 		repoManager:     repoManager,
 		claudeConfigDir: claudeConfigDir,
 		agentDir:        agentDir,
@@ -407,36 +412,55 @@ func (s *checkoutExecutionStep) runOneChunk(
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
-	runResult, runErr, budgetExpired, elapsed := runWithSoftBudget(
+	run := runWatchedWithSoftBudget(
 		ctx,
 		runner,
 		prompt,
 		chunkDuration,
+		newPRStateWatch(md, s.prState, s.pollInterval, CancelledDuringExecution),
 	)
-	if runErr != nil {
-		if budgetExpired {
-			glog.V(2).Infof(
-				"execution: chunk %d/%d soft time budget exceeded nextPhase=human_review",
+	if run.Err != nil {
+		result, err := s.chunkRunFailure(ctx, md, run, index, count)
+		return "", run.Elapsed, result, err
+	}
+	return run.Result.Result, run.Elapsed, nil, nil
+}
+
+// chunkRunFailure routes a chunk's failed claude call: cancelled by the
+// PR-state watch → terminal moot verdict (no salvage, nothing posted); fired
+// soft budget → salvage + human_review; anything else → failed (controller
+// retry). index is the 0-based chunk position, count the chunk total.
+func (s *checkoutExecutionStep) chunkRunFailure(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	run budgetedRun,
+	index, count int,
+) (*agentlib.Result, error) {
+	if run.Mooted {
+		glog.V(2).Infof("execution: chunk %d/%d cancelled mid-run — PR is moot", index+1, count)
+		return mootCancelledResult(ctx, md, s.prState, CancelledDuringExecution)
+	}
+	if run.Expired {
+		glog.V(2).Infof(
+			"execution: chunk %d/%d soft time budget exceeded nextPhase=human_review",
+			index+1,
+			count,
+		)
+		writeSalvage(
+			md,
+			fmt.Sprintf(
+				"Chunk %d/%d\n\n%s",
 				index+1,
 				count,
-			)
-			writeSalvage(
-				md,
-				fmt.Sprintf(
-					"Chunk %d/%d\n\n%s",
-					index+1,
-					count,
-					ExtractBudgetPartial(runResult, runErr),
-				),
-			)
-			return "", elapsed, budgetExpiredResult("execution", s.maxDuration), nil
-		}
-		return "", elapsed, &agentlib.Result{
-			Status:  agentlib.AgentStatusFailed,
-			Message: fmt.Sprintf("execution claude run failed: %v", runErr),
-		}, nil
+				ExtractBudgetPartial(run.Result, run.Err),
+			),
+		)
+		return budgetExpiredResult("execution", s.maxDuration), nil
 	}
-	return runResult.Result, elapsed, nil, nil
+	return &agentlib.Result{
+		Status:  agentlib.AgentStatusFailed,
+		Message: fmt.Sprintf("execution claude run failed: %v", run.Err),
+	}, nil
 }
 
 // checkAllowlist returns a non-nil Result if the cloneURL is blocked by the
@@ -533,13 +557,21 @@ func (s *checkoutExecutionStep) runClaude(
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
-	runResult, runErr, budgetExpired, runElapsed := runWithSoftBudget(
+	run := runWatchedWithSoftBudget(
 		ctx,
 		runner,
 		prompt,
 		s.maxDuration,
+		newPRStateWatch(md, s.prState, s.pollInterval, CancelledDuringExecution),
 	)
+	runResult, runErr, budgetExpired, runElapsed := run.Result, run.Err, run.Expired, run.Elapsed
 	if runErr != nil {
+		// A cancelled call (PR merged / closed / moved mid-run) writes the
+		// terminal verdict BEFORE ## Review — nothing is posted.
+		if run.Mooted {
+			glog.V(2).Infof("execution: claude run cancelled mid-run — PR is moot")
+			return mootCancelledResult(ctx, md, s.prState, CancelledDuringExecution)
+		}
 		// Budget expiry (a FIRED run-context deadline) routes to human_review
 		// BEFORE ## Review is written or the review posted — never retried here.
 		// The streamed partial (if any) is salvaged under ## Salvage so the run
