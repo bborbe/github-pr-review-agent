@@ -49,6 +49,7 @@ Env-driven (Kubernetes) — key variables:
 | `REVIEW_CHUNK_ENGAGE_ADDITIONS` | Total reviewable added lines above which a PR is reviewed in chunks (default `500`, must be ≥ 1) |
 | `REVIEW_CHUNK_MAX_ADDITIONS` | Maximum added lines per review chunk (default `300`, must be ≥ 1) |
 | `REVIEW_CHUNK_MAX_FILES` | Maximum changed files per review chunk (default `15`, must be ≥ 1) |
+| `REVIEW_CHUNK_CONCURRENCY` | Maximum number of chunk reviews running at once (default `3`, must be ≥ 1); lower it when the model router queues |
 | `BITBUCKET_TOKEN` | Bitbucket Server bearer token (Bitbucket PRs only) |
 
 The target repo's `.maintainer.yaml` (`prReviewer.autoApprove`) is read from

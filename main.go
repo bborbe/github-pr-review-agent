@@ -71,9 +71,10 @@ type application struct {
 	// Chunked review thresholds. A PR whose reviewable added lines exceed
 	// ReviewChunkEngageAdditions is partitioned into bounded chunks; each value
 	// must be >= 1 (none of them can disable chunking). Validated at startup.
-	ReviewChunkEngageAdditions int `required:"false" arg:"review-chunk-engage-additions" env:"REVIEW_CHUNK_ENGAGE_ADDITIONS" usage:"Total reviewable added lines above which a PR is reviewed in chunks" default:"500"`
-	ReviewChunkMaxAdditions    int `required:"false" arg:"review-chunk-max-additions"    env:"REVIEW_CHUNK_MAX_ADDITIONS"    usage:"Maximum added lines per review chunk"                                default:"300"`
-	ReviewChunkMaxFiles        int `required:"false" arg:"review-chunk-max-files"        env:"REVIEW_CHUNK_MAX_FILES"        usage:"Maximum changed files per review chunk"                              default:"15"`
+	ReviewChunkEngageAdditions int `required:"false" arg:"review-chunk-engage-additions" env:"REVIEW_CHUNK_ENGAGE_ADDITIONS" usage:"Total reviewable added lines above which a PR is reviewed in chunks"                    default:"500"`
+	ReviewChunkMaxAdditions    int `required:"false" arg:"review-chunk-max-additions"    env:"REVIEW_CHUNK_MAX_ADDITIONS"    usage:"Maximum added lines per review chunk"                                                   default:"300"`
+	ReviewChunkMaxFiles        int `required:"false" arg:"review-chunk-max-files"        env:"REVIEW_CHUNK_MAX_FILES"        usage:"Maximum changed files per review chunk"                                                 default:"15"`
+	ReviewChunkConcurrency     int `required:"false" arg:"review-chunk-concurrency"      env:"REVIEW_CHUNK_CONCURRENCY"      usage:"Maximum number of chunk reviews running at once; lower it when the model router queues" default:"3"`
 
 	// Task content from agent pipeline
 	TaskContent string `required:"true" arg:"task-content" env:"TASK_CONTENT" usage:"Raw task markdown from vault"`
@@ -154,6 +155,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		EngageAdditions: a.ReviewChunkEngageAdditions,
 		MaxAdditions:    a.ReviewChunkMaxAdditions,
 		MaxFiles:        a.ReviewChunkMaxFiles,
+		Concurrency:     a.ReviewChunkConcurrency,
 	}); err != nil {
 		jobMetrics.RecordRun(agentlib.AgentStatusFailed)
 		jobMetrics.RecordDuration(time.Since(start))
@@ -286,6 +288,7 @@ func (a *application) dispatchAgent(
 			EngageAdditions: a.ReviewChunkEngageAdditions,
 			MaxAdditions:    a.ReviewChunkMaxAdditions,
 			MaxFiles:        a.ReviewChunkMaxFiles,
+			Concurrency:     a.ReviewChunkConcurrency,
 		},
 	)
 	agent, err := provider.Get(ctx, agentlib.TaskType(a.TaskType))

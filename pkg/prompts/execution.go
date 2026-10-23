@@ -205,6 +205,12 @@ func BuildExecutionInstructions(
 // chunk count; both appear verbatim in the scope preamble. chunkFindings is the
 // funnel findings JSON already filtered to this chunk's files (see
 // pkg.FilterFindingsByBasenames).
+//
+// chunkBudget is that chunk's own deadline duration (not REVIEW_MAX_DURATION),
+// rendered as the time-budget footer. When concurrency > 1 a shared-worktree
+// notice is appended to the scope preamble naming the commands the chunk must
+// not run; at concurrency <= 1 the notice is absent and the prompt is exactly
+// the sequential one.
 func BuildChunkExecutionInstructions(
 	ctx context.Context,
 	claudeConfigDir claudelib.ClaudeConfigDir,
@@ -214,21 +220,26 @@ func BuildChunkExecutionInstructions(
 	chunkCount int,
 	chunkFiles []string,
 	chunkFindings string,
-	maxDuration libtime.Duration,
+	chunkBudget libtime.Duration,
+	concurrency int,
 ) (claudelib.Instructions, error) {
 	steer := fmt.Sprintf(
 		funnelInjectSteerTemplate,
 		pluginRootDir(claudeConfigDir),
 		chunkFindings,
 	)
+	scope := renderChunkScope(chunkIndex, chunkCount, chunkFiles)
+	if concurrency > 1 {
+		scope += renderSharedWorktreeNotice(concurrency)
+	}
 	return assembleExecutionInstructions(
 		ctx,
 		claudeConfigDir,
 		reviewMode,
 		baseRef,
-		renderChunkScope(chunkIndex, chunkCount, chunkFiles),
+		scope,
 		steer,
-		maxDuration,
+		chunkBudget,
 	)
 }
 
@@ -257,6 +268,21 @@ func renderChunkScope(chunkIndex, chunkCount int, chunkFiles []string) string {
 		lines = append(lines, "- "+f)
 	}
 	return fmt.Sprintf(chunkScopeTemplate, chunkIndex, chunkCount, strings.Join(lines, "\n"))
+}
+
+// sharedWorktreeNoticeTemplate warns a chunk review that the worktree is
+// shared with concurrently running chunk reviews and names the commands that
+// would corrupt or delete the checkout the other chunks and the post step read.
+const sharedWorktreeNoticeTemplate = "## Shared worktree\n\n" +
+	"This worktree is shared with other chunk reviews running concurrently (concurrency %d). " +
+	"Do NOT run `git fetch`, `git worktree`, `git branch`, or `rm -rf` — those " +
+	"commands mutate or delete the checkout the other chunks and the posting " +
+	"step read. Use read-only inspection only (`git diff`, `git log`, `git show`, " +
+	"`git status`, `git rev-parse`, `git ls-files`).\n\n---\n\n"
+
+// renderSharedWorktreeNotice renders the notice naming the configured concurrency.
+func renderSharedWorktreeNotice(concurrency int) string {
+	return fmt.Sprintf(sharedWorktreeNoticeTemplate, concurrency)
 }
 
 // assembleExecutionInstructions is the shared assembly for both execution

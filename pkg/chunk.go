@@ -30,6 +30,11 @@ const DefaultReviewChunkMaxAdditions = 300
 // DefaultReviewChunkMaxFiles is the default per-chunk changed-file bound.
 const DefaultReviewChunkMaxFiles = 15
 
+// DefaultReviewChunkConcurrency is the default number of chunk reviews that
+// may run at once. It is a starting value tuned from the router measurement,
+// never a claim that N reviews fit the provider's concurrency cap.
+const DefaultReviewChunkConcurrency = 3
+
 // ChangedFile is one entry of the funnel's changed-file inventory: a
 // repo-relative changed path together with its added-line count.
 type ChangedFile struct {
@@ -44,27 +49,31 @@ type ReviewChunk struct {
 	Additions int
 }
 
-// ReviewChunkConfig carries the three chunking thresholds read from the
+// ReviewChunkConfig carries the four chunking values read from the
 // environment. Every value is >= 1; none of them can disable chunking.
+// Concurrency is the maximum number of chunk reviews running at once and must
+// be >= 1.
 type ReviewChunkConfig struct {
 	EngageAdditions int
 	MaxAdditions    int
 	MaxFiles        int
+	Concurrency     int
 }
 
-// DefaultReviewChunkConfig returns the three default chunking thresholds.
+// DefaultReviewChunkConfig returns the four default chunking values.
 func DefaultReviewChunkConfig() ReviewChunkConfig {
 	return ReviewChunkConfig{
 		EngageAdditions: DefaultReviewChunkEngageAdditions,
 		MaxAdditions:    DefaultReviewChunkMaxAdditions,
 		MaxFiles:        DefaultReviewChunkMaxFiles,
+		Concurrency:     DefaultReviewChunkConcurrency,
 	}
 }
 
-// ValidateReviewChunkConfig fails fast when any of the three chunking
-// thresholds is below 1. Called by both entry points at startup so a malformed
-// value cannot silently disable chunking. The returned error names the
-// offending environment variable and its value.
+// ValidateReviewChunkConfig fails fast when any of the four chunking values is
+// below 1. Called by both entry points at startup so a malformed value cannot
+// silently disable chunking. The returned error names the offending environment
+// variable and its value.
 func ValidateReviewChunkConfig(ctx context.Context, cfg ReviewChunkConfig) error {
 	switch {
 	case cfg.EngageAdditions < 1:
@@ -84,6 +93,12 @@ func ValidateReviewChunkConfig(ctx context.Context, cfg ReviewChunkConfig) error
 			ctx,
 			"REVIEW_CHUNK_MAX_FILES must be at least 1, got %d",
 			cfg.MaxFiles,
+		)
+	case cfg.Concurrency < 1:
+		return errors.Errorf(
+			ctx,
+			"REVIEW_CHUNK_CONCURRENCY must be at least 1, got %d",
+			cfg.Concurrency,
 		)
 	}
 	return nil
@@ -258,6 +273,24 @@ func ChunkDeadline(now, outerDeadline time.Time, remainingChunks int) time.Time 
 		return outerDeadline
 	}
 	return candidate
+}
+
+// WaveChunkDeadline returns the deadline for one chunk when up to concurrency
+// chunk reviews run at once. The remaining-chunk count is replaced by the
+// number of remaining waves, ceil(remainingChunks/concurrency), so each wave
+// is granted the same reservation ChunkDeadline grants each chunk sequentially.
+// At concurrency <= 1 it is exactly ChunkDeadline(now, outerDeadline,
+// remainingChunks). remainingChunks is the number of chunks not yet started,
+// including the one this deadline is for, and is >= 1 in practice.
+func WaveChunkDeadline(
+	now, outerDeadline time.Time,
+	remainingChunks, concurrency int,
+) time.Time {
+	if concurrency <= 1 {
+		return ChunkDeadline(now, outerDeadline, remainingChunks)
+	}
+	waves := (remainingChunks + concurrency - 1) / concurrency
+	return ChunkDeadline(now, outerDeadline, waves)
 }
 
 // FilterFindingsByBasenames rewrites the funnel findings JSON so that only

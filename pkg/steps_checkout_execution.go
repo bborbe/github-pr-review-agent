@@ -313,6 +313,10 @@ func (s *checkoutExecutionStep) runChunkedReview(
 	}
 
 	n := len(chunks)
+	concurrency := s.chunkConfig.Concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	outerDeadline := s.currentDateTime.Now().Time().Add(s.maxDuration.Duration())
 	var totalElapsed time.Duration
 	outputs := make([]string, 0, n)
@@ -328,6 +332,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 			i,
 			n,
 			outerDeadline,
+			concurrency,
 		)
 		if earlyResult != nil || runErr != nil {
 			return earlyResult, runErr
@@ -364,12 +369,14 @@ func (s *checkoutExecutionStep) runOneChunk(
 	chunk ReviewChunk,
 	index, count int,
 	outerDeadline time.Time,
+	concurrency int,
 ) (string, time.Duration, *agentlib.Result, error) {
-	deadline := ChunkDeadline(s.currentDateTime.Now().Time(), outerDeadline, count-index)
-	chunkDuration := libtime.Duration(deadline.Sub(s.currentDateTime.Now().Time()))
+	now := s.currentDateTime.Now().Time()
+	chunkDuration := libtime.Duration(
+		WaveChunkDeadline(now, outerDeadline, count-index, concurrency).Sub(now),
+	)
 	glog.V(2).
 		Infof("review chunk %d/%d files=%d additions=%d", index+1, count, len(chunk.Files), chunk.Additions)
-
 	chunkFindings, err := FilterFindingsByBasenames(ctx, funnel.FindingsJSON, chunk.Files)
 	if err != nil {
 		return "", 0, &agentlib.Result{
@@ -377,13 +384,9 @@ func (s *checkoutExecutionStep) runOneChunk(
 			Message: fmt.Sprintf("execution chunk findings filter failed: %v", err),
 		}, nil
 	}
-
 	// The chunk's file paths are PR-author-controlled, so neutralize code fences
 	// before they reach the prompt (pkg/prompts cannot do it: it would cycle).
-	neutralized := make([]string, 0, len(chunk.Files))
-	for _, f := range chunk.Files {
-		neutralized = append(neutralized, neutralizeCodeFences(f))
-	}
+	neutralized := neutralizeChunkFiles(chunk.Files)
 
 	instructions, err := prompts.BuildChunkExecutionInstructions(
 		ctx,
@@ -394,7 +397,8 @@ func (s *checkoutExecutionStep) runOneChunk(
 		count,
 		neutralized,
 		chunkFindings,
-		s.maxDuration,
+		chunkDuration,
+		concurrency,
 	)
 	if err != nil {
 		return "", 0, nil, errors.Wrapf(
@@ -437,6 +441,16 @@ func (s *checkoutExecutionStep) runOneChunk(
 		}, nil
 	}
 	return runResult.Result, elapsed, nil, nil
+}
+
+// neutralizeChunkFiles returns the chunk's file paths with code fences
+// neutralized, one per input path and in input order.
+func neutralizeChunkFiles(files []string) []string {
+	neutralized := make([]string, 0, len(files))
+	for _, f := range files {
+		neutralized = append(neutralized, neutralizeCodeFences(f))
+	}
+	return neutralized
 }
 
 // checkAllowlist returns a non-nil Result if the cloneURL is blocked by the
