@@ -49,6 +49,7 @@ var _ = Describe("checkoutExecutionStep", func() {
 			libtime.Duration(25*time.Minute),
 			nil,
 			pkg.DefaultReviewChunkConfig(),
+			libtime.Duration(0),
 		)
 	})
 
@@ -307,6 +308,7 @@ prior review body
 						libtime.Duration(25*time.Minute),
 						nil,
 						pkg.DefaultReviewChunkConfig(),
+						libtime.Duration(0),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -337,6 +339,7 @@ prior review body
 						libtime.Duration(25*time.Minute),
 						nil,
 						pkg.DefaultReviewChunkConfig(),
+						libtime.Duration(0),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -367,6 +370,7 @@ prior review body
 						libtime.Duration(25*time.Minute),
 						nil,
 						pkg.DefaultReviewChunkConfig(),
+						libtime.Duration(0),
 					)
 					const nonMatchingTask = "---\nclone_url: https://github.com/bborbe/maintainer.git\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -400,6 +404,7 @@ prior review body
 						libtime.Duration(25*time.Minute),
 						nil,
 						pkg.DefaultReviewChunkConfig(),
+						libtime.Duration(0),
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -435,6 +440,7 @@ prior review body
 						libtime.Duration(25*time.Minute),
 						nil,
 						pkg.DefaultReviewChunkConfig(),
+						libtime.Duration(0),
 					)
 					const badURLTask = "---\nclone_url: not-a-url\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -1118,6 +1124,7 @@ prior review body
 				libtime.Duration(20*time.Millisecond),
 				nil,
 				pkg.DefaultReviewChunkConfig(),
+				libtime.Duration(0),
 			)
 
 			md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1196,6 +1203,7 @@ https://github.com/bborbe/maintainer/pull/14
 					libtime.Duration(20*time.Millisecond),
 					nil,
 					pkg.DefaultReviewChunkConfig(),
+					libtime.Duration(0),
 				)
 
 				md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1270,6 +1278,7 @@ https://github.com/bborbe/maintainer/pull/14
 					libtime.Duration(20*time.Millisecond),
 					nil,
 					pkg.DefaultReviewChunkConfig(),
+					libtime.Duration(0),
 				)
 
 				md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1534,6 +1543,7 @@ https://github.com/bborbe/maintainer/pull/14
 			budget,
 			nil,
 			pkg.DefaultReviewChunkConfig(),
+			libtime.Duration(0),
 		)
 	}
 

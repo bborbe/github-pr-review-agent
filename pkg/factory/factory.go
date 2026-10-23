@@ -208,6 +208,7 @@ func CreateAgent(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	maxDuration libtime.Duration,
 	chunkConfig prpkg.ReviewChunkConfig,
+	prStatePollInterval libtime.Duration,
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
@@ -236,6 +237,7 @@ func CreateAgent(
 		maxDuration,
 		prStateClient,
 		chunkConfig,
+		prStatePollInterval,
 	)
 	reviewStep := prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools),
@@ -246,6 +248,7 @@ func CreateAgent(
 		botLogin,
 		maxDuration,
 		prStateClient,
+		prStatePollInterval,
 	)
 	return agentlib.NewAgent(
 		planningPhase,
@@ -270,6 +273,7 @@ func CreateAgentProvider(
 	currentDateTime libtime.CurrentDateTimeGetter,
 	maxDuration libtime.Duration,
 	chunkConfig prpkg.ReviewChunkConfig,
+	prStatePollInterval libtime.Duration,
 ) agentlib.AgentProvider {
 	botLogin := ResolveBotLogin(env)
 	poster := CreatePrPoster(ghToken, botLogin, currentDateTime)
@@ -288,6 +292,7 @@ func CreateAgentProvider(
 		currentDateTime,
 		maxDuration,
 		chunkConfig,
+		prStatePollInterval,
 	)
 	healthcheckRunner := CreateClaudeRunner(
 		claudeConfigDir,
