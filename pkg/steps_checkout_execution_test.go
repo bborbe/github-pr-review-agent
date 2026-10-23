@@ -1956,6 +1956,81 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(postReq.Verdict).To(Equal(pkg.VerdictApprove))
 	})
 
+	It("demotes on per-chunk budget use through the real fan-out call site", func() {
+		// Pins the WIRING, not just the helper: without this, replacing
+		// maxChunkBudgetUse(results) with 0 keeps the whole suite green.
+		// WaveChunkDeadline floors a chunk budget at now+60s and then caps it at
+		// the outer deadline, so a sub-second REVIEW_MAX_DURATION makes each
+		// chunk's budget exactly that budget — real elapsed time can then drive
+		// the ratio with no fake clock.
+		const budget = 2 * time.Second
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			time.Sleep(1750 * time.Millisecond) // 0.875 of the chunk's own budget
+			return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(2), nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 2
+		step := newStepWithClock(
+			fakeRunner,
+			fakePoster,
+			funnelRunner,
+			libtime.Duration(budget),
+			cfg,
+			&fakeClock{now: time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)},
+		)
+
+		outcome := <-runAsync(step, buildMD())
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(fakeRunner.RunCallCount()).To(Equal(2))
+
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
+	})
+
+	It("demotes on budget use through the real unscoped call site", func() {
+		// The sequential sibling of the row above: runClaude computes
+		// budgetFraction(runElapsed, maxDuration) itself, so this is the only
+		// test that would catch that expression being zeroed.
+		const budget = 2 * time.Second
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			time.Sleep(1750 * time.Millisecond) // 0.875 of the soft budget
+			return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
+		}
+		unscoped := bigFileFunnel(2)
+		unscoped.InventoryDetail = "test: force the unscoped path"
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(unscoped, nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		step := newStepWithClock(
+			fakeRunner,
+			fakePoster,
+			funnelRunner,
+			libtime.Duration(budget),
+			pkg.DefaultReviewChunkConfig(),
+			&fakeClock{now: time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)},
+		)
+
+		outcome := <-runAsync(step, buildMD())
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(fakeRunner.RunCallCount()).To(Equal(1))
+
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
+	})
+
 	DescribeTable(
 		"maxChunkBudgetUse is the gate's key under fan-out: max(elapsed_i / budget_i)",
 		func(chunks []pkg.ChunkBudgetUseForTest, expected float64) {
@@ -1978,12 +2053,16 @@ https://github.com/bborbe/maintainer/pull/14
 				{Elapsed: 3 * time.Minute, Budget: 24 * time.Minute},
 				{Elapsed: 7*time.Minute + 30*time.Second, Budget: 9 * time.Minute},
 			}, 7.5/9.0),
-		Entry("an unstarted slot and a chunk with no recorded budget are skipped",
+		Entry("an unstarted slot is skipped",
 			[]pkg.ChunkBudgetUseForTest{
 				{Nil: true},
-				{Elapsed: 20 * time.Minute, Budget: 0},
 				{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute},
 			}, 0.5),
+		Entry("a chunk with no recorded budget counts as fully consumed, matching budgetFraction",
+			[]pkg.ChunkBudgetUseForTest{
+				{Elapsed: 20 * time.Minute, Budget: 0},
+				{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute},
+			}, 1.0),
 	)
 
 	It("invokes the runner once per chunk, with the clone and funnel each running once", func() {

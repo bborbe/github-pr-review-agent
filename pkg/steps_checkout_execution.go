@@ -45,10 +45,9 @@ type checkoutExecutionStep struct {
 	maxDuration     libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
 	prState         PRStateClient
 	chunkConfig     ReviewChunkConfig // thresholds deciding whether the review is chunked
-	// checkBeforeChunkFn is the pre-chunk seam body. nil in production (the
-	// placeholder returns nil); tests install a spy through
-	// SetCheckBeforeChunkForTest. The mid-run PR-state check is the intended
-	// production filler and needs no change to the dispatch loop.
+	// checkBeforeChunkFn is the pre-chunk seam body. nil in production — the
+	// per-call prStateWatch is the production mid-run check, so nothing fills
+	// this; tests install a spy through SetCheckBeforeChunkForTest.
 	checkBeforeChunkFn func(ctx context.Context, md *agentlib.Markdown) *agentlib.Result
 	pollInterval       libtime.Duration // mid-run PR-state poll; <= 0 disables the watch
 }
@@ -110,8 +109,13 @@ func (s *checkoutExecutionStep) Name() string { return "pr-execute" }
 // before its concurrency slot is filled. nil means continue; a non-nil Result
 // aborts the whole review with it: no further chunk starts, the in-flight
 // chunks are cancelled, and the step returns this result after every chunk
-// goroutine has exited. The body is deliberately a placeholder — the mid-run
-// PR-state check is the intended filler and needs no change to the loop.
+// goroutine has exited.
+//
+// Nothing fills this in production: the mid-run PR-state check it was opened for
+// now runs per claude call (prStateWatch, wired in runOneChunk), which also
+// catches a HEAD move mid-call — something a per-chunk boundary cannot see. The
+// seam is a test-only hook today; if a future check needs a chunk boundary it
+// belongs here rather than in the loop.
 func (s *checkoutExecutionStep) checkBeforeChunk(
 	ctx context.Context,
 	md *agentlib.Markdown,
@@ -364,16 +368,17 @@ func chunkRunFailure(err error) *agentlib.Result {
 // wall-clock span hides a chunk that burned its whole budget behind a short run
 // (9 chunks at N=3 x 4min is a ~12min span against a 20min threshold), while the
 // summed chunk durations double-counts concurrency and demotes every fast run.
-// A nil slot (a chunk the dispatcher never started) or a chunk with no recorded
-// budget is skipped; reaching the gate means every chunk ran, so a 0 here is
-// only reachable through the guard, never through a real fan-out.
+// A nil slot — a chunk the dispatcher never started — is skipped. A chunk with no
+// recorded budget counts as fully consumed, matching budgetFraction's fail-safe
+// direction: ChunkDeadline returns the outer deadline when it is already past,
+// so a non-positive chunk budget is reachable and must not fail open.
 func maxChunkBudgetUse(results []*chunkRunResult) float64 {
 	use := 0.0
 	for _, result := range results {
-		if result == nil || result.budget <= 0 {
+		if result == nil {
 			continue
 		}
-		if fraction := float64(result.elapsed) / float64(result.budget); fraction > use {
+		if fraction := budgetFraction(result.elapsed, result.budget); fraction > use {
 			use = fraction
 		}
 	}
@@ -410,9 +415,11 @@ func budgetElapsed(use float64, budget time.Duration) time.Duration {
 // per-chunk fraction of that chunk's own soft budget any chunk consumed — not
 // the wall-clock span and not the sum of the chunk durations. A chunk that
 // burned its entire budget must fail-close an approve even when the concurrent
-// run finished early, and a fast run must not demote on concurrency alone. At
-// N = 1 the single chunk's budget is the outer budget, so the fraction is the
-// sequential elapsed/budget.
+// run finished early, and a fast run must not demote on concurrency alone.
+// A one-chunk review never reaches here (runReview routes it to
+// runUnscopedReview, whose own fraction is elapsed/REVIEW_MAX_DURATION), and at
+// concurrency 1 the chunk budget is the per-wave ChunkDeadline rather than the
+// outer budget — the fraction is still each chunk's own.
 func (s *checkoutExecutionStep) runChunkedReview(
 	ctx context.Context,
 	md *agentlib.Markdown,
