@@ -190,15 +190,113 @@ var _ = Describe("ValidateReviewChunkConfig", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(envVar))
 		},
-		Entry("engage additions is 0",
-			pkg.ReviewChunkConfig{EngageAdditions: 0, MaxAdditions: 300, MaxFiles: 15},
-			"REVIEW_CHUNK_ENGAGE_ADDITIONS"),
-		Entry("max additions is 0",
-			pkg.ReviewChunkConfig{EngageAdditions: 500, MaxAdditions: 0, MaxFiles: 15},
-			"REVIEW_CHUNK_MAX_ADDITIONS"),
-		Entry("max files is 0",
-			pkg.ReviewChunkConfig{EngageAdditions: 500, MaxAdditions: 300, MaxFiles: 0},
-			"REVIEW_CHUNK_MAX_FILES"),
+		Entry(
+			"engage additions is 0",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 0,
+				MaxAdditions:    300,
+				MaxFiles:        15,
+				Concurrency:     1,
+			},
+			"REVIEW_CHUNK_ENGAGE_ADDITIONS",
+		),
+		Entry(
+			"max additions is 0",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 500,
+				MaxAdditions:    0,
+				MaxFiles:        15,
+				Concurrency:     1,
+			},
+			"REVIEW_CHUNK_MAX_ADDITIONS",
+		),
+		Entry(
+			"max files is 0",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 500,
+				MaxAdditions:    300,
+				MaxFiles:        0,
+				Concurrency:     1,
+			},
+			"REVIEW_CHUNK_MAX_FILES",
+		),
+		Entry(
+			"concurrency is 0",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 500,
+				MaxAdditions:    300,
+				MaxFiles:        15,
+				Concurrency:     0,
+			},
+			"REVIEW_CHUNK_CONCURRENCY",
+		),
+		Entry(
+			"concurrency is -1",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 500,
+				MaxAdditions:    300,
+				MaxFiles:        15,
+				Concurrency:     -1,
+			},
+			"REVIEW_CHUNK_CONCURRENCY",
+		),
+	)
+
+	DescribeTable("accepts a fully-populated config",
+		func(cfg pkg.ReviewChunkConfig) {
+			Expect(pkg.ValidateReviewChunkConfig(ctx, cfg)).To(Succeed())
+		},
+		Entry(
+			"concurrency 1",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 500,
+				MaxAdditions:    300,
+				MaxFiles:        15,
+				Concurrency:     1,
+			},
+		),
+		Entry(
+			"concurrency 3",
+			pkg.ReviewChunkConfig{
+				EngageAdditions: 500,
+				MaxAdditions:    300,
+				MaxFiles:        15,
+				Concurrency:     3,
+			},
+		),
+	)
+
+	It("defaults the concurrency to the exported default", func() {
+		Expect(pkg.DefaultReviewChunkConfig().Concurrency).
+			To(Equal(pkg.DefaultReviewChunkConcurrency))
+		Expect(pkg.DefaultReviewChunkConcurrency).To(Equal(3))
+	})
+})
+
+var _ = Describe("WaveChunkDeadline", func() {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	outer := now.Add(25 * time.Minute)
+
+	DescribeTable("concurrency 1 is exactly ChunkDeadline",
+		func(remaining int) {
+			Expect(pkg.WaveChunkDeadline(now, outer, remaining, 1)).
+				To(Equal(pkg.ChunkDeadline(now, outer, remaining)))
+		},
+		Entry("one chunk remaining", 1),
+		Entry("three chunks remaining", 3),
+		Entry("five chunks remaining", 5),
+		Entry("seven chunks remaining", 7),
+	)
+
+	DescribeTable("remaining chunks are folded into waves",
+		func(remaining int, wantWaves int) {
+			Expect(pkg.WaveChunkDeadline(now, outer, remaining, 3)).
+				To(Equal(pkg.ChunkDeadline(now, outer, wantWaves)))
+		},
+		Entry("six remaining is two waves", 6, 2),
+		Entry("seven remaining is three waves", 7, 3),
+		Entry("two remaining is one wave", 2, 1),
+		Entry("one remaining is one wave", 1, 1),
 	)
 })
 

@@ -430,6 +430,7 @@ var _ = Describe("BuildChunkExecutionInstructions", func() {
 			[]string{"pkg/a.go", "pkg/b.go"},
 			sampleFindings,
 			libtime.Duration(25*time.Minute),
+			1,
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(instructions).To(HaveLen(2))
@@ -459,6 +460,7 @@ var _ = Describe("BuildChunkExecutionInstructions", func() {
 			[]string{"pkg/a.go"},
 			sampleFindings,
 			libtime.Duration(25*time.Minute),
+			1,
 		)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("base_ref is empty"))
@@ -475,8 +477,67 @@ var _ = Describe("BuildChunkExecutionInstructions", func() {
 			[]string{"pkg/a.go"},
 			sampleFindings,
 			libtime.Duration(25*time.Minute),
+			1,
 		)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("reviewMode is empty"))
+	})
+
+	It(
+		"states the chunk's own budget and warns about the shared worktree at concurrency 3",
+		func() {
+			instructions, err := prompts.BuildChunkExecutionInstructions(
+				ctx,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"standard",
+				"main",
+				1,
+				2,
+				[]string{"pkg/a.go", "pkg/b.go"},
+				sampleFindings,
+				libtime.Duration(24*time.Minute),
+				3,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			workflow := instructions[0].Content
+			Expect(workflow).To(ContainSubstring("## Chunk scope"))
+			Expect(workflow).To(ContainSubstring("chunk 1/2"))
+			Expect(workflow).To(ContainSubstring("- pkg/a.go"))
+			Expect(workflow).To(ContainSubstring("- pkg/b.go"))
+			Expect(workflow).To(ContainSubstring("shared"))
+			Expect(workflow).To(ContainSubstring("concurrently"))
+			Expect(workflow).To(ContainSubstring("`git fetch`"))
+			Expect(workflow).To(ContainSubstring("`git worktree`"))
+			Expect(workflow).To(ContainSubstring("`git branch`"))
+			Expect(workflow).To(ContainSubstring("`rm -rf`"))
+			// The chunk's own budget, never the whole-review budget.
+			Expect(workflow).To(ContainSubstring("24m"))
+			Expect(workflow).NotTo(ContainSubstring("25m"))
+		},
+	)
+
+	It("omits the shared-worktree notice at concurrency 1", func() {
+		instructions, err := prompts.BuildChunkExecutionInstructions(
+			ctx,
+			claudelib.ClaudeConfigDir(tmpDir),
+			"standard",
+			"main",
+			1,
+			2,
+			[]string{"pkg/a.go", "pkg/b.go"},
+			sampleFindings,
+			libtime.Duration(24*time.Minute),
+			1,
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		workflow := instructions[0].Content
+		Expect(workflow).To(ContainSubstring("24m"))
+		Expect(workflow).NotTo(ContainSubstring("## Shared worktree"))
+		Expect(workflow).NotTo(ContainSubstring("`git fetch`"))
+		Expect(workflow).NotTo(ContainSubstring("`git worktree`"))
+		Expect(workflow).NotTo(ContainSubstring("`git branch`"))
+		Expect(workflow).NotTo(ContainSubstring("`rm -rf`"))
 	})
 })
