@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: `pr-override` tasks accept frontmatter `override_reason`; `trivial-bot-bump` posts a mechanical APPROVE whose body names the rule and states no LLM review ran (github-pr-watcher emits it for trivial bot dependency bumps in repos opted into `autoMerge.trivial` + `prReviewer.autoApprove`, operator decision 2026-10-23); an empty reason keeps the label-override body unchanged; an unknown reason posts nothing and routes to `human_review`
+
 ## v0.11.9
 
 - chore: update github.com/bborbe/agent to v0.113.0, github.com/bborbe/kafka to v1.28.5, github.com/bborbe/service to v1.11.1, github.com/bborbe/time to v1.27.18

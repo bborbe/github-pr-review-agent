@@ -89,7 +89,7 @@ Standalone binary; the shared lib is imported from `github.com/bborbe/maintainer
 - `pkg/steps_planning.go` — parse PR URL → platform/owner/repo/number, fetch PR metadata.
 - `pkg/steps_checkout_execution.go` — clone at PR head into scratch, run the `/pr-review` container.
 - `pkg/steps_review.go` — parse the JSON verdict from review output.
-- `pkg/steps_override.go` — `pr-override` path: post an unconditional `APPROVE` for trusted-author label PRs.
+- `pkg/steps_override.go` — `pr-override` path: post an unconditional `APPROVE` for trusted-author label PRs, or (frontmatter `override_reason: trivial-bot-bump`) a mechanical rule-named `APPROVE` for trivial bot dependency bumps.
 - `pkg/steps_gh_token.go` — mint the GitHub App installation token per run.
 - `pkg/verdict.go` — verdict types + parsing.
 - `pkg/githubposter/` + `pkg/poster_types.go` — post the structured review (`APPROVE`/`REQUEST_CHANGES`/`COMMENT`).
@@ -100,7 +100,7 @@ Standalone binary; the shared lib is imported from `github.com/bborbe/maintainer
 ## Key Design Decisions
 
 - **LLM produces a verdict; the verdict alone decides the posted event.** The Claude review returns a verdict only; `mapVerdictAndSummary` maps `approve` → `APPROVE` and `request-changes` → `REQUEST_CHANGES` unconditionally (spec 060). The target repo's `.maintainer.yaml` `prReviewer.autoApprove` is read (for operator tooling) but does not demote `APPROVE` to `COMMENT` — a `COMMENTED` review does not satisfy branch protection.
-- **`pr-override` is the one unconditional-approve path** — trusted-author `override-review` label, `PostOverrideApprove`, no autoApprove gate, no clone, no container. Do not widen it.
+- **`pr-override` is the one unconditional-approve path** — `PostOverrideApprove`, no autoApprove gate, no clone, no container. Two producers only: the trusted-author `override-review` label (no `override_reason`), and `override_reason: trivial-bot-bump`, emitted by github-pr-watcher for allowlisted bot authors' trivial bumps in repos opted into `autoMerge.trivial` + `prReviewer.autoApprove` (widened by operator decision 2026-10-23). The agent trusts the watcher's gate and re-checks nothing; an unknown `override_reason` posts nothing and routes to `human_review`. Do not add a further reason without an operator decision.
 - **Clones are throwaway scratch** at the PR head, cleaned up after the run — never written back.
 - **`REPO_ALLOWLIST` is enforced** — a PR outside the allowlist is refused, never reviewed.
 - **Escalation over guessing** — a step that cannot proceed returns `NeedsInput`/`human_review`, never auto-advances to `done`.

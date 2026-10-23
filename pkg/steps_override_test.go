@@ -64,6 +64,7 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(prInfo.Number).To(Equal(14))
 			Expect(headSHA).To(Equal("abc123"))
 			Expect(body).To(ContainSubstring("override-review"))
+			Expect(body).NotTo(ContainSubstring("trivial-bot-bump"))
 
 			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
 			Expect(result.NextPhase).To(Equal("human_review"))
@@ -71,6 +72,56 @@ https://github.com/bborbe/maintainer/pull/14
 			section, ok := md.FindSection("## Override")
 			Expect(ok).To(BeTrue())
 			Expect(section.Body).To(ContainSubstring("APPROVE"))
+		})
+
+		It("posts the mechanical trivial-bot-bump body", func() {
+			poster.PostOverrideApproveReturns(pkg.PostResult{
+				Outcome: "success", ReviewID: 100, PostedEvent: "APPROVE",
+			})
+			md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+override_reason: trivial-bot-bump
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Override
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(poster.PostOverrideApproveCallCount()).To(Equal(1))
+			_, _, headSHA, body := poster.PostOverrideApproveArgsForCall(0)
+			Expect(headSHA).To(Equal("abc123"))
+			Expect(body).To(ContainSubstring("rule `trivial-bot-bump`"))
+			Expect(body).To(ContainSubstring("No LLM review ran"))
+			Expect(body).NotTo(ContainSubstring("override-review"))
+
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+		})
+
+		It("posts nothing and routes to human_review for an unknown override_reason", func() {
+			md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+override_reason: something-else
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Override
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(poster.PostOverrideApproveCallCount()).To(Equal(0))
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+			Expect(result.Message).To(ContainSubstring("unknown override_reason"))
 		})
 
 		It("fails when ref (head SHA) is missing", func() {
