@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: run chunked PR reviews concurrently, up to `REVIEW_CHUNK_CONCURRENCY` at a time, starting chunks in chunk order and merging their outputs in chunk order; the concerns gate now receives the wall-clock span from the first chunk start to the last chunk finish instead of the summed chunk time, so a fast concurrent review no longer demotes an approve. A budget-expired or failed chunk cancels its siblings, `## Salvage` is written once by the collector, and the posting path is unchanged.
+
 ## v0.11.9
 
 - chore: update github.com/bborbe/agent to v0.113.0, github.com/bborbe/kafka to v1.28.5, github.com/bborbe/service to v1.11.1, github.com/bborbe/time to v1.27.18

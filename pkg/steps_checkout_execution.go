@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -282,17 +283,63 @@ func (s *checkoutExecutionStep) runUnscopedReview(
 	return s.runClaude(ctx, md, worktreePath, instructions, funnel.Ran)
 }
 
-// runChunkedReview runs one scoped review per chunk, sequentially, each under
-// its own deadline from ChunkDeadline — the outer soft budget less a floor
-// reserved for the chunks after it, never an equal share — then merges the chunk
-// outputs into one ## Review body carrying exactly one verdict and posts through
-// the unchanged posting path.
+// chunkRunResult is one chunk run's outcome, collected by the dispatching
+// goroutine. It carries no markdown handle: the collector is the single writer
+// of md (## Salvage, ## Review), so no chunk goroutine can race another.
+type chunkRunResult struct {
+	index         int
+	output        string
+	elapsed       time.Duration
+	budgetExpired bool
+	partial       string
+	earlyResult   *agentlib.Result // pre-run terminal result (findings filter failure)
+	stepErr       error            // prompt-build failure, propagated as the step error
+	err           error            // runner error
+}
+
+// isCancellation reports whether err is a context cancellation, i.e. the
+// error a sibling chunk returns when the shared chunk context is cancelled.
+// Such an error is never the step's result; it is reported only when no
+// chunk produced a real outcome.
+func isCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// firstChunkIndex returns the lowest index whose result matches, or -1 when
+// none does. A nil slot — a chunk the dispatcher never started — never matches.
+func firstChunkIndex(
+	results []*chunkRunResult,
+	match func(*chunkRunResult) bool,
+) int {
+	for i, result := range results {
+		if result != nil && match(result) {
+			return i
+		}
+	}
+	return -1
+}
+
+// chunkRunFailure builds the step result for a chunk runner error.
+func chunkRunFailure(err error) *agentlib.Result {
+	return &agentlib.Result{
+		Status:  agentlib.AgentStatusFailed,
+		Message: fmt.Sprintf("execution claude run failed: %v", err),
+	}
+}
+
+// runChunkedReview runs one scoped review per chunk, up to
+// s.chunkConfig.Concurrency at a time, starting chunks in chunk order and
+// starting the next unstarted chunk whenever a slot frees. Each chunk gets its
+// own deadline from WaveChunkDeadline — the outer soft budget less a floor
+// reserved for the remaining waves, never an equal share. Chunk outputs are
+// collected by chunk index and merged in chunk order into one ## Review body
+// carrying exactly one verdict, posted through the unchanged posting path.
 //
 // The clone, the allowlist check, and the mechanical funnel ran once, before
-// this method. The elapsed handed to the concerns gate is the SUM of the chunk
-// runs' elapsed time — a run whose chunks collectively consumed the budget must
-// demote an approve carrying an unverified concern, exactly as a single run
-// that consumed the budget does.
+// this method. The elapsed handed to the concerns gate is the wall-clock span
+// from the first chunk start to the last chunk finish, not the sum of the chunk
+// durations — a fast concurrent review must not demote an approve. At N = 1 the
+// span and the single chunk's duration differ only by loop overhead.
 func (s *checkoutExecutionStep) runChunkedReview(
 	ctx context.Context,
 	md *agentlib.Markdown,
@@ -318,32 +365,42 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		concurrency = 1
 	}
 	outerDeadline := s.currentDateTime.Now().Time().Add(s.maxDuration.Duration())
-	var totalElapsed time.Duration
-	outputs := make([]string, 0, n)
-	for i, chunk := range chunks {
-		output, elapsed, earlyResult, runErr := s.runOneChunk(
-			ctx,
-			md,
-			runner,
-			taskContent,
-			baseRef,
-			funnel,
-			chunk,
-			i,
-			n,
-			outerDeadline,
-			concurrency,
-		)
-		if earlyResult != nil || runErr != nil {
-			return earlyResult, runErr
+	startedAt := s.currentDateTime.Now().Time()
+
+	glog.V(2).Infof("fan-out start concurrency=%d chunks=%d", concurrency, n)
+
+	results := s.dispatchChunks(
+		ctx,
+		runner,
+		taskContent,
+		baseRef,
+		funnel,
+		chunks,
+		outerDeadline,
+		concurrency,
+	)
+
+	if outcome, done, err := s.chunkOutcome(md, results, n); done {
+		return outcome, err
+	}
+
+	// A nil slot is a chunk the dispatcher never started (it broke out after the
+	// shared context was cancelled).
+	outputs := make([]string, n)
+	for i := 0; i < n; i++ {
+		if results[i] == nil {
+			return &agentlib.Result{
+				Status:  agentlib.AgentStatusFailed,
+				Message: fmt.Sprintf("execution claude run failed: chunk %d never started", i+1),
+			}, nil
 		}
-		totalElapsed += elapsed
-		outputs = append(outputs, output)
+		outputs[i] = results[i].output
 	}
 
 	merged, _ := MergeChunkReviews(outputs)
 	md.ReplaceSection(agentlib.Section{Heading: "## Review", Body: merged})
 
+	span := s.currentDateTime.Now().Time().Sub(startedAt)
 	return s.postAndRoute(
 		ctx,
 		md,
@@ -351,38 +408,141 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		worktreePath,
 		time.Time(s.currentDateTime.Now()),
 		funnel.Ran,
-		totalElapsed,
+		span,
 	)
 }
 
+// chunkOutcome applies the terminal-outcome rules to the collected chunk
+// results. The first matching rule wins, scanning by ascending index so the
+// outcome is deterministic; done is false when every chunk produced output.
+func (s *checkoutExecutionStep) chunkOutcome(
+	md *agentlib.Markdown,
+	results []*chunkRunResult,
+	n int,
+) (result *agentlib.Result, done bool, err error) {
+	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
+		return r.stepErr != nil
+	}); i >= 0 {
+		return nil, true, results[i].stepErr
+	}
+	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
+		return r.earlyResult != nil
+	}); i >= 0 {
+		return results[i].earlyResult, true, nil
+	}
+	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
+		return r.budgetExpired
+	}); i >= 0 {
+		writeSalvage(md, fmt.Sprintf("Chunk %d/%d\n\n%s", i+1, n, results[i].partial))
+		return budgetExpiredResult("execution", s.maxDuration), true, nil
+	}
+	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
+		return r.err != nil && !isCancellation(r.err)
+	}); i >= 0 {
+		return chunkRunFailure(results[i].err), true, nil
+	}
+	if i := firstChunkIndex(results, func(r *chunkRunResult) bool {
+		return r.err != nil
+	}); i >= 0 {
+		return chunkRunFailure(results[i].err), true, nil
+	}
+	return nil, false, nil
+}
+
+// dispatchChunks starts the chunk reviews in chunk order, up to concurrency at
+// a time, and waits for every started goroutine before returning. Each chunk
+// receives a deadline from WaveChunkDeadline at dispatch time. The shared chunk
+// context is cancelled as soon as any chunk reaches a terminal outcome, so no
+// further chunk starts; results are collected by chunk index.
+func (s *checkoutExecutionStep) dispatchChunks(
+	ctx context.Context,
+	runner claudelib.ClaudeRunner,
+	taskContent, baseRef string,
+	funnel FunnelResult,
+	chunks []ReviewChunk,
+	outerDeadline time.Time,
+	concurrency int,
+) []*chunkRunResult {
+	n := len(chunks)
+	chunkCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make([]*chunkRunResult, n)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var cancelOnce sync.Once
+	triggerCancel := func() { cancelOnce.Do(cancel) }
+
+	sem := make(chan struct{}, concurrency)
+	for i := 0; i < n; i++ {
+		if chunkCtx.Err() != nil {
+			break
+		}
+		now := s.currentDateTime.Now().Time()
+		deadline := WaveChunkDeadline(now, outerDeadline, n-i, concurrency)
+		chunkDuration := libtime.Duration(deadline.Sub(now))
+
+		select {
+		case sem <- struct{}{}:
+		case <-chunkCtx.Done():
+		}
+		if chunkCtx.Err() != nil {
+			break
+		}
+
+		wg.Add(1)
+		go func(i int, chunkDuration libtime.Duration) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			result := s.runOneChunk(
+				chunkCtx,
+				runner,
+				taskContent,
+				baseRef,
+				funnel,
+				chunks[i],
+				i,
+				n,
+				chunkDuration,
+				concurrency,
+			)
+			mu.Lock()
+			results[i] = &result
+			mu.Unlock()
+			if result.stepErr != nil || result.earlyResult != nil ||
+				result.budgetExpired ||
+				(result.err != nil && !isCancellation(result.err)) {
+				triggerCancel()
+			}
+		}(i, chunkDuration)
+	}
+	wg.Wait()
+	return results
+}
+
 // runOneChunk runs the scoped review for a single chunk. index is the 0-based
-// position and count the total chunk count. It returns the chunk's review output
-// and elapsed time, or an early Result (budget expiry → salvage + human_review;
-// runner failure → failed) that the caller must return immediately.
+// position and count the total chunk count. It writes nothing shared — no
+// markdown handle — and returns the chunk's outcome for the collector to merge
+// after every chunk goroutine has finished.
 func (s *checkoutExecutionStep) runOneChunk(
 	ctx context.Context,
-	md *agentlib.Markdown,
 	runner claudelib.ClaudeRunner,
 	taskContent string,
 	baseRef string,
 	funnel FunnelResult,
 	chunk ReviewChunk,
 	index, count int,
-	outerDeadline time.Time,
+	chunkDuration libtime.Duration,
 	concurrency int,
-) (string, time.Duration, *agentlib.Result, error) {
-	now := s.currentDateTime.Now().Time()
-	chunkDuration := libtime.Duration(
-		WaveChunkDeadline(now, outerDeadline, count-index, concurrency).Sub(now),
-	)
+) chunkRunResult {
 	glog.V(2).
 		Infof("review chunk %d/%d files=%d additions=%d", index+1, count, len(chunk.Files), chunk.Additions)
 	chunkFindings, err := FilterFindingsByBasenames(ctx, funnel.FindingsJSON, chunk.Files)
 	if err != nil {
-		return "", 0, &agentlib.Result{
+		return chunkRunResult{index: index, earlyResult: &agentlib.Result{
 			Status:  agentlib.AgentStatusFailed,
 			Message: fmt.Sprintf("execution chunk findings filter failed: %v", err),
-		}, nil
+		}}
 	}
 	// The chunk's file paths are PR-author-controlled, so neutralize code fences
 	// before they reach the prompt (pkg/prompts cannot do it: it would cycle).
@@ -401,13 +561,13 @@ func (s *checkoutExecutionStep) runOneChunk(
 		concurrency,
 	)
 	if err != nil {
-		return "", 0, nil, errors.Wrapf(
+		return chunkRunResult{index: index, stepErr: errors.Wrapf(
 			ctx,
 			err,
 			"build execution instructions base_ref=%s mode=%s",
 			baseRef,
 			s.reviewMode,
-		)
+		)}
 	}
 
 	prompt := claudelib.BuildPrompt(instructions.String(), nil, taskContent)
@@ -417,6 +577,7 @@ func (s *checkoutExecutionStep) runOneChunk(
 		prompt,
 		chunkDuration,
 	)
+	glog.V(2).Infof("fan-out chunk %d/%d finished elapsed=%s", index+1, count, elapsed)
 	if runErr != nil {
 		if budgetExpired {
 			glog.V(2).Infof(
@@ -424,23 +585,17 @@ func (s *checkoutExecutionStep) runOneChunk(
 				index+1,
 				count,
 			)
-			writeSalvage(
-				md,
-				fmt.Sprintf(
-					"Chunk %d/%d\n\n%s",
-					index+1,
-					count,
-					ExtractBudgetPartial(runResult, runErr),
-				),
-			)
-			return "", elapsed, budgetExpiredResult("execution", s.maxDuration), nil
+			return chunkRunResult{
+				index:         index,
+				elapsed:       elapsed,
+				budgetExpired: true,
+				partial:       ExtractBudgetPartial(runResult, runErr),
+				err:           runErr,
+			}
 		}
-		return "", elapsed, &agentlib.Result{
-			Status:  agentlib.AgentStatusFailed,
-			Message: fmt.Sprintf("execution claude run failed: %v", runErr),
-		}, nil
+		return chunkRunResult{index: index, elapsed: elapsed, err: runErr}
 	}
-	return runResult.Result, elapsed, nil, nil
+	return chunkRunResult{index: index, output: runResult.Result, elapsed: elapsed}
 }
 
 // neutralizeChunkFiles returns the chunk's file paths with code fences

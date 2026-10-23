@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [008-parallel-chunk-review]
+summary: Replaced the sequential chunk loop with a bounded concurrent fan-out that merges outputs in chunk order and hands the concerns gate the wall-clock span, with race-clean tests and unchanged log formats
+execution_id: github-pr-review-agent-parallel-chunks-exec-028-spec-008-bounded-chunk-fanout
+dark-factory-version: v0.198.7
 created: "2026-10-23T19:12:01Z"
 queued: "2026-10-23T19:27:14Z"
+started: "2026-10-23T19:45:14Z"
+completed: "2026-10-23T20:02:13Z"
 ---
 
 # Bounded concurrent chunk fan-out, ordered merge, wall-span elapsed
