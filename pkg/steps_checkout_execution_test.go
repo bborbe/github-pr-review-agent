@@ -1884,11 +1884,12 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(foundNeutralized).To(BeTrue())
 	})
 
-	It("hands the concerns gate the wall-clock span, so a fast review is not demoted", func() {
-		// Six chunks, three at a time, under a 25m budget. The first wave runs
-		// from t0 to t0+5m, the second from t0+5m to t0+10m. The wall span is 10m,
-		// below 0.8 × 25m = 20m, so the merged approve carrying a not-verified
-		// concern stays an approve — the summed 30m would have demoted it.
+	It("does not demote when every chunk finished well inside its own budget", func() {
+		// Six chunks, three at a time, under a 25m budget, all returning
+		// immediately. Every chunk's own budget is tens of minutes, so the worst
+		// per-chunk fraction is ~0 and the merged approve carrying a not-verified
+		// concern stays an approve — no spurious demotion under fan-out. The ratio
+		// arithmetic itself is asserted by the maxChunkBudgetUse table.
 		const chunkCount = 6
 		t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 		clock := &fakeClock{now: t0}
@@ -1945,72 +1946,34 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(postReq.Verdict).To(Equal(pkg.VerdictApprove))
 	})
 
-	It(
-		"hands the concerns gate the wall-clock span, demoting a review that spanned the budget",
-		func() {
-			// Six chunks, three at a time, under a 25m budget. Chunks 2/3 finish at
-			// t0+1m, chunks 4/5 at t0+2m, chunk 1 at t0+11m, chunk 6 at t0+21m. The
-			// span is 21m (>= 0.8 × 25m = 20m), so the merged approve carrying a
-			// not-verified concern demotes to request-changes — while max chunk time
-			// (19m) and sum/N (≈11.3m) both stay below the threshold.
-			const chunkCount = 6
-			t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
-			clock := &fakeClock{now: t0}
-			startedCh := make(chan int, chunkCount)
-			releases := make([]chan struct{}, chunkCount)
-			for i := range releases {
-				releases[i] = make(chan struct{})
-			}
-			fakeRunner := &mocks.ClaudeRunnerMock{}
-			fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
-				idx := chunkIndexFromPrompt(prompt)
-				startedCh <- idx
-				<-releases[idx-1]
-				return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
-			}
-			funnelRunner := &mocks.FunnelRunner{}
-			funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
-			fakePoster := &mocks.PrPoster{}
-			fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
-
-			cfg := pkg.DefaultReviewChunkConfig()
-			cfg.Concurrency = 3
-			step := newStepWithClock(
-				fakeRunner,
-				fakePoster,
-				funnelRunner,
-				libtime.Duration(25*time.Minute),
-				cfg,
-				clock,
-			)
-
-			outcomeCh := runAsync(step, buildMD())
-			for i := 0; i < 3; i++ {
-				<-startedCh
-			}
-			clock.Set(t0.Add(1 * time.Minute))
-			close(releases[1])
-			close(releases[2])
-			for i := 0; i < 2; i++ {
-				<-startedCh
-			}
-			clock.Set(t0.Add(2 * time.Minute))
-			close(releases[3])
-			close(releases[4])
-			<-startedCh // chunk 6 starts once a slot frees
-			clock.Set(t0.Add(11 * time.Minute))
-			close(releases[0])
-			clock.Set(t0.Add(21 * time.Minute))
-			close(releases[5])
-
-			outcome := <-outcomeCh
-			Expect(outcome.err).NotTo(HaveOccurred())
-			Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
-
-			Expect(fakePoster.PostCallCount()).To(Equal(1))
-			_, postReq := fakePoster.PostArgsForCall(0)
-			Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
+	DescribeTable(
+		"maxChunkBudgetUse is the gate's key under fan-out: max(elapsed_i / budget_i)",
+		func(chunks []pkg.ChunkBudgetUseForTest, expected float64) {
+			Expect(pkg.MaxChunkBudgetUseForTest(chunks)).To(BeNumerically("~", expected, 1e-9))
 		},
+		Entry("no chunks — 0", nil, 0.0),
+		Entry("one chunk well inside its budget — 0.5",
+			[]pkg.ChunkBudgetUseForTest{{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute}}, 0.5),
+		Entry("the worst chunk decides, not the sum (chunk 6 used 19m of its own 23m)",
+			[]pkg.ChunkBudgetUseForTest{
+				{Elapsed: 11 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 19 * time.Minute, Budget: 23 * time.Minute},
+			}, 19.0/23.0),
+		Entry("a chunk that burned a short budget outranks a longer chunk inside a long one — 0.83",
+			[]pkg.ChunkBudgetUseForTest{
+				{Elapsed: 3 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 7*time.Minute + 30*time.Second, Budget: 9 * time.Minute},
+			}, 7.5/9.0),
+		Entry("an unstarted slot and a chunk with no recorded budget are skipped",
+			[]pkg.ChunkBudgetUseForTest{
+				{Nil: true},
+				{Elapsed: 20 * time.Minute, Budget: 0},
+				{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute},
+			}, 0.5),
 	)
 
 	It("invokes the runner once per chunk, with the clone and funnel each running once", func() {
@@ -2556,10 +2519,9 @@ https://github.com/bborbe/maintainer/pull/14
 		const chunkCount = 5
 		t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 		clock := &scriptedClock{times: []time.Time{
-			t0,
-			t0,
-			t0,
-			t0.Add(25*time.Minute - 5*time.Millisecond),
+			t0, // outer deadline
+			t0, // chunk 1 dispatch
+			t0.Add(25*time.Minute - 5*time.Millisecond), // chunk 2 dispatch
 			t0,
 		}}
 
@@ -2609,10 +2571,9 @@ https://github.com/bborbe/maintainer/pull/14
 		const chunkCount = 5
 		t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 		clock := &scriptedClock{times: []time.Time{
-			t0,
-			t0,
-			t0.Add(25*time.Minute - 5*time.Millisecond),
-			t0.Add(25*time.Minute - 5*time.Millisecond),
+			t0, // outer deadline
+			t0.Add(25*time.Minute - 5*time.Millisecond), // chunk 1 dispatch
+			t0.Add(25*time.Minute - 5*time.Millisecond), // chunk 2 dispatch
 			t0,
 		}}
 

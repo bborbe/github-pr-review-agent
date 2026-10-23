@@ -313,6 +313,7 @@ type chunkRunResult struct {
 	index         int
 	output        string
 	elapsed       time.Duration
+	budget        time.Duration // this chunk's own soft budget (WaveChunkDeadline)
 	budgetExpired bool
 	partial       string
 	earlyResult   *agentlib.Result // pre-run terminal result (findings filter failure)
@@ -350,6 +351,46 @@ func chunkRunFailure(err error) *agentlib.Result {
 	}
 }
 
+// maxChunkBudgetUse returns the largest fraction of its OWN soft budget any
+// chunk consumed, i.e. max(elapsed_i / budget_i).
+//
+// This is the concerns gate's key under fan-out, and neither alternative is: the
+// wall-clock span hides a chunk that burned its whole budget behind a short run
+// (9 chunks at N=3 x 4min is a ~12min span against a 20min threshold), while the
+// summed chunk durations double-counts concurrency and demotes every fast run.
+// A nil slot (a chunk the dispatcher never started) or a chunk with no recorded
+// budget is skipped; reaching the gate means every chunk ran, so a 0 here is
+// only reachable through the guard, never through a real fan-out.
+func maxChunkBudgetUse(results []*chunkRunResult) float64 {
+	use := 0.0
+	for _, result := range results {
+		if result == nil || result.budget <= 0 {
+			continue
+		}
+		if fraction := float64(result.elapsed) / float64(result.budget); fraction > use {
+			use = fraction
+		}
+	}
+	return use
+}
+
+// budgetFraction returns how much of budget the elapsed run consumed. An unknown
+// (zero or negative) budget counts as fully consumed, so the gate keeps its
+// fail-safe direction instead of dividing by zero.
+func budgetFraction(elapsed, budget time.Duration) float64 {
+	if budget <= 0 {
+		return 1.0
+	}
+	return float64(elapsed) / float64(budget)
+}
+
+// budgetElapsed maps a budget-consumption fraction back onto the soft budget, so
+// the 0.8 demotion threshold stays in exactly one place
+// (DemotesUnverifiedConcerns) and the gate keeps a single duration comparison.
+func budgetElapsed(use float64, budget time.Duration) time.Duration {
+	return time.Duration(use * float64(budget))
+}
+
 // runChunkedReview runs one scoped review per chunk, up to
 // s.chunkConfig.Concurrency at a time, starting chunks in chunk order and
 // starting the next unstarted chunk whenever a slot frees. Each chunk gets its
@@ -359,10 +400,13 @@ func chunkRunFailure(err error) *agentlib.Result {
 // carrying exactly one verdict, posted through the unchanged posting path.
 //
 // The clone, the allowlist check, and the mechanical funnel ran once, before
-// this method. The elapsed handed to the concerns gate is the wall-clock span
-// from the first chunk start to the last chunk finish, not the sum of the chunk
-// durations — a fast concurrent review must not demote an approve. At N = 1 the
-// span and the single chunk's duration differ only by loop overhead.
+// this method. The budget use handed to the concerns gate is the largest
+// per-chunk fraction of that chunk's own soft budget any chunk consumed — not
+// the wall-clock span and not the sum of the chunk durations. A chunk that
+// burned its entire budget must fail-close an approve even when the concurrent
+// run finished early, and a fast run must not demote on concurrency alone. At
+// N = 1 the single chunk's budget is the outer budget, so the fraction is the
+// sequential elapsed/budget.
 func (s *checkoutExecutionStep) runChunkedReview(
 	ctx context.Context,
 	md *agentlib.Markdown,
@@ -388,7 +432,6 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		concurrency = 1
 	}
 	outerDeadline := s.currentDateTime.Now().Time().Add(s.maxDuration.Duration())
-	startedAt := s.currentDateTime.Now().Time()
 
 	glog.V(2).Infof("fan-out start concurrency=%d chunks=%d", concurrency, n)
 
@@ -430,7 +473,6 @@ func (s *checkoutExecutionStep) runChunkedReview(
 	merged, _ := MergeChunkReviews(outputs)
 	md.ReplaceSection(agentlib.Section{Heading: "## Review", Body: merged})
 
-	span := s.currentDateTime.Now().Time().Sub(startedAt)
 	return s.postAndRoute(
 		ctx,
 		md,
@@ -438,7 +480,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		worktreePath,
 		time.Time(s.currentDateTime.Now()),
 		funnel.Ran,
-		span,
+		maxChunkBudgetUse(results),
 	)
 }
 
@@ -644,14 +686,25 @@ func (s *checkoutExecutionStep) runOneChunk(
 			return chunkRunResult{
 				index:         index,
 				elapsed:       elapsed,
+				budget:        chunkDuration.Duration(),
 				budgetExpired: true,
 				partial:       ExtractBudgetPartial(runResult, runErr),
 				err:           runErr,
 			}
 		}
-		return chunkRunResult{index: index, elapsed: elapsed, err: runErr}
+		return chunkRunResult{
+			index:   index,
+			elapsed: elapsed,
+			budget:  chunkDuration.Duration(),
+			err:     runErr,
+		}
 	}
-	return chunkRunResult{index: index, output: runResult.Result, elapsed: elapsed}
+	return chunkRunResult{
+		index:   index,
+		output:  runResult.Result,
+		elapsed: elapsed,
+		budget:  chunkDuration.Duration(),
+	}
 }
 
 // neutralizeChunkFiles returns the chunk's file paths with code fences
@@ -794,7 +847,7 @@ func (s *checkoutExecutionStep) runClaude(
 		worktreePath,
 		time.Time(s.currentDateTime.Now()),
 		funnelRan,
-		runElapsed,
+		budgetFraction(runElapsed, s.maxDuration.Duration()),
 	)
 }
 
@@ -828,11 +881,27 @@ func reviewBodyFromRun(result *claudelib.ClaudeResult) string {
 	return result.Result
 }
 
+// demotesUnverifiedConcerns reports whether an approve carrying an unexamined
+// concern must fail-close because the work consumed its budget. budgetUse is the
+// fraction of a single review's budget consumed — the worst chunk's own fraction
+// under fan-out — mapped back onto the soft budget so the 0.8 threshold stays in
+// DemotesUnverifiedConcerns alone.
+func (s *checkoutExecutionStep) demotesUnverifiedConcerns(
+	reviewBody string,
+	budgetUse float64,
+) bool {
+	return DemotesUnverifiedConcerns(
+		reviewBody,
+		budgetElapsed(budgetUse, s.maxDuration.Duration()),
+		s.maxDuration.Duration(),
+	)
+}
+
 // postAndRoute handles the posting sequence after ## Review has been written to
 // the vault. Extracted for testability — tests call this directly without Claude.
-// runElapsed is the wall-clock time of the claude run (measured by
-// runWithSoftBudget); the concerns gate keys its demotion decision on the
-// fraction of the soft budget it represents.
+// budgetUse is the fraction of a single review's soft budget the work consumed:
+// elapsed/budget for the sequential run, and max(elapsed_i / budget_i) across
+// chunks for a fan-out. The concerns gate keys its demotion decision on it.
 func (s *checkoutExecutionStep) postAndRoute(
 	ctx context.Context,
 	md *agentlib.Markdown,
@@ -840,7 +909,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 	worktreePath string,
 	jobRunTime time.Time,
 	funnelRan bool,
-	runElapsed time.Duration,
+	budgetUse float64,
 ) (*agentlib.Result, error) {
 	// nil poster = skip posting (cmd/run-task with --skip-post).
 	if s.prPoster == nil {
@@ -874,13 +943,14 @@ func (s *checkoutExecutionStep) postAndRoute(
 	// budget fail-closes — a budget-heavy run that stopped before examining its
 	// concerns must never green-light a PR, while a `not-verified` on a run that
 	// finished well inside the budget is provably a mislabel (the model had
-	// budget left and examined the concern) and the approve stands. The
-	// disposition is the admission; concern prose is never inspected. Fires only
-	// when the funnel gate above did not already demote the verdict (i.e. the
-	// funnel ran) — an unverified concern is the more specific diagnosis and
-	// keeps its reason.
-	if verdict.Verdict == VerdictApprove &&
-		DemotesUnverifiedConcerns(reviewBody, runElapsed, s.maxDuration.Duration()) {
+	// budget left and examined the concern) and the approve stands. Under fan-out
+	// the budget is the chunk's own, and the worst chunk decides (budgetUse =
+	// max(elapsed_i / budget_i)) — the wall span would hide a chunk that burned
+	// its whole budget behind a short concurrent run. The disposition is the
+	// admission; concern prose is never inspected. Fires only when the funnel
+	// gate above did not already demote the verdict (i.e. the funnel ran) — an
+	// unverified concern is the more specific diagnosis and keeps its reason.
+	if verdict.Verdict == VerdictApprove && s.demotesUnverifiedConcerns(reviewBody, budgetUse) {
 		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
 	}
 

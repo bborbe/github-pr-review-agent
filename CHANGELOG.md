@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- feat: review a multi-chunk PR's chunks concurrently, up to `REVIEW_CHUNK_CONCURRENCY` (default 3), so a large PR finishes inside `REVIEW_MAX_DURATION` instead of salvaging without a verdict; chunk outputs still merge in chunk order into one posted verdict, the concerns gate receives the wall-clock span, each chunk's prompt states its own budget and warns when the worktree is shared, and a budget expiry or runner failure cancels every in-flight chunk
+- feat: review a multi-chunk PR's chunks concurrently, up to `REVIEW_CHUNK_CONCURRENCY` (default 3), so a large PR finishes inside `REVIEW_MAX_DURATION` instead of salvaging without a verdict; chunk outputs still merge in chunk order into one posted verdict, the concerns gate keys on the worst chunk's own budget consumption (`max(elapsed_i / budget_i)`), each chunk's prompt states its own budget and warns when the worktree is shared, and a budget expiry or runner failure cancels every in-flight chunk
 
 ## v0.11.9
 
