@@ -22,8 +22,8 @@ import (
 const TaskTypePROverride agentlib.TaskType = "pr-override"
 
 // OverrideReasonTrivialBotBump is the override_reason the github-pr-watcher
-// sets on a pr-override task for a trivial bot dependency bump (operator
-// decision 2026-10-23). An empty override_reason is the label path.
+// sets on a pr-override task for a trivial bot dependency bump. An empty
+// override_reason is the label path.
 const OverrideReasonTrivialBotBump = "trivial-bot-bump"
 
 // overrideStep is the single, code-only step of the pr-override task type. It
@@ -144,8 +144,8 @@ func overrideBody(reason, botLogin string) (string, bool) {
 	case OverrideReasonTrivialBotBump:
 		return fmt.Sprintf(
 			"Mechanical APPROVE by %s — rule `trivial-bot-bump`: the github-pr-watcher "+
-				"classified this bot-authored PR as trivial (go.mod / go.sum / CHANGELOG.md "+
-				"mechanical lines only) in a repo opted into `autoMerge.trivial` and "+
+				"classified this bot-authored PR as trivial (only mechanical version and hash "+
+				"lines in files its trivial classifier accepts) in a repo opted into `autoMerge.trivial` and "+
 				"`prReviewer.autoApprove`. No LLM review ran. CI status checks still apply.",
 			botLogin,
 		), true

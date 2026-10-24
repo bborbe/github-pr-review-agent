@@ -14,7 +14,7 @@ After completing your implementation, review your own changes against each crite
 ## Review-Posting Safety (load-bearing — this agent writes to other people's PRs)
 
 - The posted review event is `APPROVE`/`REQUEST_CHANGES` per the verdict alone — `mapVerdictAndSummary` never emits `COMMENT` (spec 060: a `COMMENTED` review does not satisfy branch protection). `prReviewer.autoApprove` is read but does not gate the posted event; never re-introduce a `COMMENT` demotion
-- The `pr-override` path (`PostOverrideApprove`) is the one deliberate exception and posts unconditionally for exactly two producers: the trusted-author label (no `override_reason`) and `override_reason: trivial-bot-bump` (operator decision 2026-10-23). An unknown `override_reason` must post nothing. Do not add a further reason without an operator decision
+- The `pr-override` path (`PostOverrideApprove`) is the one deliberate exception and posts unconditionally for exactly two producers: the trusted-author label (no `override_reason`) and `override_reason: trivial-bot-bump`. An unknown `override_reason` must post nothing. Do not add a further reason without an operator decision
 - Clones are throwaway scratch dirs at the PR head, cleaned up after the run; no writes back to the cloned repo
 - `REPO_ALLOWLIST` is honored — a PR outside the allowlist is refused, never reviewed
 - No new code path posts to a PR other than the single structured review (+ the override approve)
