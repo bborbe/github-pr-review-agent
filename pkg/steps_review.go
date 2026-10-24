@@ -41,13 +41,16 @@ type reviewStep struct {
 	botLogin     string
 	maxDuration  libtime.Duration // soft REVIEW_MAX_DURATION budget per claude run
 	prState      PRStateClient
+	pollInterval libtime.Duration // mid-run PR-state poll; <= 0 disables the watch
 }
 
 // NewReviewStep constructs the ai_review-phase step. maxDuration is the soft
 // REVIEW_MAX_DURATION budget enforced on the claude run; expiry routes to
 // human_review without writing ## Verdict. prState queries the live GitHub
 // PR state so a merged/closed/superseded PR short-circuits before routing to
-// human_review (both at step head and after a fail verdict).
+// human_review (both at step head and after a fail verdict). pollInterval is
+// how often the running claude call re-reads the PR state; a moot PR cancels
+// the call mid-run. A pollInterval <= 0 disables the mid-run watch.
 func NewReviewStep(
 	runner claudelib.ClaudeRunner,
 	poster PrPoster,
@@ -57,8 +60,10 @@ func NewReviewStep(
 	botLogin string,
 	maxDuration libtime.Duration,
 	prState PRStateClient,
+	pollInterval libtime.Duration,
 ) agentlib.Step {
 	return &reviewStep{
+		pollInterval: pollInterval,
 		runner:       runner,
 		poster:       poster,
 		instructions: instructions,
@@ -123,8 +128,19 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 
 	// The elapsed is discarded here: the ai-review phase posts no review and has
 	// no concerns gate — only the execution phase keys on the budget fraction.
-	runResult, runErr, budgetExpired, _ := runWithSoftBudget(ctx, s.runner, prompt, s.maxDuration)
+	run := runWatchedWithSoftBudget(
+		ctx,
+		s.runner,
+		prompt,
+		s.maxDuration,
+		newPRStateWatch(md, s.prState, s.pollInterval, CancelledDuringAIReview),
+	)
+	runResult, runErr, budgetExpired := run.Result, run.Err, run.Expired
 	if runErr != nil {
+		if run.Mooted {
+			glog.V(2).Infof("ai-review: claude run cancelled mid-run — PR is moot")
+			return mootCancelledResult(ctx, md, s.prState, CancelledDuringAIReview)
+		}
 		// Budget expiry (fired deadline) → human_review before ## Verdict/post; never retried.
 		// The streamed partial (if any) is salvaged under ## Salvage; never written to ## Verdict.
 		if budgetExpired {

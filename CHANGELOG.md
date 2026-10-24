@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- feat: `pr-override` tasks accept frontmatter `override_reason`; `trivial-bot-bump` posts a mechanical APPROVE whose body names the rule and states no LLM review ran (github-pr-watcher emits it for trivial bot dependency bumps in repos opted into `autoMerge.trivial` + `prReviewer.autoApprove`, operator decision 2026-10-23); an empty reason keeps the label-override body unchanged; an unknown reason posts nothing and routes to `human_review`
+- feat: `pr-override` tasks accept frontmatter `override_reason`; `trivial-bot-bump` posts a mechanical APPROVE whose body names the rule and states no LLM review ran (github-pr-watcher emits it for trivial bot dependency bumps in repos opted into `autoMerge.trivial` + `prReviewer.autoApprove`); an empty reason keeps the label-override body unchanged; an unknown reason posts nothing and routes to `human_review`
+
+## v0.12.0
+
+- feat: stop a running execution / ai_review claude call when its PR merges, closes or its head moves — a poll every `PR_STATE_POLL_INTERVAL` (default 60s, 0 disables) cancels the call and writes the existing `## Resolution` with a new `cancelled_during` field, instead of finishing the review and discarding it; planning is not watched
 
 ## v0.11.9
 

@@ -88,6 +88,7 @@ var _ = Describe("skip-post nil contract", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 
 			md, err := agentlib.ParseMarkdown(
@@ -160,6 +161,7 @@ var _ = Describe("skip-post nil contract", func() {
 				botLogin,
 				libtime.Duration(25*time.Minute),
 				nil,
+				libtime.Duration(0),
 			)
 
 			result, err := step.Run(ctx, md)
@@ -217,6 +219,7 @@ var _ = Describe("skip-post nil contract", func() {
 					botLogin,
 					libtime.Duration(25*time.Minute),
 					nil,
+					libtime.Duration(0),
 				)
 
 				result, err := step.Run(ctx, md)

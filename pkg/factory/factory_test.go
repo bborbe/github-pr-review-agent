@@ -197,6 +197,7 @@ var _ = Describe("Factory", func() {
 				currentDateTime,
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
+				libtime.Duration(0),
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -218,6 +219,7 @@ var _ = Describe("Factory", func() {
 				currentDateTime,
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
+				libtime.Duration(0),
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -341,6 +343,7 @@ var _ = Describe("Factory", func() {
 				currentDateTime,
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
+				libtime.Duration(0),
 			)
 			Expect(provider).NotTo(BeNil())
 		})
