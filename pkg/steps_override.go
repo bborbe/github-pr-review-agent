@@ -7,6 +7,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	agentlib "github.com/bborbe/agent"
 	"github.com/golang/glog"
@@ -21,10 +22,28 @@ import (
 // is needed — the watcher and this agent agree on the literal "pr-override".
 const TaskTypePROverride agentlib.TaskType = "pr-override"
 
-// OverrideReasonTrivialBotBump is the override_reason the github-pr-watcher
-// sets on a pr-override task for a trivial bot dependency bump. An empty
-// override_reason is the label path.
-const OverrideReasonTrivialBotBump = "trivial-bot-bump"
+// OverrideReason is the `override_reason` a `pr-override` task carries. It
+// selects which APPROVE body the agent posts, and it is a closed set: a value
+// outside AvailableOverrideReasons posts nothing.
+type OverrideReason string
+
+const (
+	// OverrideReasonLabel is the empty reason — the trusted-author
+	// `override-review` label path, unchanged.
+	OverrideReasonLabel OverrideReason = ""
+	// OverrideReasonTrivialBotBump is the reason the github-pr-watcher sets on a
+	// pr-override task for a trivial bot dependency bump. It is a second producer
+	// on the one unconditional-approve path, added by operator decision 2026-10-23.
+	OverrideReasonTrivialBotBump OverrideReason = "trivial-bot-bump"
+)
+
+// AvailableOverrideReasons is every reason this agent posts an APPROVE for. A
+// value outside this set is not posted — the fail-closed direction, because the
+// alternative is an unconditional approve for a reason nobody reviewed.
+var AvailableOverrideReasons = []OverrideReason{
+	OverrideReasonLabel,
+	OverrideReasonTrivialBotBump,
+}
 
 // overrideStep is the single, code-only step of the pr-override task type. It
 // posts an APPROVE at the PR head SHA as the bot — a fresh bot APPROVE
@@ -87,17 +106,31 @@ func (s *overrideStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 		}, nil
 	}
 
-	reason, _ := md.Frontmatter.String("override_reason")
+	// A present-but-unreadable override_reason must fail closed rather than
+	// collapse to the empty string: the empty string is the label path, which
+	// posts the label body and asserts the override-review label. Only a truly
+	// absent key may take that path.
+	reasonRaw, reasonIsString := md.Frontmatter.String("override_reason")
+	if _, present := md.Frontmatter["override_reason"]; present && !reasonIsString {
+		return &agentlib.Result{
+			Status:  agentlib.AgentStatusFailed,
+			Message: "override: override_reason present but not a string — not posting",
+		}, nil
+	}
+	reason := OverrideReason(reasonRaw)
 	body, knownReason := overrideBody(reason, s.botLogin)
 	if !knownReason {
 		return &agentlib.Result{
 			Status:    agentlib.AgentStatusDone,
 			NextPhase: "human_review",
-			Message:   fmt.Sprintf("override: unknown override_reason %q — not posting", reason),
+			Message: fmt.Sprintf(
+				"override: unknown override_reason %q — not posting",
+				string(reason),
+			),
 		}, nil
 	}
 
-	loggedReason := reason
+	loggedReason := string(reason)
 	if loggedReason == "" {
 		loggedReason = "label"
 	}
@@ -132,9 +165,12 @@ func (s *overrideStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 // whether the reason is one this agent posts for. An empty reason is the
 // trusted-author label path; OverrideReasonTrivialBotBump is the mechanical
 // bot-bump path; any other value must not post.
-func overrideBody(reason, botLogin string) (string, bool) {
+func overrideBody(reason OverrideReason, botLogin string) (string, bool) {
+	if !slices.Contains(AvailableOverrideReasons, reason) {
+		return "", false
+	}
 	switch reason {
-	case "":
+	case OverrideReasonLabel:
 		return fmt.Sprintf(
 			"Override APPROVE by %s — the `override-review` label was applied by a trusted "+
 				"author. Posting APPROVE so the earlier false-positive review no longer blocks "+

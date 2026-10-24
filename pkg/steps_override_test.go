@@ -124,6 +124,79 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(result.Message).To(ContainSubstring("unknown override_reason"))
 		})
 
+		It("takes the label path for an explicitly empty override_reason", func() {
+			poster.PostOverrideApproveReturns(pkg.PostResult{
+				Outcome: "success", ReviewID: 101, PostedEvent: "APPROVE",
+			})
+			md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+override_reason: ""
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Override
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(poster.PostOverrideApproveCallCount()).To(Equal(1))
+			_, _, _, body := poster.PostOverrideApproveArgsForCall(0)
+			Expect(body).To(ContainSubstring("override-review"))
+			Expect(body).NotTo(ContainSubstring("trivial-bot-bump"))
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+		})
+
+		DescribeTable("posts nothing for a reason that is not exactly trivial-bot-bump",
+			func(reason string) {
+				md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+override_reason: `+reason+`
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Override
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := step.Run(ctx, md)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(poster.PostOverrideApproveCallCount()).To(Equal(0))
+				Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+				Expect(result.NextPhase).To(Equal("human_review"))
+				Expect(result.Message).To(ContainSubstring("unknown override_reason"))
+			},
+			Entry("trailing space", `"trivial-bot-bump "`),
+			Entry("leading space", `" trivial-bot-bump"`),
+			Entry("different case", `"Trivial-Bot-Bump"`),
+			Entry("prefix only", `"trivial-bot"`),
+		)
+
+		It("fails closed when override_reason is present but not a string", func() {
+			md, err := agentlib.ParseMarkdown(ctx, `---
+ref: abc123
+override_reason: 123
+task_identifier: 00000000-0000-0000-0000-000000000001
+---
+# PR Override
+
+https://github.com/bborbe/maintainer/pull/14
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(poster.PostOverrideApproveCallCount()).To(Equal(0))
+			Expect(result.Status).To(Equal(agentlib.AgentStatusFailed))
+			Expect(result.Message).To(ContainSubstring("not a string"))
+		})
+
 		It("fails when ref (head SHA) is missing", func() {
 			md, err := agentlib.ParseMarkdown(ctx, `---
 task_identifier: 00000000-0000-0000-0000-000000000001
