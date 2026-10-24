@@ -7,6 +7,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	agentlib "github.com/bborbe/agent"
 	"github.com/golang/glog"
@@ -21,11 +22,36 @@ import (
 // is needed — the watcher and this agent agree on the literal "pr-override".
 const TaskTypePROverride agentlib.TaskType = "pr-override"
 
+// OverrideReason is the `override_reason` a `pr-override` task carries. It
+// selects which APPROVE body the agent posts, and it is a closed set: a value
+// outside AvailableOverrideReasons posts nothing.
+type OverrideReason string
+
+const (
+	// OverrideReasonLabel is the empty reason — the trusted-author
+	// `override-review` label path, unchanged.
+	OverrideReasonLabel OverrideReason = ""
+	// OverrideReasonTrivialBotBump is the reason the github-pr-watcher sets on a
+	// pr-override task for a trivial bot dependency bump. It is a second producer
+	// on the one unconditional-approve path, added by operator decision 2026-10-23.
+	OverrideReasonTrivialBotBump OverrideReason = "trivial-bot-bump"
+)
+
+// AvailableOverrideReasons is every reason this agent posts an APPROVE for. A
+// value outside this set is not posted — the fail-closed direction, because the
+// alternative is an unconditional approve for a reason nobody reviewed.
+var AvailableOverrideReasons = []OverrideReason{
+	OverrideReasonLabel,
+	OverrideReasonTrivialBotBump,
+}
+
 // overrideStep is the single, code-only step of the pr-override task type. It
 // posts an APPROVE at the PR head SHA as the bot — a fresh bot APPROVE
-// supersedes the bot's own false-positive CHANGES_REQUESTED for reviewDecision,
-// so a trusted author who applied the override label can merge without admin.
-// No Claude, no clone, no container: pure GitHub-API action reusing the poster.
+// supersedes the bot's own false-positive CHANGES_REQUESTED for reviewDecision.
+// It has two callers: the trusted-author override-review label path, and the
+// trivial-bot-bump path the github-pr-watcher emits for a trivial bot
+// dependency bump. No Claude, no clone, no container: pure GitHub-API action
+// reusing the poster.
 type overrideStep struct {
 	prPoster PrPoster
 	botLogin string
@@ -80,16 +106,37 @@ func (s *overrideStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 		}, nil
 	}
 
-	body := fmt.Sprintf(
-		"Override APPROVE by %s — the `override-review` label was applied by a trusted "+
-			"author. Posting APPROVE so the earlier false-positive review no longer blocks "+
-			"merge. CI status checks still apply.",
-		s.botLogin,
-	)
+	// A present-but-unreadable override_reason must fail closed rather than
+	// collapse to the empty string: the empty string is the label path, which
+	// posts the label body and asserts the override-review label. Only a truly
+	// absent key may take that path.
+	reasonRaw, reasonIsString := md.Frontmatter.String("override_reason")
+	if _, present := md.Frontmatter["override_reason"]; present && !reasonIsString {
+		return &agentlib.Result{
+			Status:  agentlib.AgentStatusFailed,
+			Message: "override: override_reason present but not a string — not posting",
+		}, nil
+	}
+	reason := OverrideReason(reasonRaw)
+	body, knownReason := overrideBody(reason, s.botLogin)
+	if !knownReason {
+		return &agentlib.Result{
+			Status:    agentlib.AgentStatusDone,
+			NextPhase: "human_review",
+			Message: fmt.Sprintf(
+				"override: unknown override_reason %q — not posting",
+				string(reason),
+			),
+		}, nil
+	}
 
+	loggedReason := string(reason)
+	if loggedReason == "" {
+		loggedReason = "label"
+	}
 	glog.V(2).Infof(
-		"override: posting APPROVE pr=%s/%s#%d sha=%s",
-		prInfo.Owner, prInfo.Repo, prInfo.Number, ref,
+		"override: posting APPROVE pr=%s/%s#%d sha=%s reason=%s",
+		prInfo.Owner, prInfo.Repo, prInfo.Number, ref, loggedReason,
 	)
 	result := s.prPoster.PostOverrideApprove(ctx, *prInfo, ref, body)
 
@@ -112,6 +159,35 @@ func (s *overrideStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 		NextPhase: "human_review",
 		Message:   fmt.Sprintf("override: APPROVE posted review_id=%d", result.ReviewID),
 	}, nil
+}
+
+// overrideBody returns the APPROVE body for a task's override_reason, and
+// whether the reason is one this agent posts for. An empty reason is the
+// trusted-author label path; OverrideReasonTrivialBotBump is the mechanical
+// bot-bump path; any other value must not post.
+func overrideBody(reason OverrideReason, botLogin string) (string, bool) {
+	if !slices.Contains(AvailableOverrideReasons, reason) {
+		return "", false
+	}
+	switch reason {
+	case OverrideReasonLabel:
+		return fmt.Sprintf(
+			"Override APPROVE by %s — the `override-review` label was applied by a trusted "+
+				"author. Posting APPROVE so the earlier false-positive review no longer blocks "+
+				"merge. CI status checks still apply.",
+			botLogin,
+		), true
+	case OverrideReasonTrivialBotBump:
+		return fmt.Sprintf(
+			"Mechanical APPROVE by %s — rule `trivial-bot-bump`: the github-pr-watcher "+
+				"classified this bot-authored PR as trivial (only mechanical version and hash "+
+				"lines in files its trivial classifier accepts) in a repo opted into `autoMerge.trivial` and "+
+				"`prReviewer.autoApprove`. No LLM review ran. CI status checks still apply.",
+			botLogin,
+		), true
+	default:
+		return "", false
+	}
 }
 
 // formatOverrideResult renders the PostResult as a small YAML-ish block for the

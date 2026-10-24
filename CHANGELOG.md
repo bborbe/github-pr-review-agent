@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: `pr-override` tasks accept frontmatter `override_reason`; `trivial-bot-bump` posts a mechanical APPROVE whose body names the rule and states no LLM review ran (github-pr-watcher emits it for trivial bot dependency bumps in repos opted into `autoMerge.trivial` + `prReviewer.autoApprove`; operator decision 2026-10-23); an empty reason keeps the label-override body unchanged; an unknown reason posts nothing and routes to `human_review`
+
 ## v0.13.0
 
 - feat: review a multi-chunk PR's chunks concurrently, up to `REVIEW_CHUNK_CONCURRENCY` (default 3), so a large PR finishes inside `REVIEW_MAX_DURATION` instead of salvaging without a verdict; chunk outputs still merge in chunk order into one posted verdict, the concerns gate keys on the worst chunk's own budget consumption (`max(elapsed_i / budget_i)`), each chunk's prompt states its own budget and warns when the worktree is shared, and a budget expiry or runner failure cancels every in-flight chunk
