@@ -55,15 +55,19 @@ func PostAndRouteForTest(
 	funnelRan bool,
 ) (*agentlib.Result, error) {
 	s := &checkoutExecutionStep{prPoster: prPoster}
-	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan, 0)
+	// budgetUse 1.0 keeps the gate's fail-safe direction: this helper knows no
+	// budget, so the run counts as fully consumed and an unverified concern
+	// demotes.
+	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan, 1.0)
 }
 
 // PostAndRouteWithBudgetForTest calls postAndRoute on a checkoutExecutionStep
 // configured with a soft budget and an explicit run elapsed, bypassing the
 // Claude runner entirely. This lets the posting tests drive the budget-keyed
 // unverified-concerns gate (DemotesUnverifiedConcerns) with the real demotion
-// site: budget is the step's maxDuration and runElapsed is what postAndRoute
-// compares against it.
+// site: budget is the step's maxDuration and runElapsed is turned into the
+// fraction of it the run consumed. A zero budget keeps the gate's fail-safe
+// direction — an unknown budget counts as fully consumed.
 func PostAndRouteWithBudgetForTest(
 	ctx context.Context,
 	prPoster PrPoster,
@@ -76,7 +80,37 @@ func PostAndRouteWithBudgetForTest(
 	runElapsed time.Duration,
 ) (*agentlib.Result, error) {
 	s := &checkoutExecutionStep{prPoster: prPoster, maxDuration: budget}
-	return s.postAndRoute(ctx, md, prURLStr, worktreePath, jobRunTime, funnelRan, runElapsed)
+	return s.postAndRoute(
+		ctx,
+		md,
+		prURLStr,
+		worktreePath,
+		jobRunTime,
+		funnelRan,
+		budgetFraction(runElapsed, budget.Duration()),
+	)
+}
+
+// ChunkBudgetUseForTest is one synthetic chunk's (elapsed, budget) pair for
+// MaxChunkBudgetUseForTest; Nil models a slot the dispatcher never started.
+type ChunkBudgetUseForTest struct {
+	Elapsed time.Duration
+	Budget  time.Duration
+	Nil     bool
+}
+
+// MaxChunkBudgetUseForTest exposes maxChunkBudgetUse — the concerns gate's key
+// under fan-out — so the per-chunk ratio can be asserted without driving real
+// elapsed times through a concurrent run.
+func MaxChunkBudgetUseForTest(chunks []ChunkBudgetUseForTest) float64 {
+	results := make([]*chunkRunResult, len(chunks))
+	for i, chunk := range chunks {
+		if chunk.Nil {
+			continue
+		}
+		results[i] = &chunkRunResult{elapsed: chunk.Elapsed, budget: chunk.Budget}
+	}
+	return maxChunkBudgetUse(results)
 }
 
 // ParsePlanningConcernsForTest exposes parsePlanningConcerns for unit testing.
@@ -164,4 +198,16 @@ func FilterFindingsForTest(
 // claude run.
 func ReviewBodyFromRunForTest(result *claudelib.ClaudeResult) string {
 	return reviewBodyFromRun(result)
+}
+
+// SetCheckBeforeChunkForTest installs fn as the step's pre-chunk check so the
+// dispatcher's call count, ordering, and abort behaviour are testable without
+// exposing the field to production callers.
+func SetCheckBeforeChunkForTest(
+	step agentlib.Step,
+	fn func(ctx context.Context, md *agentlib.Markdown) *agentlib.Result,
+) {
+	if s, ok := step.(*checkoutExecutionStep); ok {
+		s.checkBeforeChunkFn = fn
+	}
 }

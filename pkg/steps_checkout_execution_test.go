@@ -6,11 +6,17 @@ package pkg_test
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -18,6 +24,7 @@ import (
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
 	libtime "github.com/bborbe/time"
+	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -1421,6 +1428,98 @@ complete review body
 // countable exactly.
 var chunkHeadingPattern = regexp.MustCompile(`(?m)^### Chunk `)
 
+// chunkIndexPattern matches the 1-based chunk index named in the prompt's
+// chunk-scope preamble ("chunk 1/7").
+var chunkIndexPattern = regexp.MustCompile(`chunk (\d+)/`)
+
+// chunkIndexFromPrompt returns the 1-based chunk index named in the prompt, or
+// 0 when the prompt carries no chunk-scope preamble.
+func chunkIndexFromPrompt(prompt string) int {
+	match := chunkIndexPattern.FindStringSubmatch(prompt)
+	if match == nil {
+		return 0
+	}
+	idx, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0
+	}
+	return idx
+}
+
+// fakeClock is a mutex-guarded settable clock for the step's
+// libtime.CurrentDateTimeGetter.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+// Now implements libtime.CurrentDateTimeGetter.
+func (c *fakeClock) Now() libtime.DateTime {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return libtime.DateTime(c.now)
+}
+
+// Set replaces the clock's current time.
+func (c *fakeClock) Set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = t
+}
+
+// scriptedClock returns the programmed times in call order, repeating the last
+// one once exhausted. Mutex-guarded for race cleanliness.
+type scriptedClock struct {
+	mu    sync.Mutex
+	times []time.Time
+	i     int
+}
+
+// Now implements libtime.CurrentDateTimeGetter.
+func (c *scriptedClock) Now() libtime.DateTime {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.times) == 0 {
+		return libtime.DateTime(time.Time{})
+	}
+	t := c.times[c.i]
+	if c.i < len(c.times)-1 {
+		c.i++
+	}
+	return libtime.DateTime(t)
+}
+
+// captureGlog redirects glog's stderr output into a pipe for the duration of
+// fn and returns everything written. glog binds -logtostderr and -v to its
+// logging struct via flag.Var/flag.BoolVar at init, so flag.Set changes them
+// at runtime; V(2) lines require -v=2. Restore both flags afterwards.
+func captureGlog(fn func()) string {
+	vFlag := flag.Lookup("v")
+	logToStderrFlag := flag.Lookup("logtostderr")
+	oldV := vFlag.Value.String()
+	oldLogToStderr := logToStderrFlag.Value.String()
+	Expect(flag.Set("logtostderr", "true")).To(Succeed())
+	Expect(flag.Set("v", "2")).To(Succeed())
+	defer func() {
+		Expect(flag.Set("logtostderr", oldLogToStderr)).To(Succeed())
+		Expect(flag.Set("v", oldV)).To(Succeed())
+	}()
+
+	oldStderr := os.Stderr
+	reader, writer, err := os.Pipe()
+	Expect(err).NotTo(HaveOccurred())
+	os.Stderr = writer
+	defer func() { os.Stderr = oldStderr }()
+
+	fn()
+	glog.Flush()
+	Expect(writer.Close()).To(Succeed())
+
+	out, err := io.ReadAll(reader)
+	Expect(err).NotTo(HaveOccurred())
+	return string(out)
+}
+
 var _ = Describe("checkoutExecutionStep chunked review", func() {
 	var (
 		ctx         context.Context
@@ -1521,11 +1620,13 @@ https://github.com/bborbe/maintainer/pull/14
 		return md
 	}
 
-	newStep := func(
+	newStepWithClock := func(
 		runner claudelib.ClaudeRunner,
 		poster pkg.PrPoster,
 		funnel pkg.FunnelRunner,
 		budget libtime.Duration,
+		cfg pkg.ReviewChunkConfig,
+		clock libtime.CurrentDateTimeGetter,
 	) agentlib.Step {
 		return pkg.NewCheckoutExecutionStep(
 			repoManager,
@@ -1538,13 +1639,89 @@ https://github.com/bborbe/maintainer/pull/14
 			nil,
 			poster,
 			funnel,
-			libtime.NewCurrentDateTime(),
+			clock,
 			runner,
 			budget,
 			nil,
-			pkg.DefaultReviewChunkConfig(),
+			cfg,
 			libtime.Duration(0),
 		)
+	}
+
+	newStepWithConfig := func(
+		runner claudelib.ClaudeRunner,
+		poster pkg.PrPoster,
+		funnel pkg.FunnelRunner,
+		budget libtime.Duration,
+		cfg pkg.ReviewChunkConfig,
+	) agentlib.Step {
+		return newStepWithClock(
+			runner,
+			poster,
+			funnel,
+			budget,
+			cfg,
+			libtime.NewCurrentDateTime(),
+		)
+	}
+
+	newStep := func(
+		runner claudelib.ClaudeRunner,
+		poster pkg.PrPoster,
+		funnel pkg.FunnelRunner,
+		budget libtime.Duration,
+	) agentlib.Step {
+		return newStepWithConfig(
+			runner,
+			poster,
+			funnel,
+			budget,
+			pkg.DefaultReviewChunkConfig(),
+		)
+	}
+
+	// bigFileFunnel is an inventory of count files with 301 added lines each.
+	// The total is above the 500 engage threshold and each file alone exceeds the
+	// 300 max-additions bound, so every file becomes its own chunk.
+	bigFileFunnel := func(count int) pkg.FunnelResult {
+		files := make([]pkg.ChangedFile, 0, count)
+		for i := 0; i < count; i++ {
+			files = append(
+				files,
+				pkg.ChangedFile{Path: fmt.Sprintf("s%d.go", i), Additions: 301},
+			)
+		}
+		return pkg.FunnelResult{
+			Ran: true,
+			FindingsJSON: `{"stats":{"yamls_run":1,"findings_count":0,"elapsed_ms":1},` +
+				`"findings_by_owner":{},"errors":[]}`,
+			ChangedFiles: files,
+		}
+	}
+
+	// chunkOutput is the canned per-chunk review output naming the chunk.
+	chunkOutput := func(index int) string {
+		return fmt.Sprintf(
+			"body chunk %d\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\"}\n```\n",
+			index,
+		)
+	}
+
+	// runOutcome carries a step.Run result out of its goroutine.
+	type runOutcome struct {
+		result *agentlib.Result
+		err    error
+	}
+
+	// runAsync starts step.Run in its own goroutine so the test goroutine keeps
+	// control and can drive blocking runner stubs.
+	runAsync := func(step agentlib.Step, md *agentlib.Markdown) <-chan runOutcome {
+		outcomeCh := make(chan runOutcome, 1)
+		go func() {
+			result, err := step.Run(ctx, md)
+			outcomeCh <- runOutcome{result: result, err: err}
+		}()
+		return outcomeCh
 	}
 
 	BeforeEach(func() {
@@ -1572,16 +1749,30 @@ https://github.com/bborbe/maintainer/pull/14
 	})
 
 	It("salvages the cut-off chunk and routes to human_review when a chunk deadline fires", func() {
+		// Chunk 1 always expires on its own deadline; chunk 2 waits for chunk 1
+		// before returning, so the salvaged chunk is deterministically chunk 1
+		// (which chunk's goroutine gets scheduled first must not decide it).
+		chunk1Expired := make(chan struct{})
 		fakeRunner := &mocks.ClaudeRunnerMock{}
 		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
-			<-runCtx.Done() // block until the chunk's share of the budget fires
+			if chunkIndexFromPrompt(prompt) == 2 {
+				<-chunk1Expired
+				return &claudelib.ClaudeResult{Partial: "partial chunk output"}, runCtx.Err()
+			}
+			<-runCtx.Done() // block until chunk 1's share of the budget fires
+			close(chunk1Expired)
 			return &claudelib.ClaudeResult{Partial: "partial chunk output"}, runCtx.Err()
 		}
 		funnelRunner := &mocks.FunnelRunner{}
 		funnelRunner.RunReturns(twoChunkFunnel(), nil)
 		fakePoster := &mocks.PrPoster{}
 
-		step := newStep(fakeRunner, fakePoster, funnelRunner, libtime.Duration(20*time.Millisecond))
+		step := newStep(
+			fakeRunner,
+			fakePoster,
+			funnelRunner,
+			libtime.Duration(100*time.Millisecond),
+		)
 
 		md := buildMD()
 		result, err := step.Run(ctx, md)
@@ -1599,7 +1790,7 @@ https://github.com/bborbe/maintainer/pull/14
 		// No ## Review is written — the run never reaches the merge.
 		_, exists = md.FindSection("## Review")
 		Expect(exists).To(BeFalse())
-		Expect(fakeRunner.RunCallCount()).To(BeNumerically("<", 2))
+		Expect(fakeRunner.RunCallCount()).To(Equal(2))
 		// The clone and the funnel each ran exactly once, never per chunk.
 		Expect(repoManager.EnsureWorktreeCallCount()).To(Equal(1))
 		Expect(funnelRunner.RunCallCount()).To(Equal(1))
@@ -1662,10 +1853,13 @@ https://github.com/bborbe/maintainer/pull/14
 
 	It("neutralizes code fences in the chunk's file paths before they reach the prompt", func() {
 		const rawPath = "a```b.go"
+		var promptsMu sync.Mutex
 		var prompts []string
 		fakeRunner := &mocks.ClaudeRunnerMock{}
 		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			promptsMu.Lock()
 			prompts = append(prompts, prompt)
+			promptsMu.Unlock()
 			return &claudelib.ClaudeResult{
 				Result: "review body\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\"}\n```\n",
 			}, nil
@@ -1683,55 +1877,193 @@ https://github.com/bborbe/maintainer/pull/14
 		result, err := step.Run(ctx, buildMD())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		promptsMu.Lock()
+		defer promptsMu.Unlock()
 		Expect(prompts).To(HaveLen(2))
 
-		// The PR-author-controlled path reaches the prompt neutralized, never raw.
-		Expect(prompts[0]).To(ContainSubstring("a[code-fence]b.go"))
-		Expect(prompts[0]).NotTo(ContainSubstring(rawPath))
+		// The PR-author-controlled path reaches at least one prompt neutralized,
+		// and no prompt ever carries the raw path.
+		foundNeutralized := false
+		for _, prompt := range prompts {
+			Expect(prompt).NotTo(ContainSubstring(rawPath))
+			if strings.Contains(prompt, "a[code-fence]b.go") {
+				foundNeutralized = true
+			}
+		}
+		Expect(foundNeutralized).To(BeTrue())
 	})
 
-	It("hands the concerns gate the SUM of the chunk runs' elapsed time", func() {
-		// Per-chunk sleep 100ms under a 220ms budget: each chunk's deadline is the
-		// outer deadline (the 60s floor caps there), so both complete, but the
-		// summed ~200ms crosses 0.8 × 220ms = 176ms while a single chunk's ~100ms
-		// does not. The merged approve carries a not-verified concern, so the
-		// summed elapsed is what demotes it.
+	It("does not demote when every chunk finished well inside its own budget", func() {
+		// Six chunks, three at a time, under a 25m budget, all returning
+		// immediately. Every chunk's own budget is tens of minutes, so the worst
+		// per-chunk fraction is ~0 and the merged approve carrying a not-verified
+		// concern stays an approve — no spurious demotion under fan-out. The ratio
+		// arithmetic itself is asserted by the maxChunkBudgetUse table.
+		const chunkCount = 6
+		t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+		clock := &fakeClock{now: t0}
+		startedCh := make(chan int, chunkCount)
+		releases := make([]chan struct{}, chunkCount)
+		for i := range releases {
+			releases[i] = make(chan struct{})
+		}
 		fakeRunner := &mocks.ClaudeRunnerMock{}
-		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
-			time.Sleep(100 * time.Millisecond)
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			startedCh <- idx
+			<-releases[idx-1]
 			return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
 		}
 		funnelRunner := &mocks.FunnelRunner{}
-		funnelRunner.RunReturns(twoChunkFunnel(), nil)
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
 		fakePoster := &mocks.PrPoster{}
 		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
 
-		step := newStep(
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithClock(
 			fakeRunner,
 			fakePoster,
 			funnelRunner,
-			libtime.Duration(220*time.Millisecond),
+			libtime.Duration(25*time.Minute),
+			cfg,
+			clock,
 		)
 
-		md := buildMD()
-		result, err := step.Run(ctx, md)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		outcomeCh := runAsync(step, buildMD())
+		for i := 0; i < 3; i++ {
+			<-startedCh
+		}
+		clock.Set(t0.Add(5 * time.Minute))
+		close(releases[0])
+		close(releases[1])
+		close(releases[2])
+		for i := 0; i < 3; i++ {
+			<-startedCh
+		}
+		clock.Set(t0.Add(10 * time.Minute))
+		close(releases[3])
+		close(releases[4])
+		close(releases[5])
 
-		// One runner call per chunk, and the merged body carries exactly one
-		// verdict block plus the per-chunk concern.
+		outcome := <-outcomeCh
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictApprove))
+	})
+
+	It("demotes on per-chunk budget use through the real fan-out call site", func() {
+		// Pins the WIRING, not just the helper: without this, replacing
+		// maxChunkBudgetUse(results) with 0 keeps the whole suite green.
+		// WaveChunkDeadline floors a chunk budget at now+60s and then caps it at
+		// the outer deadline, so a sub-second REVIEW_MAX_DURATION makes each
+		// chunk's budget exactly that budget — real elapsed time can then drive
+		// the ratio with no fake clock.
+		const budget = 2 * time.Second
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			time.Sleep(1750 * time.Millisecond) // 0.875 of the chunk's own budget
+			return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(2), nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 2
+		step := newStepWithClock(
+			fakeRunner,
+			fakePoster,
+			funnelRunner,
+			libtime.Duration(budget),
+			cfg,
+			&fakeClock{now: time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)},
+		)
+
+		outcome := <-runAsync(step, buildMD())
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
 		Expect(fakeRunner.RunCallCount()).To(Equal(2))
-		section, exists := md.FindSection("## Review")
-		Expect(exists).To(BeTrue())
-		Expect(section.Body).To(ContainSubstring("### Chunk 1/2"))
-		Expect(section.Body).To(ContainSubstring("### Chunk 2/2"))
-		Expect(section.Body).To(ContainSubstring("not-verified"))
 
-		// The summed elapsed demoted the merged approve to request-changes.
 		Expect(fakePoster.PostCallCount()).To(Equal(1))
 		_, postReq := fakePoster.PostArgsForCall(0)
 		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
 	})
+
+	It("demotes on budget use through the real unscoped call site", func() {
+		// The sequential sibling of the row above: runClaude computes
+		// budgetFraction(runElapsed, maxDuration) itself, so this is the only
+		// test that would catch that expression being zeroed.
+		const budget = 2 * time.Second
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			time.Sleep(1750 * time.Millisecond) // 0.875 of the soft budget
+			return &claudelib.ClaudeResult{Result: chunkApproveWithUnverifiedConcern}, nil
+		}
+		unscoped := bigFileFunnel(2)
+		unscoped.InventoryDetail = "test: force the unscoped path"
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(unscoped, nil)
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		step := newStepWithClock(
+			fakeRunner,
+			fakePoster,
+			funnelRunner,
+			libtime.Duration(budget),
+			pkg.DefaultReviewChunkConfig(),
+			&fakeClock{now: time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)},
+		)
+
+		outcome := <-runAsync(step, buildMD())
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(fakeRunner.RunCallCount()).To(Equal(1))
+
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		_, postReq := fakePoster.PostArgsForCall(0)
+		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
+	})
+
+	DescribeTable(
+		"maxChunkBudgetUse is the gate's key under fan-out: max(elapsed_i / budget_i)",
+		func(chunks []pkg.ChunkBudgetUseForTest, expected float64) {
+			Expect(pkg.MaxChunkBudgetUseForTest(chunks)).To(BeNumerically("~", expected, 1e-9))
+		},
+		Entry("no chunks — 0", nil, 0.0),
+		Entry("one chunk well inside its budget — 0.5",
+			[]pkg.ChunkBudgetUseForTest{{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute}}, 0.5),
+		Entry("the worst chunk decides, not the sum (chunk 6 used 19m of its own 23m)",
+			[]pkg.ChunkBudgetUseForTest{
+				{Elapsed: 11 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 1 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 19 * time.Minute, Budget: 23 * time.Minute},
+			}, 19.0/23.0),
+		Entry("a chunk that burned a short budget outranks a longer chunk inside a long one — 0.83",
+			[]pkg.ChunkBudgetUseForTest{
+				{Elapsed: 3 * time.Minute, Budget: 24 * time.Minute},
+				{Elapsed: 7*time.Minute + 30*time.Second, Budget: 9 * time.Minute},
+			}, 7.5/9.0),
+		Entry("an unstarted slot is skipped",
+			[]pkg.ChunkBudgetUseForTest{
+				{Nil: true},
+				{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute},
+			}, 0.5),
+		Entry("a chunk with no recorded budget counts as fully consumed, matching budgetFraction",
+			[]pkg.ChunkBudgetUseForTest{
+				{Elapsed: 20 * time.Minute, Budget: 0},
+				{Elapsed: 5 * time.Minute, Budget: 10 * time.Minute},
+			}, 1.0),
+	)
 
 	It("invokes the runner once per chunk, with the clone and funnel each running once", func() {
 		fakeRunner := &mocks.ClaudeRunnerMock{}
@@ -1755,10 +2087,13 @@ https://github.com/bborbe/maintainer/pull/14
 	})
 
 	It("scopes each chunk's prompt to its own files and its own funnel findings", func() {
+		var promptsMu sync.Mutex
 		var prompts []string
 		fakeRunner := &mocks.ClaudeRunnerMock{}
 		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			promptsMu.Lock()
 			prompts = append(prompts, prompt)
+			promptsMu.Unlock()
 			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
 		}
 		funnelRunner := &mocks.FunnelRunner{}
@@ -1768,37 +2103,51 @@ https://github.com/bborbe/maintainer/pull/14
 
 		_, err := step.Run(ctx, buildMD())
 		Expect(err).NotTo(HaveOccurred())
+
+		promptsMu.Lock()
+		defer promptsMu.Unlock()
 		Expect(prompts).To(HaveLen(2))
 
+		// Select each prompt by the chunk index it names, never by slice position:
+		// the two chunk goroutines append in completion order.
+		byChunk := map[int]string{}
+		for _, prompt := range prompts {
+			byChunk[chunkIndexFromPrompt(prompt)] = prompt
+		}
+		chunk1, ok := byChunk[1]
+		Expect(ok).To(BeTrue())
+		chunk2, ok := byChunk[2]
+		Expect(ok).To(BeTrue())
+
 		// Each prompt carries the chunk-scope preamble naming its own chunk.
-		Expect(prompts[0]).To(ContainSubstring("## Chunk scope"))
-		Expect(prompts[0]).To(ContainSubstring("chunk 1/2"))
-		Expect(prompts[1]).To(ContainSubstring("## Chunk scope"))
-		Expect(prompts[1]).To(ContainSubstring("chunk 2/2"))
+		Expect(chunk1).To(ContainSubstring("## Chunk scope"))
+		Expect(chunk1).To(ContainSubstring("chunk 1/2"))
+		Expect(chunk2).To(ContainSubstring("## Chunk scope"))
+		Expect(chunk2).To(ContainSubstring("chunk 2/2"))
 
 		// Chunk 1 owns f00–f14, chunk 2 owns f15–f29; neither prompt names a file
 		// that belongs only to the other chunk.
 		for i := 0; i < 15; i++ {
-			Expect(prompts[0]).To(ContainSubstring(fmt.Sprintf("- f%02d.go", i)))
+			Expect(chunk1).To(ContainSubstring(fmt.Sprintf("- f%02d.go", i)))
 		}
 		for i := 15; i < 30; i++ {
-			Expect(prompts[0]).NotTo(ContainSubstring(fmt.Sprintf("f%02d.go", i)))
-			Expect(prompts[1]).To(ContainSubstring(fmt.Sprintf("- f%02d.go", i)))
+			Expect(chunk1).NotTo(ContainSubstring(fmt.Sprintf("f%02d.go", i)))
+			Expect(chunk2).To(ContainSubstring(fmt.Sprintf("- f%02d.go", i)))
 		}
 		for i := 0; i < 15; i++ {
-			Expect(prompts[1]).NotTo(ContainSubstring(fmt.Sprintf("f%02d.go", i)))
+			Expect(chunk2).NotTo(ContainSubstring(fmt.Sprintf("f%02d.go", i)))
 		}
 
 		// Each prompt carries only its chunk's filtered findings (count 1), never
 		// the whole-review findings (count 2).
-		Expect(prompts[0]).To(ContainSubstring("rule-chunk1"))
-		Expect(prompts[0]).NotTo(ContainSubstring("rule-chunk2"))
-		Expect(prompts[0]).To(ContainSubstring(`"findings_count":1`))
-		Expect(prompts[0]).NotTo(ContainSubstring(`"findings_count":2`))
-		Expect(prompts[1]).To(ContainSubstring("rule-chunk2"))
-		Expect(prompts[1]).NotTo(ContainSubstring("rule-chunk1"))
-		Expect(prompts[1]).To(ContainSubstring(`"findings_count":1`))
-		Expect(prompts[1]).NotTo(ContainSubstring(`"findings_count":2`))
+		Expect(chunk1).To(ContainSubstring("rule-chunk1"))
+		Expect(chunk1).NotTo(ContainSubstring("rule-chunk2"))
+		Expect(chunk1).To(ContainSubstring(`"findings_count":1`))
+		Expect(chunk1).NotTo(ContainSubstring(`"findings_count":2`))
+		Expect(chunk2).To(ContainSubstring("rule-chunk2"))
+		Expect(chunk2).NotTo(ContainSubstring("rule-chunk1"))
+		Expect(chunk2).To(ContainSubstring(`"findings_count":1`))
+		Expect(chunk2).NotTo(ContainSubstring(`"findings_count":2`))
 	})
 
 	It("runs once with the unscoped prompt at or below the engage threshold", func() {
@@ -1886,14 +2235,12 @@ https://github.com/bborbe/maintainer/pull/14
 	})
 
 	It("merges a request-changes chunk into a posted request-changes verdict", func() {
-		call := 0
 		fakeRunner := &mocks.ClaudeRunnerMock{}
-		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
-			call++
-			if call == 1 {
-				return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			if chunkIndexFromPrompt(prompt) == 2 {
+				return &claudelib.ClaudeResult{Result: requestChangesChunkOutput}, nil
 			}
-			return &claudelib.ClaudeResult{Result: requestChangesChunkOutput}, nil
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
 		}
 		funnelRunner := &mocks.FunnelRunner{}
 		funnelRunner.RunReturns(thirtyFileFunnel(), nil)
@@ -1917,5 +2264,616 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(fakePoster.PostCallCount()).To(Equal(1))
 		_, postReq := fakePoster.PostArgsForCall(0)
 		Expect(postReq.Verdict).To(Equal(pkg.VerdictRequestChanges))
+	})
+
+	It("reaches but never exceeds the configured concurrency", func() {
+		const chunkCount = 7
+		var mu sync.Mutex
+		active := 0
+		maxActive := 0
+		started := make([]int, 0, chunkCount)
+		startedCh := make(chan int, chunkCount)
+		releaseCh := make(chan struct{})
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			started = append(started, idx)
+			mu.Unlock()
+			startedCh <- idx
+			<-releaseCh
+			mu.Lock()
+			active--
+			mu.Unlock()
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		outcomeCh := runAsync(step, buildMD())
+		firstWave := make([]int, 0, 3)
+		for i := 0; i < 3; i++ {
+			firstWave = append(firstWave, <-startedCh)
+		}
+		Expect(firstWave).To(ConsistOf(1, 2, 3))
+		mu.Lock()
+		Expect(maxActive).To(Equal(3))
+		mu.Unlock()
+		Consistently(func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return maxActive
+		}, 100*time.Millisecond).Should(Equal(3))
+
+		close(releaseCh)
+
+		outcome := <-outcomeCh
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(maxActive).To(Equal(3))
+		Expect(started).To(ConsistOf(1, 2, 3, 4, 5, 6, 7))
+		Expect(fakeRunner.RunCallCount()).To(Equal(7))
+	})
+
+	It("runs chunks one at a time in chunk order when concurrency is 1", func() {
+		const chunkCount = 7
+		var mu sync.Mutex
+		active := 0
+		maxActive := 0
+		started := make([]int, 0, chunkCount)
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			started = append(started, idx)
+			active--
+			mu.Unlock()
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 1
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		result, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(maxActive).To(Equal(1))
+		Expect(started).To(Equal([]int{1, 2, 3, 4, 5, 6, 7}))
+		Expect(fakeRunner.RunCallCount()).To(Equal(7))
+	})
+
+	It("merges chunk sections in chunk order regardless of completion order", func() {
+		const chunkCount = 3
+		chunk1Release := make(chan struct{})
+		chunk3Done := make(chan struct{})
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			switch idx {
+			case 1:
+				<-chunk1Release
+			case 3:
+				close(chunk3Done)
+			}
+			return &claudelib.ClaudeResult{Result: chunkOutput(idx)}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		md := buildMD()
+		outcomeCh := runAsync(step, md)
+
+		// Chunk 3 completes first, then chunk 1 is released.
+		<-chunk3Done
+		close(chunk1Release)
+
+		outcome := <-outcomeCh
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		section, exists := md.FindSection("## Review")
+		Expect(exists).To(BeTrue())
+
+		expected, _ := pkg.MergeChunkReviews(
+			[]string{chunkOutput(1), chunkOutput(2), chunkOutput(3)},
+		)
+		Expect(section.Body).To(Equal(expected))
+
+		chunk1Idx := strings.Index(section.Body, "### Chunk 1/3")
+		chunk2Idx := strings.Index(section.Body, "### Chunk 2/3")
+		chunk3Idx := strings.Index(section.Body, "### Chunk 3/3")
+		Expect(chunk1Idx).To(BeNumerically(">=", 0))
+		Expect(chunk1Idx).To(BeNumerically("<", chunk2Idx))
+		Expect(chunk2Idx).To(BeNumerically("<", chunk3Idx))
+	})
+
+	It("logs one fan-out start line, one start per chunk, and one finished per chunk", func() {
+		const chunkCount = 3
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		md := buildMD()
+		var result *agentlib.Result
+		var runErr error
+		output := captureGlog(func() {
+			result, runErr = step.Run(ctx, md)
+		})
+		Expect(runErr).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		lines := strings.Split(output, "\n")
+		countMatching := func(pattern string) int {
+			re := regexp.MustCompile(pattern)
+			count := 0
+			for _, line := range lines {
+				if re.MatchString(line) {
+					count++
+				}
+			}
+			return count
+		}
+
+		Expect(countMatching(`fan-out start concurrency=3 chunks=3`)).To(Equal(1))
+		Expect(
+			countMatching(`review chunk \d+/3 files=\d+ additions=\d+`),
+		).To(Equal(3))
+		Expect(
+			countMatching(`fan-out chunk \d+/3 finished elapsed=\S+`),
+		).To(Equal(3))
+		for _, line := range lines {
+			if strings.Contains(line, "fan-out") {
+				Expect(line).NotTo(ContainSubstring("review chunk"))
+				Expect(line).NotTo(ContainSubstring("execution: chunk"))
+			}
+		}
+	})
+
+	It("calls the pre-chunk seam once per dispatched chunk, before that chunk starts", func() {
+		const chunkCount = 5
+		var started int32
+		var mu sync.Mutex
+		checks := 0
+		inCall := false
+		reentered := false
+		startedAtChecks := make([]int32, 0, chunkCount)
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(_ context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			atomic.AddInt32(&started, 1)
+			return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 2
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+		pkg.SetCheckBeforeChunkForTest(
+			step,
+			func(_ context.Context, _ *agentlib.Markdown) *agentlib.Result {
+				mu.Lock()
+				defer mu.Unlock()
+				if inCall {
+					reentered = true
+				}
+				inCall = true
+				checks++
+				startedAtChecks = append(startedAtChecks, atomic.LoadInt32(&started))
+				inCall = false
+				return nil
+			},
+		)
+
+		result, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(checks).To(Equal(chunkCount))
+		Expect(reentered).To(BeFalse())
+		Expect(startedAtChecks).To(HaveLen(chunkCount))
+		for i, at := range startedAtChecks {
+			// The check for chunk k precedes chunk k's own run: at most k-1 runs
+			// have begun when check k runs.
+			Expect(at).To(BeNumerically("<=", int32(i)))
+		}
+		Expect(fakeRunner.RunCallCount()).To(Equal(chunkCount))
+	})
+
+	It("aborts the remaining chunks when the pre-chunk seam returns a result", func() {
+		const chunkCount = 5
+		early := &agentlib.Result{
+			Status:    agentlib.AgentStatusDone,
+			NextPhase: "human_review",
+			Message:   "pr state changed",
+		}
+		var mu sync.Mutex
+		checks := 0
+		observed := 0
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			<-runCtx.Done()
+			mu.Lock()
+			observed++
+			mu.Unlock()
+			return nil, runCtx.Err()
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 2
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+		pkg.SetCheckBeforeChunkForTest(
+			step,
+			func(_ context.Context, _ *agentlib.Markdown) *agentlib.Result {
+				mu.Lock()
+				checks++
+				n := checks
+				mu.Unlock()
+				if n == 3 {
+					return early
+				}
+				return nil
+			},
+		)
+
+		result, err := step.Run(ctx, buildMD())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+		Expect(result.Message).To(Equal("pr state changed"))
+		// Chunks 1 and 2 started; chunk 3 and later never did.
+		Expect(fakeRunner.RunCallCount()).To(Equal(2))
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(observed).To(Equal(2))
+	})
+
+	It("stops everything on budget expiry and wins over sibling cancellations", func() {
+		const chunkCount = 5
+		t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+		clock := &scriptedClock{times: []time.Time{
+			t0, // outer deadline
+			t0, // chunk 1 dispatch
+			t0.Add(25*time.Minute - 5*time.Millisecond), // chunk 2 dispatch
+			t0,
+		}}
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			<-runCtx.Done()
+			if chunkIndexFromPrompt(prompt) == 2 {
+				return &claudelib.ClaudeResult{Partial: "partial chunk 2"}, runCtx.Err()
+			}
+			return nil, runCtx.Err()
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithClock(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+			clock,
+		)
+
+		md := buildMD()
+		var result *agentlib.Result
+		var runErr error
+		output := captureGlog(func() {
+			result, runErr = step.Run(ctx, md)
+		})
+		Expect(runErr).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+		Expect(result.Message).To(ContainSubstring("soft time budget"))
+
+		// Chunks 4 and 5 never start.
+		Expect(fakeRunner.RunCallCount()).To(Equal(3))
+		_, exists := md.FindSection("## Review")
+		Expect(exists).To(BeFalse())
+		Expect(output).To(ContainSubstring(
+			"execution: chunk 2/5 soft time budget exceeded nextPhase=human_review",
+		))
+	})
+
+	It("writes salvage exactly once for the lowest-index expired chunk", func() {
+		const chunkCount = 5
+		t0 := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+		clock := &scriptedClock{times: []time.Time{
+			t0, // outer deadline
+			t0.Add(25*time.Minute - 5*time.Millisecond), // chunk 1 dispatch
+			t0.Add(25*time.Minute - 5*time.Millisecond), // chunk 2 dispatch
+			t0,
+		}}
+
+		// Chunk 2 waits for chunk 1 to finish, so chunk 1 always expires first and
+		// is the lowest-index budget-expired chunk.
+		chunk1Done := make(chan struct{})
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			switch chunkIndexFromPrompt(prompt) {
+			case 1:
+				<-runCtx.Done()
+				close(chunk1Done)
+				return &claudelib.ClaudeResult{Partial: "partial one"}, runCtx.Err()
+			case 2:
+				<-chunk1Done
+				return &claudelib.ClaudeResult{Partial: "partial two"}, runCtx.Err()
+			default:
+				return &claudelib.ClaudeResult{Result: approveChunkOutput}, nil
+			}
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithClock(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+			clock,
+		)
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+		Expect(result.Message).To(ContainSubstring("soft time budget"))
+
+		marshaled, err := md.Marshal(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.Count(string(marshaled), "## Salvage")).To(Equal(1))
+
+		section, exists := md.FindSection("## Salvage")
+		Expect(exists).To(BeTrue())
+		Expect(section.Body).To(ContainSubstring("Chunk 1/5"))
+		Expect(section.Body).To(ContainSubstring("partial one"))
+		Expect(section.Body).NotTo(ContainSubstring("partial two"))
+
+		_, exists = md.FindSection("## Review")
+		Expect(exists).To(BeFalse())
+	})
+
+	It("stops everything on a runner failure and cancels the in-flight siblings", func() {
+		const chunkCount = 7
+		entered := make(chan int, chunkCount)
+		var mu sync.Mutex
+		observed := map[int]bool{}
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			entered <- idx
+			switch idx {
+			case 1:
+				seen := map[int]bool{}
+				for len(seen) < 2 {
+					got := <-entered
+					if got == 2 || got == 3 {
+						seen[got] = true
+					}
+				}
+				return nil, errors.New("runner exploded")
+			default:
+				<-runCtx.Done()
+				mu.Lock()
+				observed[idx] = true
+				mu.Unlock()
+				return nil, runCtx.Err()
+			}
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusFailed))
+		Expect(result.Message).To(ContainSubstring("execution claude run failed: runner exploded"))
+		Expect(fakeRunner.RunCallCount()).To(Equal(3))
+
+		mu.Lock()
+		defer mu.Unlock()
+		Expect(observed[2]).To(BeTrue())
+		Expect(observed[3]).To(BeTrue())
+
+		_, exists := md.FindSection("## Review")
+		Expect(exists).To(BeFalse())
+		_, exists = md.FindSection("## Salvage")
+		Expect(exists).To(BeFalse())
+	})
+
+	It("reports the genuine failure, not a sibling it cancelled", func() {
+		const chunkCount = 7
+		entered := make(chan int, chunkCount)
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+			idx := chunkIndexFromPrompt(prompt)
+			entered <- idx
+			switch idx {
+			case 3:
+				// The genuine failure, at a HIGHER index than the siblings it
+				// will cancel — the shape an index-ordered scan gets wrong.
+				seen := map[int]bool{}
+				for len(seen) < 2 {
+					got := <-entered
+					if got == 1 || got == 2 {
+						seen[got] = true
+					}
+				}
+				return nil, errors.New("genuine cause: the patch does not compile")
+			default:
+				<-runCtx.Done()
+				// Production shape: the real runner wraps the CLI's exit error and
+				// does NOT chain the context error, so this is indistinguishable
+				// from an ordinary failure by inspection.
+				return nil, fmt.Errorf("claude CLI failed: %s", "signal: killed")
+			}
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		md := buildMD()
+		result, err := step.Run(ctx, md)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusFailed))
+		Expect(result.Message).To(ContainSubstring("genuine cause: the patch does not compile"))
+		Expect(result.Message).NotTo(ContainSubstring("signal: killed"))
+	})
+
+	It("stops every in-flight chunk on external cancellation and joins them", func() {
+		const chunkCount = 7
+		var entered int32
+		var exited int32
+		startedCh := make(chan struct{}, chunkCount)
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(runCtx context.Context, _ string) (*claudelib.ClaudeResult, error) {
+			atomic.AddInt32(&entered, 1)
+			startedCh <- struct{}{}
+			<-runCtx.Done()
+			atomic.AddInt32(&exited, 1)
+			return nil, runCtx.Err()
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(bigFileFunnel(chunkCount), nil)
+
+		cfg := pkg.DefaultReviewChunkConfig()
+		cfg.Concurrency = 3
+		step := newStepWithConfig(
+			fakeRunner,
+			nil,
+			funnelRunner,
+			libtime.Duration(25*time.Minute),
+			cfg,
+		)
+
+		cancelCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		ctx = cancelCtx
+
+		md := buildMD()
+		outcomeCh := runAsync(step, md)
+		for i := 0; i < 3; i++ {
+			<-startedCh
+		}
+		cancel()
+
+		outcome := <-outcomeCh
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.Status).To(Equal(agentlib.AgentStatusFailed))
+		Expect(outcome.result.Message).To(ContainSubstring(
+			"execution claude run failed: context canceled",
+		))
+		// No new chunk started, and every in-flight goroutine exited before the
+		// step returned.
+		Expect(fakeRunner.RunCallCount()).To(Equal(3))
+		Expect(atomic.LoadInt32(&entered)).To(Equal(int32(3)))
+		Expect(atomic.LoadInt32(&exited)).To(Equal(int32(3)))
 	})
 })

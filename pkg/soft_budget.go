@@ -22,9 +22,10 @@ import (
 // non-expired runner error (crash, network, or an error that merely wraps
 // context.DeadlineExceeded without the deadline firing) keeps the existing
 // failed/controller-retry path. The elapsed is measured around runner.Run with
-// the same start := time.Now() / time.Since(start) shape pkg/funnel.go uses
-// and is what the execution concerns gate keys its demotion decision on
-// (DemotesUnverifiedConcerns compares it against the soft budget).
+// the same start := time.Now() / time.Since(start) shape pkg/funnel.go uses and
+// is what the execution concerns gate keys its demotion decision on — per chunk
+// under fan-out, against that chunk's own budget
+// (DemotesUnverifiedConcerns compares the fraction against its threshold).
 //
 //nolint:revive,staticcheck // error-return: the (result, error, expired, elapsed) quadruple is the deliberate budget contract (ST1008 tolerates a trailing bool but not a fourth value).
 func runWithSoftBudget(

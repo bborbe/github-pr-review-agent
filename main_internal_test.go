@@ -74,10 +74,11 @@ var _ = Describe("review chunk env knobs", func() {
 			EngageAdditions: app.ReviewChunkEngageAdditions,
 			MaxAdditions:    app.ReviewChunkMaxAdditions,
 			MaxFiles:        app.ReviewChunkMaxFiles,
+			Concurrency:     app.ReviewChunkConcurrency,
 		})
 	}
 
-	It("resolves the three defaults when unset", func() {
+	It("resolves the four defaults when unset", func() {
 		defaults, err := libargument.DefaultValues(ctx, &application{})
 		Expect(err).NotTo(HaveOccurred())
 		app := &application{}
@@ -85,6 +86,7 @@ var _ = Describe("review chunk env knobs", func() {
 		Expect(app.ReviewChunkEngageAdditions).To(Equal(500))
 		Expect(app.ReviewChunkMaxAdditions).To(Equal(300))
 		Expect(app.ReviewChunkMaxFiles).To(Equal(15))
+		Expect(app.ReviewChunkConcurrency).To(Equal(3))
 		Expect(validate(app)).To(Succeed())
 	})
 
@@ -112,5 +114,8 @@ var _ = Describe("review chunk env knobs", func() {
 		Entry("max files",
 			"REVIEW_CHUNK_MAX_FILES",
 			func(app *application) int { return app.ReviewChunkMaxFiles }),
+		Entry("concurrency",
+			"REVIEW_CHUNK_CONCURRENCY",
+			func(app *application) int { return app.ReviewChunkConcurrency }),
 	)
 })

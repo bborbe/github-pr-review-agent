@@ -116,19 +116,29 @@ https://github.com/bborbe/maintainer/pull/14
 		)
 	}
 
-	// twoChunkFunnel partitions into exactly two chunks under the default
-	// chunk config (601 added lines over two files).
-	twoChunkFunnel := func() *mocks.FunnelRunner {
+	// chunkFunnel partitions into exactly n chunks under the default chunk
+	// config (301 added lines per file, one file per chunk).
+	chunkFunnel := func(n int) *mocks.FunnelRunner {
+		files := make([]pkg.ChangedFile, 0, n)
+		for i := 0; i < n; i++ {
+			files = append(files, pkg.ChangedFile{
+				Path:      fmt.Sprintf("f%d.go", i),
+				Additions: 301,
+			})
+		}
 		f := &mocks.FunnelRunner{}
 		f.RunReturns(pkg.FunnelResult{
 			Ran:          true,
 			FindingsJSON: `{"stats":{"yamls_run":1,"findings_count":0,"elapsed_ms":1},"findings_by_owner":{},"errors":[]}`,
-			ChangedFiles: []pkg.ChangedFile{
-				{Path: "a.go", Additions: 301},
-				{Path: "b.go", Additions: 300},
-			},
+			ChangedFiles: files,
 		}, nil)
 		return f
+	}
+
+	// twoChunkFunnel partitions into exactly two chunks under the default
+	// chunk config (601 added lines over two files).
+	twoChunkFunnel := func() *mocks.FunnelRunner {
+		return chunkFunnel(2)
 	}
 
 	resolutionBody := func(md *agentlib.Markdown) string {
@@ -173,7 +183,7 @@ https://github.com/bborbe/maintainer/pull/14
 				step := newExecutionStep(
 					runner,
 					poster,
-					twoChunkFunnel(),
+					chunkFunnel(5),
 					libtime.Duration(25*time.Minute),
 				)
 
@@ -193,10 +203,50 @@ https://github.com/bborbe/maintainer/pull/14
 				Expect(exists).To(BeFalse())
 				_, exists = md.FindSection("## Salvage")
 				Expect(exists).To(BeFalse())
-				Expect(runner.RunCallCount()).To(Equal(1)) // chunk 2 never ran
+				// Fan-out: the first concurrency window (3 of 5 chunks) is already
+				// in flight when the watch fires; those are cancelled and chunks 4
+				// and 5 never start. The bound is asserted as <= because a chunk
+				// goroutine that has not reached runner.Run when the first watcher
+				// fires legitimately never runs.
+				Expect(runner.RunCallCount()).To(BeNumerically("<=", 3))
 				Expect(poster.PostCallCount()).To(Equal(0))
 			},
 		)
+
+		It("prefers the moot verdict over a sibling's genuine failure", func() {
+			// The merge's headline precedence: a mooted chunk wins over the
+			// budget and failure rules its own cancel provokes in its siblings.
+			// Chunk 1 returns a NON-cancellation error as the watch fires (so
+			// causeErr is set), chunk 2 is plain-cancelled; the terminal outcome
+			// must still be the superseded verdict, never `failed`.
+			sequencePRState(func(int32) (string, string, string, error) {
+				return "OPEN", "", movedHead, nil
+			})
+			runner := &mocks.ClaudeRunnerMock{}
+			runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done()
+				if chunkIndexFromPrompt(prompt) == 1 {
+					return nil, fmt.Errorf("boom: not a cancellation")
+				}
+				return nil, runCtx.Err()
+			}
+			poster := &mocks.PrPoster{}
+			step := newExecutionStep(
+				runner,
+				poster,
+				chunkFunnel(2),
+				libtime.Duration(25*time.Minute),
+			)
+
+			md := buildMD()
+			result, err := step.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("done"))
+			Expect(result.Message).NotTo(ContainSubstring("claude run failed"))
+			Expect(resolutionBody(md)).To(ContainSubstring(`"verdict": "superseded"`))
+			Expect(poster.PostCallCount()).To(Equal(0))
+		})
 
 		It("cancels on a merge with verdict merged + marker", func() {
 			sequencePRState(func(int32) (string, string, string, error) {
