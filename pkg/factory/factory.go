@@ -212,10 +212,17 @@ func CreateAgent(
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
+	// Every phase gets the PR-URL preflight so a URL-less task cannot burn a
+	// full review and then fail in the post step with failure_step=
+	// pr_url_extraction (2026-10-24 prod incident, task 55d44221). Prepended
+	// rather than folded into a phase's own step because a run may enter at
+	// `execution`, skipping the planning prompt that already specifies
+	// needs_input for a missing URL.
+	prURLCheck := prpkg.NewPRURLPreflightStep()
 	// Live GitHub PR-state client shared by every phase's prStateCheck
 	// pre/post-flight (gh CLI wrapper, reuses the ghToken auth path).
 	prStateClient := github.NewGHClient(ghToken)
-	planningPhase := agentlib.NewPhase("planning", tokenCheck, prpkg.NewPlanningStep(
+	planningPhase := agentlib.NewPhase("planning", tokenCheck, prURLCheck, prpkg.NewPlanningStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools),
 		prompts.BuildPlanningInstructions(),
 		maxDuration,
@@ -252,8 +259,8 @@ func CreateAgent(
 	)
 	return agentlib.NewAgent(
 		planningPhase,
-		agentlib.NewPhase(domain.TaskPhaseExecution, tokenCheck, executionStep),
-		agentlib.NewPhase("ai_review", tokenCheck, reviewStep),
+		agentlib.NewPhase(domain.TaskPhaseExecution, tokenCheck, prURLCheck, executionStep),
+		agentlib.NewPhase("ai_review", tokenCheck, prURLCheck, reviewStep),
 	)
 }
 

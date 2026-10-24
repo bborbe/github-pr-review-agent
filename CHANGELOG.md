@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: fail a pr-review task at the phase preflight when its body carries no GitHub PR URL, instead of running planning, execution and a full Claude review and only failing in the post step with `failure_step=pr_url_extraction` (discarding the finished review); a new `verify-pr-url` step is prepended to every phase alongside the token check, so a run entering at `execution` — which skips the planning prompt that already specifies `needs_input` for a missing URL — cannot route around it, and it returns `needs_input` rather than `failed` because a missing URL is a task for the operator to complete, not a code fault to retry (2026-10-24 prod incident, task 55d44221)
+
 ## v0.14.0
 
 - feat: `pr-override` tasks accept frontmatter `override_reason`; `trivial-bot-bump` posts a mechanical APPROVE whose body names the rule and states no LLM review ran (github-pr-watcher emits it for trivial bot dependency bumps in repos opted into `autoMerge.trivial` + `prReviewer.autoApprove`; operator decision 2026-10-23); an empty reason keeps the label-override body unchanged; an unknown reason posts nothing and routes to `human_review`

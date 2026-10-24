@@ -1414,6 +1414,36 @@ complete review body
 				"# H1\n\n## Plan\n\nhttps://github.com/owner/repo/pull/1",
 				"",
 			),
+			// The body below is the exact document the failing Job
+			// pr-reviewer-agent-55d44221-20261024201049-x86qn read in the 2026-10-24
+			// prod incident — task 55d44221 at commit c0b967a390 of the private-agent
+			// vault. It is the size-gate "parked for human review" text and carries no
+			// PR URL at all, so "" is the correct answer here; the defect was that
+			// nothing failed until the post step, after a full review had already run.
+			Entry(
+				"real parked-for-human-review task body, no URL anywhere",
+				`---
+assignee: ""
+base_ref: master
+clone_url: https://github.com/bborbe/git-rest.git
+phase: human_review
+ref: 9a509d20aae4d4970c3587856e1d1bc95aaef68e
+stage: prod
+status: todo
+target_vault: openclaw
+task_identifier: 55d44221-4a05-5193-a56f-490ec9060b72
+task_type: pr-review
+title: 'fix: serve claim refs from a local mirror instead of ls-remote per GET'
+---
+## Oversized PR — parked for human review
+
+This PR has 1275 added lines (limit 1200) and 9 changed files (limit 100), which exceeds the auto-reviewer's context budget. Spawning a review pod would overflow its context window (`+"`claude CLI failed: Prompt is too long`"+`) and die before posting a verdict.
+
+1314 additions across 7 files excluded by `+"`.reviewignore`"+` (not counted toward the size gate, not sent to the reviewer).
+
+To review anyway, edit the frontmatter: `+"`assignee: pr-reviewer-agent`"+`, `+"`phase: in_progress`"+`, `+"`status: in_progress`"+`. To dismiss, set `+"`status: aborted`"+`.`,
+				"",
+			),
 			Entry(
 				"no URL anywhere",
 				"# H1 only\n\nno url here\n## Plan",
