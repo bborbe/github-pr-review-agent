@@ -1414,15 +1414,14 @@ complete review body
 				"# H1\n\n## Plan\n\nhttps://github.com/owner/repo/pull/1",
 				"",
 			),
-			// SC2: the measured failing input, quoted verbatim from the 2026-10-24
+			// The body below is the exact document the failing Job
+			// pr-reviewer-agent-55d44221-20261024201049-x86qn read in the 2026-10-24
 			// prod incident — task 55d44221 at commit c0b967a390 of the private-agent
-			// vault, i.e. the exact document the failing Job
-			// pr-reviewer-agent-55d44221-20261024201049-x86qn read. The body is the
-			// size-gate "parked for human review" text and carries no PR URL at all,
-			// so "" is the correct answer here; the defect was that nothing failed
-			// until the post step, after a full review had already run.
+			// vault. It is the size-gate "parked for human review" text and carries no
+			// PR URL at all, so "" is the correct answer here; the defect was that
+			// nothing failed until the post step, after a full review had already run.
 			Entry(
-				"SC2 — real parked-for-human-review task body, no URL anywhere",
+				"real parked-for-human-review task body, no URL anywhere",
 				`---
 assignee: ""
 base_ref: master

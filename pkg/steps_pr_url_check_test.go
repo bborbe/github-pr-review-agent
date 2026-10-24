@@ -41,13 +41,13 @@ var _ = Describe("PRURLPreflightStep", func() {
 			Expect(result.Message).NotTo(BeEmpty(),
 				"needs_input must tell the operator what is missing")
 		},
-		// SC2: the measured failing input, quoted verbatim from the 2026-10-24 prod
-		// incident — task 55d44221 at commit c0b967a390 of the private-agent vault,
-		// the exact document read by Job
-		// pr-reviewer-agent-55d44221-20261024201049-x86qn (started 20:10:49Z). Its
-		// body is the size-gate "parked for human review" text with no PR URL
-		// anywhere. Before this step the run completed a full review and only failed
-		// in the post step with failure_step=pr_url_extraction, discarding it.
+		// The body below is the exact document read by Job
+		// pr-reviewer-agent-55d44221-20261024201049-x86qn (started 20:10:49Z) in the
+		// 2026-10-24 prod incident — task 55d44221 at commit c0b967a390 of the
+		// private-agent vault. It is the size-gate "parked for human review" text with
+		// no PR URL anywhere. Before this step the run completed a full review and
+		// only failed in the post step with failure_step=pr_url_extraction,
+		// discarding it.
 		Entry(
 			"real parked-for-human-review task body — needs_input",
 			`---

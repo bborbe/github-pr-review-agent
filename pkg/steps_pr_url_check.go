@@ -10,8 +10,8 @@ import (
 	agentlib "github.com/bborbe/agent"
 )
 
-// prURLPreflightStep fails a pr-review task fast when its body carries no
-// GitHub PR URL.
+// NewPRURLPreflightStep returns a step that fails a pr-review task fast when
+// its body carries no GitHub PR URL.
 //
 // Without this guard a URL-less task runs the entire pipeline — planning,
 // execution, a full Claude review — and only discovers the problem in the post
@@ -28,6 +28,7 @@ func NewPRURLPreflightStep() agentlib.Step {
 	return &prURLPreflightStep{}
 }
 
+// prURLPreflightStep implements the URL preflight as an agentlib.Step.
 type prURLPreflightStep struct{}
 
 // Name implements agentlib.Step.
