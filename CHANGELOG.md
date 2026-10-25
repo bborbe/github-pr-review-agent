@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: record job usage so `agent_job_*` metrics stop reading zero. `RecordUsage` was never called, so every reviewer Job reported `agent_job_turns_total 0` and `agent_job_rate_limit_retries_total 0` — the counters existed (pre-initialized, whole registry pushed) and were never fed, which is the blind state a metric cannot be trusted out of. `CreateClaudeRunner` now wraps the runner in a decorator that records the token and turn cost of **every** invocation, so planning, execution, ai_review and the healthcheck path are all covered from one place instead of five call sites remembering to call it. The error path records too: since agent v0.129.0 a failed attempt carries the usage it actually consumed, and a run that spent three rate-limited invocations before succeeding cost four times what its result reports — dropping that would under-report exactly the runs the rate-limit counters exist to explain. Verified on dev before wiring: after the `PUSHGATEWAY_URL` fix the push succeeds (`prometheus push completed`, series present) while the value stayed `0`, which is what isolated transport from the missing call.
+
 ## v0.14.2
 
 - fix: bump `github.com/bborbe/agent` v0.113.0 → v0.129.0, which brings in-pod rate-limit retry. The Claude CLI exhausts its own ten API retries in roughly five minutes and exits 1, which this reviewer could only record as a crash — `retry_exhausted_429` was 62 of 136 crashes (45.6 %) in the measured population. The runner now re-reads the CLI's own `api_retry` evidence and re-invokes up to three times with jittered exponential backoff, refusing any retry that cannot finish inside the phase budget minus five minutes so a rate-limit crash is never traded for a `deadline_exceeded` one. Every review step inherits the fix, because they all reach the CLI through the same budget wrapper. The transitive bumps this requires (`cqrs` 0.6.13, `errors` 1.6.4, `kafka` 1.28.6, `vault-cli` 0.178.3) are the minimums agent v0.129.0 declares, not a discretionary sweep.
@@ -72,11 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## v0.10.1
 
 - test: add the `bborbe/dark-factory#86` geometry as a second fixture and budget-keyed row pair in the unverified-concerns table — a clean `approve` carrying one benign `not-verified` concern (Docker Hub image availability) alongside two `not-an-issue` concerns must stand on a short run and fail closed on a budget-heavy one
-- docs: correct three stale evidence commands in spec 004 — AC 10's review selector named the *prod* bot login on a dev-stage check, AC 11's pod selector (`-l app=pr-reviewer-agent`) matched no pods at all, and AC 8's CHANGELOG grep was scoped to `## Unreleased
-
-- fix: record job usage so `agent_job_*` metrics stop reading zero. `RecordUsage` was never called, so every reviewer Job reported `agent_job_turns_total 0` and `agent_job_rate_limit_retries_total 0` — the counters existed (pre-initialized, whole registry pushed) and were never fed, which is the blind state a metric cannot be trusted out of. `CreateClaudeRunner` now wraps the runner in a decorator that records the token and turn cost of **every** invocation, so planning, execution, ai_review and the healthcheck path are all covered from one place instead of five call sites remembering to call it. The error path records too: since agent v0.129.0 a failed attempt carries the usage it actually consumed, and a run that spent three rate-limited invocations before succeeding cost four times what its result reports — dropping that would under-report exactly the runs the rate-limit counters exist to explain. Verified on dev before wiring: after the `PUSHGATEWAY_URL` fix the push succeeds (`prometheus push completed`, series present) while the value stayed `0`, which is what isolated transport from the missing call.
-
-## v0.14.2`, which stops existing the moment the release cuts
+- docs: correct three stale evidence commands in spec 004 — AC 10's review selector named the *prod* bot login on a dev-stage check, AC 11's pod selector (`-l app=pr-reviewer-agent`) matched no pods at all, and AC 8's CHANGELOG grep was scoped to `## Unreleased`, which stops existing the moment the release cuts
 
 ## v0.10.0
 

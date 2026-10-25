@@ -115,17 +115,16 @@ func CreateClaudeRunner(
 	allowedTools claudelib.AllowedTools,
 	usage libmetrics.JobMetrics,
 ) claudelib.ClaudeRunner {
-	runner := claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
-		ClaudeConfigDir:  claudeConfigDir,
-		AllowedTools:     allowedTools,
-		Model:            model,
-		WorkingDirectory: agentDir,
-		Env:              env,
-	})
-	if usage == nil {
-		return runner
-	}
-	return &usageRecordingRunner{inner: runner, usage: usage}
+	return prpkg.NewUsageRecordingRunner(
+		claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
+			ClaudeConfigDir:  claudeConfigDir,
+			AllowedTools:     allowedTools,
+			Model:            model,
+			WorkingDirectory: agentDir,
+			Env:              env,
+		}),
+		usage,
+	)
 }
 
 // CreateKafkaResultDeliverer creates a ResultDeliverer that publishes task

@@ -14,6 +14,7 @@ import (
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/agent/delivery"
+	libmetricsmocks "github.com/bborbe/agent/metrics/mocks"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/factory"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
@@ -164,6 +165,21 @@ var _ = Describe("Factory", func() {
 				map[string]string{},
 				claudelib.AllowedTools{"Read"},
 				nil,
+			)
+			Expect(runner).NotTo(BeNil())
+		})
+
+		It("returns a non-nil runner when metrics are supplied", func() {
+			// The non-nil branch is the one that wraps the runner in the usage
+			// recorder, so a regression that dropped the wrapper would otherwise
+			// pass every test in this file.
+			runner := factory.CreateClaudeRunner(
+				"",
+				"agent",
+				"sonnet",
+				map[string]string{},
+				claudelib.AllowedTools{"Read"},
+				&libmetricsmocks.JobMetrics{},
 			)
 			Expect(runner).NotTo(BeNil())
 		})

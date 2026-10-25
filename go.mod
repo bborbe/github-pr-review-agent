@@ -27,6 +27,7 @@ require (
 require (
 	github.com/IBM/sarama v1.61.1 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
+	github.com/a2aproject/a2a-go/v2 v2.7.0 // indirect
 	github.com/bborbe/collection v1.21.4 // indirect
 	github.com/bborbe/http v1.26.31 // indirect
 	github.com/bborbe/k8s v1.14.24 // indirect
