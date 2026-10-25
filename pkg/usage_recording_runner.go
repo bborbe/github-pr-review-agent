@@ -30,6 +30,38 @@ func NewUsageRecordingRunner(
 	return &usageRecordingRunner{inner: inner, usage: usage}
 }
 
+// WorktreeRunnerConfig is the per-worktree runner configuration the execution
+// phase needs: the tools, model and env are fixed for the run, only the working
+// directory varies with the checked-out worktree.
+type WorktreeRunnerConfig struct {
+	ClaudeConfigDir claudelib.ClaudeConfigDir
+	AllowedTools    claudelib.AllowedTools
+	Model           claudelib.ClaudeModel
+	Env             map[string]string
+}
+
+// NewWorktreeRunner builds the execution phase's runner for one worktree and
+// records its usage.
+//
+// This exists as its own constructor rather than inline in the step so the
+// wrapping is reachable from a test: the step builds the runner lazily, inside
+// buildRunner, which no external test can call — and the execution phase is
+// where the bulk of the token spend happens, so an untested wrap there is
+// exactly the gap that would let the metric go quiet without anyone noticing.
+func NewWorktreeRunner(
+	config WorktreeRunnerConfig,
+	worktreePath string,
+	usage libmetrics.JobMetrics,
+) claudelib.ClaudeRunner {
+	return NewUsageRecordingRunner(claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
+		ClaudeConfigDir:  config.ClaudeConfigDir,
+		AllowedTools:     config.AllowedTools,
+		Model:            config.Model,
+		WorkingDirectory: claudelib.AgentDir(worktreePath),
+		Env:              config.Env,
+	}), usage)
+}
+
 type usageRecordingRunner struct {
 	inner claudelib.ClaudeRunner
 	usage libmetrics.JobMetrics

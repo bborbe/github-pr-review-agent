@@ -820,13 +820,12 @@ func (s *checkoutExecutionStep) buildRunner(worktreePath string) claudelib.Claud
 	if s.runner != nil {
 		return s.runner
 	}
-	return NewUsageRecordingRunner(claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
-		ClaudeConfigDir:  s.claudeConfigDir,
-		AllowedTools:     s.allowedTools,
-		Model:            s.model,
-		WorkingDirectory: claudelib.AgentDir(worktreePath),
-		Env:              s.env,
-	}), s.usage)
+	return NewWorktreeRunner(WorktreeRunnerConfig{
+		ClaudeConfigDir: s.claudeConfigDir,
+		AllowedTools:    s.allowedTools,
+		Model:           s.model,
+		Env:             s.env,
+	}, worktreePath, s.usage)
 }
 
 func (s *checkoutExecutionStep) runClaude(

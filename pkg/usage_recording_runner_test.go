@@ -7,6 +7,8 @@ package pkg_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 
 	claudelib "github.com/bborbe/agent/claude"
 	libmetrics "github.com/bborbe/agent/metrics"
@@ -114,5 +116,45 @@ var _ = Describe("UsageRecordingRunner", func() {
 			Expect(result.Result).To(Equal("done"))
 			Expect(inner.RunCallCount()).To(Equal(1))
 		})
+	})
+})
+
+var _ = Describe("NewWorktreeRunner", func() {
+	var (
+		ctx        context.Context
+		dir        string
+		jobMetrics *mocks.JobMetrics
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		dir = GinkgoT().TempDir()
+		jobMetrics = &mocks.JobMetrics{}
+	})
+
+	// The execution phase builds its runner lazily inside buildRunner, which no
+	// external test can reach — so the wrap is exercised through the constructor
+	// that buildRunner delegates to. Without this the phase carrying the bulk of
+	// the token spend could stop recording and every other test would still pass.
+	It("records usage from the runner the execution phase builds", func() {
+		shim := filepath.Join(dir, "claude")
+		Expect(os.WriteFile(shim, []byte( //nolint:gosec // shim must be executable
+			"#!/bin/sh\n"+
+				`echo '{"type":"result","result":"ok","usage":{"input_tokens":9,"output_tokens":4},"num_turns":2}'`+
+				"\nexit 0\n",
+		), 0o700)).To(Succeed())
+		originalPath := os.Getenv("PATH")
+		DeferCleanup(func() { Expect(os.Setenv("PATH", originalPath)).To(Succeed()) })
+		Expect(os.Setenv("PATH", dir+":"+originalPath)).To(Succeed())
+
+		runner := prpkg.NewWorktreeRunner(prpkg.WorktreeRunnerConfig{}, dir, jobMetrics)
+
+		result, err := runner.Run(ctx, "prompt")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Result).To(Equal("ok"))
+		Expect(jobMetrics.RecordUsageCallCount()).To(Equal(1))
+		Expect(jobMetrics.RecordUsageArgsForCall(0).InputTokens).To(Equal(int64(9)))
+		Expect(jobMetrics.RecordUsageArgsForCall(0).Turns).To(Equal(int64(2)))
 	})
 })
