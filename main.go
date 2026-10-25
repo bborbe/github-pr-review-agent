@@ -196,7 +196,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	}
 	defer cleanup()
 
-	agent, err := a.dispatchAgent(ctx, repoAllowlist, resolvedToken)
+	agent, err := a.dispatchAgent(ctx, repoAllowlist, resolvedToken, jobMetrics)
 	if err != nil {
 		jobMetrics.RecordRun(agentlib.AgentStatusFailed)
 		jobMetrics.RecordDuration(time.Since(start))
@@ -245,6 +245,7 @@ func (a *application) dispatchAgent(
 	ctx context.Context,
 	repoAllowlist []string,
 	resolvedToken string,
+	jobMetrics libmetrics.JobMetrics,
 ) (*agentlib.Agent, error) {
 	env := map[string]string{}
 	if resolvedToken != "" {
@@ -296,6 +297,7 @@ func (a *application) dispatchAgent(
 			Concurrency:     a.ReviewChunkConcurrency,
 		},
 		a.PRStatePollInterval,
+		jobMetrics,
 	)
 	agent, err := provider.Get(ctx, agentlib.TaskType(a.TaskType))
 	if err != nil {

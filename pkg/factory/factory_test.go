@@ -6,6 +6,8 @@ package factory_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/agent/delivery"
+	libmetricsmocks "github.com/bborbe/agent/metrics/mocks"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/factory"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
@@ -163,8 +166,43 @@ var _ = Describe("Factory", func() {
 				"sonnet",
 				map[string]string{},
 				claudelib.AllowedTools{"Read"},
+				nil,
 			)
 			Expect(runner).NotTo(BeNil())
+		})
+
+		It("wraps the runner so a supplied recorder is actually fed", func() {
+			// Non-nil alone proves nothing — it is true of the nil case too. This
+			// drives the returned runner through a fake CLI and asserts the
+			// recorder was fed, so a regression that dropped the wrapper fails.
+			dir := GinkgoT().TempDir()
+			shim := filepath.Join(dir, "claude")
+			Expect(os.WriteFile(shim, []byte( //nolint:gosec // shim must be executable
+				"#!/bin/sh\n"+
+					`echo '{"type":"result","result":"ok","usage":{"input_tokens":5,"output_tokens":2},"num_turns":1}'`+
+					"\nexit 0\n",
+			), 0o700)).To(Succeed())
+			originalPath := os.Getenv("PATH")
+			DeferCleanup(func() { Expect(os.Setenv("PATH", originalPath)).To(Succeed()) })
+			Expect(os.Setenv("PATH", dir+":"+originalPath)).To(Succeed())
+
+			jobMetrics := &libmetricsmocks.JobMetrics{}
+			runner := factory.CreateClaudeRunner(
+				"",
+				claudelib.AgentDir(dir),
+				"sonnet",
+				map[string]string{},
+				claudelib.AllowedTools{"Read"},
+				jobMetrics,
+			)
+
+			result, err := runner.Run(context.Background(), "prompt")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Result).To(Equal("ok"))
+			Expect(jobMetrics.RecordUsageCallCount()).To(Equal(1))
+			Expect(jobMetrics.RecordUsageArgsForCall(0).InputTokens).To(Equal(int64(5)))
+			Expect(jobMetrics.RecordUsageArgsForCall(0).Turns).To(Equal(int64(1)))
 		})
 
 		It("returns a non-nil runner with GH_TOKEN in env", func() {
@@ -174,6 +212,7 @@ var _ = Describe("Factory", func() {
 				"sonnet",
 				map[string]string{"GH_TOKEN": "test-token"},
 				claudelib.AllowedTools{"Read"},
+				nil,
 			)
 			Expect(runner).NotTo(BeNil())
 		})
@@ -198,6 +237,7 @@ var _ = Describe("Factory", func() {
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -220,6 +260,7 @@ var _ = Describe("Factory", func() {
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -344,6 +385,7 @@ var _ = Describe("Factory", func() {
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 			Expect(provider).NotTo(BeNil())
 		})

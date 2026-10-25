@@ -16,6 +16,7 @@ import (
 	claudelib "github.com/bborbe/agent/claude"
 	delivery "github.com/bborbe/agent/delivery"
 	"github.com/bborbe/agent/healthcheck"
+	libmetrics "github.com/bborbe/agent/metrics"
 	"github.com/bborbe/cqrs/base"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
@@ -112,14 +113,18 @@ func CreateClaudeRunner(
 	model claudelib.ClaudeModel,
 	env map[string]string,
 	allowedTools claudelib.AllowedTools,
+	usage libmetrics.JobMetrics,
 ) claudelib.ClaudeRunner {
-	return claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
-		ClaudeConfigDir:  claudeConfigDir,
-		AllowedTools:     allowedTools,
-		Model:            model,
-		WorkingDirectory: agentDir,
-		Env:              env,
-	})
+	return prpkg.NewUsageRecordingRunner(
+		claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
+			ClaudeConfigDir:  claudeConfigDir,
+			AllowedTools:     allowedTools,
+			Model:            model,
+			WorkingDirectory: agentDir,
+			Env:              env,
+		}),
+		usage,
+	)
 }
 
 // CreateKafkaResultDeliverer creates a ResultDeliverer that publishes task
@@ -209,6 +214,7 @@ func CreateAgent(
 	maxDuration libtime.Duration,
 	chunkConfig prpkg.ReviewChunkConfig,
 	prStatePollInterval libtime.Duration,
+	usage libmetrics.JobMetrics,
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
@@ -223,7 +229,7 @@ func CreateAgent(
 	// pre/post-flight (gh CLI wrapper, reuses the ghToken auth path).
 	prStateClient := github.NewGHClient(ghToken)
 	planningPhase := agentlib.NewPhase("planning", tokenCheck, prURLCheck, prpkg.NewPlanningStep(
-		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools),
+		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools, usage),
 		prompts.BuildPlanningInstructions(),
 		maxDuration,
 		prStateClient,
@@ -245,9 +251,10 @@ func CreateAgent(
 		prStateClient,
 		chunkConfig,
 		prStatePollInterval,
+		usage,
 	)
 	reviewStep := prpkg.NewReviewStep(
-		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools),
+		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools, usage),
 		prPoster,
 		prompts.BuildReviewInstructions(),
 		verifier,
@@ -281,6 +288,7 @@ func CreateAgentProvider(
 	maxDuration libtime.Duration,
 	chunkConfig prpkg.ReviewChunkConfig,
 	prStatePollInterval libtime.Duration,
+	usage libmetrics.JobMetrics,
 ) agentlib.AgentProvider {
 	botLogin := ResolveBotLogin(env)
 	poster := CreatePrPoster(ghToken, botLogin, currentDateTime)
@@ -300,6 +308,7 @@ func CreateAgentProvider(
 		maxDuration,
 		chunkConfig,
 		prStatePollInterval,
+		usage,
 	)
 	healthcheckRunner := CreateClaudeRunner(
 		claudeConfigDir,
@@ -307,6 +316,7 @@ func CreateAgentProvider(
 		model,
 		env,
 		claudelib.AllowedTools{},
+		usage,
 	)
 	livenessAgent := healthcheck.NewAgent(healthcheck.NewClaudeStep(healthcheckRunner))
 
