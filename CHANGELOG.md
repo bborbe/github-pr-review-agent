@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: bump `github.com/bborbe/agent` v0.113.0 → v0.129.0, which brings in-pod rate-limit retry. The Claude CLI exhausts its own ten API retries in roughly five minutes and exits 1, which this reviewer could only record as a crash — `retry_exhausted_429` was 62 of 136 crashes (45.6 %) in the measured population. The runner now re-reads the CLI's own `api_retry` evidence and re-invokes up to three times with jittered exponential backoff, refusing any retry that cannot finish inside the phase budget minus five minutes so a rate-limit crash is never traded for a `deadline_exceeded` one. Every review step inherits the fix, because they all reach the CLI through the same budget wrapper. The transitive bumps this requires (`cqrs` 0.6.13, `errors` 1.6.4, `kafka` 1.28.6, `vault-cli` 0.178.3) are the minimums agent v0.129.0 declares, not a discretionary sweep.
+
 ## v0.14.1
 
 - fix: fail a pr-review task at the phase preflight when its body carries no GitHub PR URL, instead of running planning, execution and a full Claude review and only failing in the post step with `failure_step=pr_url_extraction` (discarding the finished review); a new `verify-pr-url` step is prepended to every phase alongside the token check, so a run entering at `execution` — which skips the planning prompt that already specifies `needs_input` for a missing URL — cannot route around it, and it returns `needs_input` rather than `failed` because a missing URL is a task for the operator to complete, not a code fault to retry (2026-10-24 prod incident, task 55d44221)
