@@ -163,6 +163,7 @@ var _ = Describe("Factory", func() {
 				"sonnet",
 				map[string]string{},
 				claudelib.AllowedTools{"Read"},
+				nil,
 			)
 			Expect(runner).NotTo(BeNil())
 		})
@@ -174,6 +175,7 @@ var _ = Describe("Factory", func() {
 				"sonnet",
 				map[string]string{"GH_TOKEN": "test-token"},
 				claudelib.AllowedTools{"Read"},
+				nil,
 			)
 			Expect(runner).NotTo(BeNil())
 		})
@@ -198,6 +200,7 @@ var _ = Describe("Factory", func() {
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -220,6 +223,7 @@ var _ = Describe("Factory", func() {
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 			Expect(agent).NotTo(BeNil())
 		})
@@ -344,6 +348,7 @@ var _ = Describe("Factory", func() {
 				libtime.Duration(25*time.Minute),
 				prpkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 			Expect(provider).NotTo(BeNil())
 		})

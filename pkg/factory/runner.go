@@ -9,6 +9,7 @@ import (
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
+	libmetrics "github.com/bborbe/agent/metrics"
 	"github.com/bborbe/errors"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
@@ -57,6 +58,10 @@ type RunConfig struct {
 	// is injected into the env map as BOT_GITHUB_LOGIN so ResolveBotLogin
 	// picks it up instead of the DefaultBotLogin fallback.
 	BotLogin string
+	// Usage records the token and turn cost of every claude invocation. Nil
+	// disables recording — the agent then runs exactly as it did before the
+	// metric existed.
+	Usage libmetrics.JobMetrics
 	// Agent overrides the agent used for execution. If nil, CreateAgent is called.
 	// Set by main.go after dispatching via CreateAgentProvider. cmd/run-task leaves
 	// this nil so CreateAgent is used for backward compatibility.
@@ -158,6 +163,7 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 			cfg.MaxReviewDuration,
 			cfg.ReviewChunkConfig,
 			cfg.PRStatePollInterval,
+			cfg.Usage,
 		)
 	}
 	return agent.Run(ctx, cfg.Phase, cfg.TaskContent, cfg.Deliverer)
