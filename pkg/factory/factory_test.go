@@ -93,13 +93,10 @@ var _ = Describe("Factory", func() {
 					"git -C " + workdir + " show --stat",
 					"git -C " + workdir + " status --short",
 					"git -C " + workdir + " ls-files --others",
-					"git -C " + workdir + " fetch origin main",
-					"git -C " + workdir + " worktree list",
-					"git -C " + workdir + " branch -a",
 					"git -C " + workdir + " rev-parse --abbrev-ref HEAD",
 					// no-arg forms — matched by the bare Bash(git -C * <subcmd>) entries
 					"git -C " + workdir + " status",
-					"git -C " + workdir + " branch",
+					"git -C " + workdir + " rev-parse",
 				}
 				denied := []string{
 					// write/network boundary — no scoped -C entry exists for these subcommands
@@ -108,6 +105,13 @@ var _ = Describe("Factory", func() {
 					"git -C " + workdir + " checkout -b feature",
 					"git -C " + workdir + " reset --hard",
 					"git -C " + workdir + " merge main",
+					// shared-worktree boundary — checkout-mutating commands are not granted
+					"git -C " + workdir + " fetch origin main",
+					"git -C " + workdir + " worktree list",
+					"git -C " + workdir + " branch -a",
+					"git -C " + workdir + " fetch",
+					"git -C " + workdir + " worktree",
+					"git -C " + workdir + " branch",
 				}
 				for _, command := range readOnly {
 					Expect(allowedBy(factory.ExecutionTools, "Bash", command)).To(BeTrue())
@@ -124,18 +128,12 @@ var _ = Describe("Factory", func() {
 					"Bash(git -C * show *)",
 					"Bash(git -C * status *)",
 					"Bash(git -C * ls-files *)",
-					"Bash(git -C * fetch *)",
-					"Bash(git -C * worktree *)",
-					"Bash(git -C * branch *)",
 					"Bash(git -C * rev-parse *)",
 					"Bash(git -C * diff)",
 					"Bash(git -C * log)",
 					"Bash(git -C * show)",
 					"Bash(git -C * status)",
 					"Bash(git -C * ls-files)",
-					"Bash(git -C * fetch)",
-					"Bash(git -C * worktree)",
-					"Bash(git -C * branch)",
 					"Bash(git -C * rev-parse)",
 				} {
 					Expect(factory.ExecutionTools).To(ContainElement(entry))
@@ -156,6 +154,48 @@ var _ = Describe("Factory", func() {
 				Expect(allowedBy(baseline, "Bash", bareDiff)).To(BeTrue())
 			},
 		)
+
+		It("equals the exact read-only allowlist", func() {
+			// Chunk reviews run concurrently in one shared worktree; any
+			// checkout-mutating entry (fetch, worktree, branch, rm -rf) lets one
+			// chunk corrupt the checkout its siblings read. Lock the whole list so
+			// an added entry — or a widened wildcard — fails here.
+			Expect(tools).To(Equal(claudelib.AllowedTools{
+				"Task",
+				"Read", "Grep", "Glob",
+				"Bash(git diff:*)",
+				"Bash(git log:*)",
+				"Bash(git show:*)",
+				"Bash(git status:*)",
+				"Bash(git ls-files:*)",
+				"Bash(git rev-parse:*)",
+				"Bash(git -C * diff *)",
+				"Bash(git -C * log *)",
+				"Bash(git -C * show *)",
+				"Bash(git -C * status *)",
+				"Bash(git -C * ls-files *)",
+				"Bash(git -C * rev-parse *)",
+				"Bash(git -C * diff)",
+				"Bash(git -C * log)",
+				"Bash(git -C * show)",
+				"Bash(git -C * status)",
+				"Bash(git -C * ls-files)",
+				"Bash(git -C * rev-parse)",
+				"Bash(command -v:*)",
+				"Bash(jq:*)",
+			}))
+		})
+
+		It("grants no checkout-mutating command, by any entry or wildcard", func() {
+			for _, probe := range []string{
+				"git fetch origin",
+				"git -C /x worktree add y",
+				"git branch -D z",
+				"rm -rf /x",
+			} {
+				Expect(allowedBy(tools, "Bash", probe)).To(BeFalse(), probe)
+			}
+		})
 	})
 
 	Describe("CreateClaudeRunner", func() {

@@ -65,6 +65,13 @@ var (
 	// invocation-form fragility and the model's ability to skip it. No Write/Edit,
 	// no network tools (curl/wget/nc), no arbitrary Bash — a malicious PR still
 	// cannot exfiltrate the GitHub App token.
+	//
+	// No checkout-mutating commands: chunk reviews run concurrently in ONE shared
+	// worktree, so `git fetch`, `git worktree`, `git branch` and `rm -rf` (plain
+	// and `git -C *` forms) are deliberately absent — one chunk running them could
+	// mutate or delete the checkout its siblings and the posting step read. Go
+	// owns every fetch, worktree add/prune and cleanup (pkg/git, pkg/funnel.go);
+	// the review itself never needs them.
 	executionTools = claudelib.AllowedTools{
 		"Task",
 		"Read", "Grep", "Glob",
@@ -73,31 +80,21 @@ var (
 		"Bash(git show:*)",
 		"Bash(git status:*)",
 		"Bash(git ls-files:*)",
-		"Bash(git fetch:*)",
-		"Bash(git worktree:*)",
-		"Bash(git branch:*)",
 		"Bash(git rev-parse:*)",
 		"Bash(git -C * diff *)",
 		"Bash(git -C * log *)",
 		"Bash(git -C * show *)",
 		"Bash(git -C * status *)",
 		"Bash(git -C * ls-files *)",
-		"Bash(git -C * fetch *)",
-		"Bash(git -C * worktree *)",
-		"Bash(git -C * branch *)",
 		"Bash(git -C * rev-parse *)",
 		"Bash(git -C * diff)",
 		"Bash(git -C * log)",
 		"Bash(git -C * show)",
 		"Bash(git -C * status)",
 		"Bash(git -C * ls-files)",
-		"Bash(git -C * fetch)",
-		"Bash(git -C * worktree)",
-		"Bash(git -C * branch)",
 		"Bash(git -C * rev-parse)",
 		"Bash(command -v:*)",
 		"Bash(jq:*)",
-		"Bash(rm -rf:*)",
 	}
 	reviewTools = claudelib.AllowedTools{
 		"Read", "Grep",
