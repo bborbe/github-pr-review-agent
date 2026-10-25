@@ -14,6 +14,7 @@ import (
 
 	agentlib "github.com/bborbe/agent"
 	claudelib "github.com/bborbe/agent/claude"
+	libmetrics "github.com/bborbe/agent/metrics"
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
 	"github.com/bborbe/github-pr-review-agent/pkg/prompts"
@@ -50,6 +51,10 @@ type checkoutExecutionStep struct {
 	// this; tests install a spy through SetCheckBeforeChunkForTest.
 	checkBeforeChunkFn func(ctx context.Context, md *agentlib.Markdown) *agentlib.Result
 	pollInterval       libtime.Duration // mid-run PR-state poll; <= 0 disables the watch
+	// usage records what the self-built runner spends. Nil means no recording,
+	// which is what every test wants; production supplies it so the execution
+	// phase — the bulk of the token spend — is measured like the others.
+	usage libmetrics.JobMetrics
 }
 
 // NewCheckoutExecutionStep constructs the execution-phase step that wires
@@ -79,6 +84,7 @@ func NewCheckoutExecutionStep(
 	prState PRStateClient,
 	chunkConfig ReviewChunkConfig,
 	pollInterval libtime.Duration,
+	usage libmetrics.JobMetrics,
 ) agentlib.Step {
 	return &checkoutExecutionStep{
 		pollInterval:    pollInterval,
@@ -97,6 +103,7 @@ func NewCheckoutExecutionStep(
 		maxDuration:     maxDuration,
 		prState:         prState,
 		chunkConfig:     chunkConfig,
+		usage:           usage,
 	}
 }
 
@@ -813,13 +820,13 @@ func (s *checkoutExecutionStep) buildRunner(worktreePath string) claudelib.Claud
 	if s.runner != nil {
 		return s.runner
 	}
-	return claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
+	return NewUsageRecordingRunner(claudelib.NewClaudeRunner(claudelib.ClaudeRunnerConfig{
 		ClaudeConfigDir:  s.claudeConfigDir,
 		AllowedTools:     s.allowedTools,
 		Model:            s.model,
 		WorkingDirectory: claudelib.AgentDir(worktreePath),
 		Env:              s.env,
-	})
+	}), s.usage)
 }
 
 func (s *checkoutExecutionStep) runClaude(

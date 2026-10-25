@@ -251,6 +251,7 @@ func CreateAgent(
 		prStateClient,
 		chunkConfig,
 		prStatePollInterval,
+		usage,
 	)
 	reviewStep := prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools, usage),

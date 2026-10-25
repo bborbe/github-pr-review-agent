@@ -113,6 +113,7 @@ https://github.com/bborbe/maintainer/pull/14
 			prState,
 			pkg.DefaultReviewChunkConfig(),
 			pollInterval,
+			nil,
 		)
 	}
 
@@ -385,6 +386,7 @@ https://github.com/bborbe/maintainer/pull/14
 				prState,
 				pkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 
 			md := buildMD()

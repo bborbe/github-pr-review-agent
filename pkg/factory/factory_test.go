@@ -6,6 +6,8 @@ package factory_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -169,19 +171,38 @@ var _ = Describe("Factory", func() {
 			Expect(runner).NotTo(BeNil())
 		})
 
-		It("returns a non-nil runner when metrics are supplied", func() {
-			// The non-nil branch is the one that wraps the runner in the usage
-			// recorder, so a regression that dropped the wrapper would otherwise
-			// pass every test in this file.
+		It("wraps the runner so a supplied recorder is actually fed", func() {
+			// Non-nil alone proves nothing — it is true of the nil case too. This
+			// drives the returned runner through a fake CLI and asserts the
+			// recorder was fed, so a regression that dropped the wrapper fails.
+			dir := GinkgoT().TempDir()
+			shim := filepath.Join(dir, "claude")
+			Expect(os.WriteFile(shim, []byte( //nolint:gosec // shim must be executable
+				"#!/bin/sh\n"+
+					`echo '{"type":"result","result":"ok","usage":{"input_tokens":5,"output_tokens":2},"num_turns":1}'`+
+					"\nexit 0\n",
+			), 0o700)).To(Succeed())
+			originalPath := os.Getenv("PATH")
+			DeferCleanup(func() { Expect(os.Setenv("PATH", originalPath)).To(Succeed()) })
+			Expect(os.Setenv("PATH", dir+":"+originalPath)).To(Succeed())
+
+			jobMetrics := &libmetricsmocks.JobMetrics{}
 			runner := factory.CreateClaudeRunner(
 				"",
-				"agent",
+				claudelib.AgentDir(dir),
 				"sonnet",
 				map[string]string{},
 				claudelib.AllowedTools{"Read"},
-				&libmetricsmocks.JobMetrics{},
+				jobMetrics,
 			)
-			Expect(runner).NotTo(BeNil())
+
+			result, err := runner.Run(context.Background(), "prompt")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Result).To(Equal("ok"))
+			Expect(jobMetrics.RecordUsageCallCount()).To(Equal(1))
+			Expect(jobMetrics.RecordUsageArgsForCall(0).InputTokens).To(Equal(int64(5)))
+			Expect(jobMetrics.RecordUsageArgsForCall(0).Turns).To(Equal(int64(1)))
 		})
 
 		It("returns a non-nil runner with GH_TOKEN in env", func() {

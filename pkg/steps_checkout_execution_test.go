@@ -57,6 +57,7 @@ var _ = Describe("checkoutExecutionStep", func() {
 			nil,
 			pkg.DefaultReviewChunkConfig(),
 			libtime.Duration(0),
+			nil,
 		)
 	})
 
@@ -316,6 +317,7 @@ prior review body
 						nil,
 						pkg.DefaultReviewChunkConfig(),
 						libtime.Duration(0),
+						nil,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -347,6 +349,7 @@ prior review body
 						nil,
 						pkg.DefaultReviewChunkConfig(),
 						libtime.Duration(0),
+						nil,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -378,6 +381,7 @@ prior review body
 						nil,
 						pkg.DefaultReviewChunkConfig(),
 						libtime.Duration(0),
+						nil,
 					)
 					const nonMatchingTask = "---\nclone_url: https://github.com/bborbe/maintainer.git\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -412,6 +416,7 @@ prior review body
 						nil,
 						pkg.DefaultReviewChunkConfig(),
 						libtime.Duration(0),
+						nil,
 					)
 					repoManager.EnsureWorktreeReturns("", fmt.Errorf("stop here"))
 
@@ -448,6 +453,7 @@ prior review body
 						nil,
 						pkg.DefaultReviewChunkConfig(),
 						libtime.Duration(0),
+						nil,
 					)
 					const badURLTask = "---\nclone_url: not-a-url\nref: main\nbase_ref: master\ntask_identifier: bd4d883b-0000-0000-0000-000000000001\n---\n# Task\n"
 
@@ -1132,6 +1138,7 @@ prior review body
 				nil,
 				pkg.DefaultReviewChunkConfig(),
 				libtime.Duration(0),
+				nil,
 			)
 
 			md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1211,6 +1218,7 @@ https://github.com/bborbe/maintainer/pull/14
 					nil,
 					pkg.DefaultReviewChunkConfig(),
 					libtime.Duration(0),
+					nil,
 				)
 
 				md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1286,6 +1294,7 @@ https://github.com/bborbe/maintainer/pull/14
 					nil,
 					pkg.DefaultReviewChunkConfig(),
 					libtime.Duration(0),
+					nil,
 				)
 
 				md, err := agentlib.ParseMarkdown(ctx, `---
@@ -1675,6 +1684,7 @@ https://github.com/bborbe/maintainer/pull/14
 			nil,
 			cfg,
 			libtime.Duration(0),
+			nil,
 		)
 	}
 
