@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.14.4
 
 - fix: pass the egress proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and their lowercase forms) through to git subprocesses when a GitHub token is configured. Every git operation that ran with a token — bare clone, fetch, worktree add, worktree prune — inherited only `HOME`, `PATH` and `GH_TOKEN`, so a sandbox that admits egress only through the proxy refused the clone in milliseconds while the same pod's API calls succeeded. Unset proxy variables still contribute no entry, and the child environment is not widened beyond the allowlist.
 
