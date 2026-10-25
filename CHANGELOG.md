@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v0.14.4
 
+- fix: drop the checkout-mutating commands from the execution allowlist. Chunk reviews run concurrently in one shared worktree, and `executionTools` still granted `git fetch`, `git worktree`, `git branch` (plain and `git -C *` forms) and `rm -rf` — one chunk running them could mutate or delete the checkout its siblings and the posting step read, guarded only by an unenforced prompt notice. Go already owns every fetch, worktree add/prune and cleanup (`pkg/funnel.go`, `pkg/git`), so the review loses nothing; the prompt notice stays as defence in depth. A test now locks the allowlist to an exact list and asserts no entry or wildcard matches `git fetch origin`, `git -C /x worktree add y`, `git branch -D z` or `rm -rf /x`.
 - fix: pass the egress proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and their lowercase forms) through to git subprocesses when a GitHub token is configured. Every git operation that ran with a token — bare clone, fetch, worktree add, worktree prune — inherited only `HOME`, `PATH` and `GH_TOKEN`, so a sandbox that admits egress only through the proxy refused the clone in milliseconds while the same pod's API calls succeeded. Unset proxy variables still contribute no entry, and the child environment is not widened beyond the allowlist.
 
 ## v0.14.3
