@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [009-moot-sweep]
+summary: Added pkg/moot_sweep.go applying the shipped prStateCheck routing to tracked tasks, stamping closed_by/spawn_state, and publishing closures through the existing CQRS command path, with full table-driven tests.
+execution_id: github-pr-review-agent-moot-sweep-exec-032-spec-009-moot-sweep-routing
+dark-factory-version: v0.198.7
 created: "2026-10-28T18:22:00Z"
 queued: "2026-10-28T18:16:26Z"
+started: "2026-10-28T18:22:21Z"
+completed: "2026-10-28T18:28:33Z"
 branch: dark-factory/moot-sweep
 ---
 
