@@ -26,7 +26,6 @@ import (
 	libkafka "github.com/bborbe/kafka"
 	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
-	"github.com/golang/glog"
 )
 
 const serviceName = "maintainer-agent-pr-reviewer"
@@ -216,15 +215,10 @@ func CreateAgent(
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
 	// The human owner stamped onto every human_review routing. Empty disables the
-	// stamp, which is the unconfigured default — see ResolveHumanReviewOwner.
+	// stamp, which is the unconfigured default — see ResolveHumanReviewOwner. The
+	// warning for an unset value lives at the caller (main), not here: a Create*
+	// factory stays pure composition, with no conditional and no I/O.
 	humanReviewOwner := ResolveHumanReviewOwner(env)
-	if humanReviewOwner == "" {
-		glog.Warningf(
-			"%s is unset: a record routed to human_review keeps the agent's assignee, "+
-				"which the controller's chokepoint clears — so the record ends up owned by nobody",
-			HumanReviewOwnerEnv,
-		)
-	}
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
 	// Every phase gets the PR-URL preflight so a URL-less task cannot burn a
 	// full review and then fail in the post step with failure_step=

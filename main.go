@@ -279,6 +279,17 @@ func (a *application) dispatchAgent(
 		ReposPath: a.ReposPath,
 		WorkPath:  a.WorkPath,
 	}, resolvedToken)
+	// Warn where env is read, not inside the factory: Create* functions stay pure
+	// composition (no conditional, no I/O). An unset owner disables the stamp, so a
+	// record routed to human_review keeps the agent's assignee — which the
+	// controller's chokepoint then clears, leaving the record owned by nobody.
+	if factory.ResolveHumanReviewOwner(env) == "" {
+		glog.Warningf(
+			"%s is unset: a record routed to human_review keeps the agent's assignee, "+
+				"which the controller's chokepoint clears — so the record ends up owned by nobody",
+			factory.HumanReviewOwnerEnv,
+		)
+	}
 	provider := factory.CreateAgentProvider(
 		a.ClaudeConfigDir,
 		a.AgentDir,
