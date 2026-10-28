@@ -1,5 +1,9 @@
 ---
-status: draft
+status: prompted
+approved: "2026-10-28T17:38:48Z"
+generating: "2026-10-28T17:40:45Z"
+prompted: "2026-10-28T18:00:26Z"
+branch: dark-factory/moot-sweep
 ---
 
 ## Summary
@@ -39,7 +43,7 @@ The service is a Deployment in the existing reviewer chart, in the same namespac
 
 - [ ] **The service tracks exactly the review tasks that can still be closed.** A `DescribeTable`-driven unit test asserts the in-memory tracker admits a task only when the assignee is the reviewer, the status is in-progress, and the phase is one of planning / execution / ai-review; a terminal task is dropped even if it was previously admitted; a reassigned task is dropped; two events for the same task id leave only the latest; and a payload decoded through the task-event schema path is admitted (so a tracker never fed from the topic fails this row). Evidence: `go test ./pkg/...` exits 0 with every enumerated row green. The decode row is the load-bearing one: it feeds a payload produced through the task-event schema rather than a hand-built struct, so a tracker that is wired to nothing and never fed from the topic fails it. A source grep is **not** evidence here — the string already appears in existing test comments.
 - [ ] **The routing is the existing one, not a copy.** The service calls the shipped routing rather than reimplementing it — a task whose commit differs from the head on an open pull request closes as aborted with a superseded verdict naming the observed head; a merged pull request closes as completed with a merged verdict; a closed-unmerged pull request closes as completed with a closed-unmerged verdict; a failure to reach GitHub closes nothing and is retried on the next tick. Evidence: unit rows under `go test ./pkg/...` exit 0 covering all four branches, driven through the existing `PRStateClient` counterfeiter fake; plus **exactly one** routing definition exists repo-wide — `grep -rn 'func prStateCheck(' pkg/ cmd/ | wc -l` returns `1` — and the sweep calls it from a non-comment line, `grep -nE '^[^/]*prStateCheck\(ctx' pkg/moot_sweep.go` returns ≥ 1. A copy defined anywhere makes the count `2`; a call-site grep alone cannot catch that, which is why the count is the load-bearing half.
-- [ ] **Every closure is attributable and bucketable.** A closed task carries `closed_by: sweep` and `spawn_state`, where `spawn_state` is `none` when the task had no current job and `job_assigned` when it did; the in-pod path writes neither field. Evidence: unit rows under `go test ./pkg/...` exit 0 asserting both fields for both input shapes, and `grep -c 'closed_by' pkg/pr_state_check.go` returns 0 (the in-pod path stays unstamped).
+- [ ] **Every closure is attributable and bucketable.** A closed task carries `closed_by: sweep` and `spawn_state`, where `spawn_state` is `none` when the task had no current job and `job_assigned` when it did; the in-pod path writes neither field. Evidence: unit rows under `go test ./pkg/...` exit 0 asserting both fields for both input shapes, and `! grep -q 'closed_by' pkg/pr_state_check.go` exits 0 (the in-pod path stays unstamped).
 - [ ] **Nothing is closed unless GitHub says it is moot.** A task whose commit equals the pull request's current head is never closed, and an errored GitHub call leaves the task untouched and still tracked. Evidence: unit rows under `go test ./pkg/...` exit 0 for (a) current-head task → no command sent, (b) GitHub error → no command sent and the tracker still holds the task.
 - [ ] **A sweep pass touches only the tasks it closes.** After a pass over a task set where some are moot and some are current, the non-closed tasks' records are byte-identical. Evidence: unit row under `go test ./pkg/...` exit 0 asserting an unchanged record for every non-closed task.
 - [ ] **`make precommit` exits 0 and the changelog names the change.** Evidence: `make precommit` exit 0 AND `grep -ci 'moot' CHANGELOG.md` returns ≥ 1. ⚠️ **The probe is `moot`, not `sweep`, and it is deliberately unscoped.** This file has no `## Unreleased` heading — the top section is the released version — so a heading-scoped grep returns zero on a correct tree (a defect this repository already fixed once in spec 004). And `sweep` already occurs **once** on master in a released entry, so it would pass with no changelog entry written at all; `moot` reads 0 on master and is therefore discriminating.
@@ -58,7 +62,7 @@ The service is a Deployment in the existing reviewer chart, in the same namespac
 - `make test` — unit and integration suites pass
 - `grep -rn 'func prStateCheck(' pkg/ cmd/ | wc -l` — returns `1`; exactly one routing definition exists
 - `grep -nE '^[^/]*prStateCheck\(ctx' pkg/moot_sweep.go` — ≥ 1; the sweep calls the shared function from code, not a comment
-- `grep -c 'closed_by' pkg/pr_state_check.go` — returns 0; the in-pod path stays unstamped
+- `! grep -q 'closed_by' pkg/pr_state_check.go` — exits 0; the in-pod path stays unstamped
 - `grep -ci 'moot' CHANGELOG.md` — the changelog names the change (unscoped, and `moot` not `sweep`: this file has no `## Unreleased` heading and `sweep` already appears on master)
 
 ### Operator-executable (runs on the host after PR merge, spec verification ladder)
