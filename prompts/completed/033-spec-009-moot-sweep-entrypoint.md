@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [009-moot-sweep]
+summary: Added the cmd/moot-sweep entrypoint wiring the tracker and sweep to Kafka, GitHub App auth and probe/metrics HTTP, with a compile smoke test, its Makefile and Dockerfile build path, plus changelog and README updates
+execution_id: github-pr-review-agent-moot-sweep-exec-033-spec-009-moot-sweep-entrypoint
+dark-factory-version: v0.198.7
 created: "2026-10-28T18:24:00Z"
 queued: "2026-10-28T18:16:26Z"
+started: "2026-10-28T18:28:36Z"
+completed: "2026-10-28T18:37:29Z"
 branch: dark-factory/moot-sweep
 ---
 

@@ -28,6 +28,7 @@ former `bborbe/maintainer` monorepo (`agent/pr-reviewer`).
 | Kubernetes Job | `main.go` (`/main` in the image) | Env-driven; spawned by the agent-task-executor from a Kafka task. This is how it runs in production. |
 | Local CLI | `cmd/run-task` | Reads a task file (`--task-file`), runs `--phase`, writes result back to the same file. `--skip-post` suppresses GitHub writes. |
 | Local review | `cmd/cli` | Takes a PR URL positional arg; `--comment-only` posts a COMMENT without auto-approve gate. For local runs / debugging. |
+| Moot sweep | `cmd/moot-sweep` | Long-running Deployment: consumes the task-event topic into an in-memory tracker, re-applies the PR-state routing every five minutes, and publishes closures for reviews that are already moot. |
 
 ```bash
 go run ./cmd/run-task --task-file=/path/to/task.md --phase=execution --skip-post
@@ -105,7 +106,8 @@ Permanent test fixture (trivial diff). Use it for any local or k8s smoke test.
 ├── cmd/
 │   ├── run-task/    local CLI (task-file driven, --skip-post available)
 │   ├── cli/         PR URL driven local review CLI
-│   └── mint-iat/    GitHub App installation-token smoke tool
+│   ├── mint-iat/    GitHub App installation-token smoke tool
+│   └── moot-sweep/  long-running moot closer (task-event consumer + 5m sweep)
 ├── pkg/             URL parse, config, git clone, GitHub/Bitbucket clients,
 │                    App auth, review runner, verdict parser, posters
 ├── docs/            architecture.md · github-app-setup.md · pr-post-back.md
@@ -121,4 +123,5 @@ See [`docs/architecture.md`](docs/architecture.md) for the three-phase design
 ```bash
 make precommit          # fmt, generate, test, lint, vet, vuln, license
 VERSION=vX.Y.Z make buca # build + push docker.io/bborbe/github-pr-review-agent:vX.Y.Z
+VERSION=vX.Y.Z make buca-moot-sweep # build + push docker.io/bborbe/moot-sweep:vX.Y.Z
 ```
