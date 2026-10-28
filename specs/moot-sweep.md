@@ -65,8 +65,9 @@ The service is a Deployment in the existing reviewer chart, in the same namespac
 
 These steps are the operator's because this repository cannot reach the chart or the deploy repo.
 
-- Add the Deployment template to the `github-pr-reviewer` chart in `bborbe/helm` (`charts/github-pr-reviewer/templates/`), plus its image and interval entry in that chart's `values.yaml`; bump the chart version.
+- Add the Deployment template to the `github-pr-reviewer` chart in `bborbe/helm` (`charts/github-pr-reviewer/templates/`), named **`moot-sweep`** (the name both `deploy_check` lines read), with its image entry in that chart's `values.yaml`. The five-minute tick is **hardcoded in the template** — the chart has no interval concept today and this spec forbids introducing one (Non-goals). Bump the chart version.
 - Add the per-stage entry to `bborbe/nuke`'s `github-pr-reviewer/values-{dev,prod}.yaml` (the chart itself carries a single `values.yaml` and no per-stage files), and bump the OCI pin in `bborbe/nuke`'s `github-pr-reviewer/helmfile.yaml` to the new chart version.
+- **Bump the mirrored image tag in `bborbe/nuke`'s `github-pr-reviewer/Makefile`** — `AGENT_TAG_dev` and `AGENT_TAG_prod`, and add the sweep's own image to `MIRROR_IMAGES` if it ships under a separate name. `MIRROR_IMAGES` is built from those variables, so `make mirror` pushes **only** the tags named there; leaving them behind makes the pod `ImagePullBackOff` on a tag the registry never received — the exact failure the Makefile's own header documents. This step is easy to miss and makes the two below it fail.
 - `helm template` on the chart — the rendered output contains a Deployment whose namespace resolves to `agent`.
 - From `~/Documents/workspaces/nuke/github-pr-reviewer`: `BRANCH=dev make mirror && BRANCH=dev make apply`, then `BRANCH=master make mirror && BRANCH=master make apply`. Prod is `BRANCH=master`, never `BRANCH=prod`, and `make mirror` is not optional — it is what puts the image where the cluster pulls it from.
 - `kubectlnukedev -n agent get deploy | grep moot-sweep` and the prod equivalent — both read `READY 1/1`.
