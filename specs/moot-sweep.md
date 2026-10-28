@@ -37,17 +37,17 @@ The service is a Deployment in the existing reviewer chart, in the same namespac
 
 ## Acceptance Criteria
 
-- [ ] **The service tracks exactly the review tasks that can still be closed.** A `DescribeTable`-driven unit test asserts the in-memory tracker admits a task only when the assignee is the reviewer, the status is in-progress, and the phase is one of planning / execution / ai-review; a terminal task is dropped even if it was previously admitted; a reassigned task is dropped; two events for the same task id leave only the latest; and a payload decoded through the task-event schema path is admitted (so a tracker never fed from the topic fails this row). Evidence: `go test ./pkg/...` exits 0 with every enumerated row green, and `grep -rn 'TaskV1SchemaID' pkg/ cmd/moot-sweep/` returns ≥ 1 non-test hit.
-- [ ] **The routing is the existing one, not a copy.** The service calls the shipped routing rather than reimplementing it — a task whose commit differs from the head on an open pull request closes as aborted with a superseded verdict naming the observed head; a merged pull request closes as completed with a merged verdict; a closed-unmerged pull request closes as completed with a closed-unmerged verdict; a failure to reach GitHub closes nothing and is retried on the next tick. Evidence: unit rows under `go test ./pkg/...` exit 0 covering all four branches, plus `grep -rn 'prStateCheck' pkg/ cmd/moot-sweep/ | grep -v _test` showing the new path reaches the shared function.
+- [ ] **The service tracks exactly the review tasks that can still be closed.** A `DescribeTable`-driven unit test asserts the in-memory tracker admits a task only when the assignee is the reviewer, the status is in-progress, and the phase is one of planning / execution / ai-review; a terminal task is dropped even if it was previously admitted; a reassigned task is dropped; two events for the same task id leave only the latest; and a payload decoded through the task-event schema path is admitted (so a tracker never fed from the topic fails this row). Evidence: `go test ./pkg/...` exits 0 with every enumerated row green. The decode row is the load-bearing one: it feeds a payload produced through the task-event schema rather than a hand-built struct, so a tracker that is wired to nothing and never fed from the topic fails it. A source grep is **not** evidence here — the string already appears in existing test comments.
+- [ ] **The routing is the existing one, not a copy.** The service calls the shipped routing rather than reimplementing it — a task whose commit differs from the head on an open pull request closes as aborted with a superseded verdict naming the observed head; a merged pull request closes as completed with a merged verdict; a closed-unmerged pull request closes as completed with a closed-unmerged verdict; a failure to reach GitHub closes nothing and is retried on the next tick. Evidence: unit rows under `go test ./pkg/...` exit 0 covering all four branches, driven through the existing `PRStateClient` counterfeiter fake; plus `grep -rn 'prStateCheck(ctx' pkg/moot_sweep.go` returns ≥ 1 (the sweep calls the shared function) **and** `grep -rn 'func prStateCheck' cmd/` returns 0 (no copy is defined in the entrypoint). A local reimplementation named `prStateCheck` fails the second check.
 - [ ] **Every closure is attributable and bucketable.** A closed task carries `closed_by: sweep` and `spawn_state`, where `spawn_state` is `none` when the task had no current job and `job_assigned` when it did; the in-pod path writes neither field. Evidence: unit rows under `go test ./pkg/...` exit 0 asserting both fields for both input shapes, and `grep -c 'closed_by' pkg/pr_state_check.go` returns 0 (the in-pod path stays unstamped).
 - [ ] **Nothing is closed unless GitHub says it is moot.** A task whose commit equals the pull request's current head is never closed, and an errored GitHub call leaves the task untouched and still tracked. Evidence: unit rows under `go test ./pkg/...` exit 0 for (a) current-head task → no command sent, (b) GitHub error → no command sent and the tracker still holds the task.
 - [ ] **A sweep pass touches only the tasks it closes.** After a pass over a task set where some are moot and some are current, the non-closed tasks' records are byte-identical. Evidence: unit row under `go test ./pkg/...` exit 0 asserting an unchanged record for every non-closed task.
-- [ ] **`make precommit` exits 0 and the changelog names the change.** Evidence: `make precommit` exit 0 AND `sed -n '/## Unreleased/,/## v/p' CHANGELOG.md | grep -ci 'sweep'` returns ≥ 1.
+- [ ] **`make precommit` exits 0 and the changelog names the change.** Evidence: `make precommit` exit 0 AND `grep -ci 'sweep' CHANGELOG.md` returns ≥ 1. ⚠️ The probe is deliberately **unscoped**: this file has no `## Unreleased` heading (the top section is the released version), so a `## Unreleased`-scoped grep returns zero on a correct tree — a defect this repository already fixed once in spec 004 and which must not be reintroduced.
 - [ ] **Post-Deploy (Rung-2):** the service is running on nuke dev and has closed at least one moot task with no reviewer job for it. Evidence: the Deployment reads `READY 1/1`; its pod log carries at least one completed sweep pass naming a task id; and for that task `kubectlnukedev -n agent get jobs -l agent.benjamin-borbe.de/task-id=<id>` returns nothing inside the 30-minute job-retention window, while the task's own record carries `closed_by: sweep` with `spawn_state: none`. A scan of the tasks it closed in that window finds none whose commit matches its pull request's head.
-  - `deploy_check:` `grep -A6 '^agent:' ~/Documents/workspaces/nuke/github-pr-reviewer/values-dev.yaml | grep -m1 'tag:' | awk '{print $2}'`
+  - `deploy_check:` `kubectlnukedev -n agent get deploy/moot-sweep -o jsonpath='{.spec.template.spec.containers[0].image}' | awk -F: '{print $NF}'`
   - `deploy_target:` `$(git tag --sort=-v:refname | head -1)`
 - [ ] **Post-Deploy (Rung-3):** the same observations on nuke prod, with the negative check that the service closed only the right tasks — no task whose commit equals its pull request's head reads aborted or superseded after the first pass. Evidence: the prod Deployment reads `READY 1/1`, its log carries a sweep pass naming a task id, that task carries `closed_by: sweep` + `spawn_state: none` with no job, and a scan of everything it closed finds no current-head task among them.
-  - `deploy_check:` `grep -A6 '^agent:' ~/Documents/workspaces/nuke/github-pr-reviewer/values-prod.yaml | grep -m1 'tag:' | awk '{print $2}'`
+  - `deploy_check:` `kubectlnukeprod -n agent get deploy/moot-sweep -o jsonpath='{.spec.template.spec.containers[0].image}' | awk -F: '{print $NF}'`
   - `deploy_target:` `$(git tag --sort=-v:refname | head -1)`
 
 ## Verification
@@ -56,10 +56,10 @@ The service is a Deployment in the existing reviewer chart, in the same namespac
 
 - `make precommit` — fmt, lint, vet, test, vuln, license all clean
 - `make test` — unit and integration suites pass
-- `grep -rn 'TaskV1SchemaID' pkg/ cmd/moot-sweep/` — the task-event schema is actually consumed
-- `grep -rn 'prStateCheck' pkg/ cmd/moot-sweep/ | grep -v _test` — the new path reaches the shared routing rather than a copy
+- `grep -rn 'prStateCheck(ctx' pkg/moot_sweep.go` — the sweep reaches the shared routing
+- `grep -rn 'func prStateCheck' cmd/` — returns 0; no routing copy in the entrypoint
 - `grep -c 'closed_by' pkg/pr_state_check.go` — returns 0; the in-pod path stays unstamped
-- `sed -n '/## Unreleased/,/## v/p' CHANGELOG.md | grep -ci 'sweep'` — the changelog names the change
+- `grep -ci 'sweep' CHANGELOG.md` — the changelog names the change (unscoped: this file has no `## Unreleased` heading)
 
 ### Operator-executable (runs on the host after PR merge, spec verification ladder)
 
@@ -84,6 +84,7 @@ These steps are the operator's because this repository cannot reach the chart or
 ## Constraints
 
 - The routing is imported, not reimplemented. Any divergence between the two closers is a defect by definition.
+- **The sweep's decision logic lives in `package pkg`**, alongside the routing it reuses. `prStateCheck` and `closeMoot` are unexported and must not be exported, duplicated or shadowed; a `cmd/moot-sweep` that cannot reach them must move the logic into `pkg`, not re-derive it. `cmd/moot-sweep` is a thin entrypoint that wires configuration and starts the tick loop — it contains no routing decision.
 - `closed_by` and `spawn_state` are additive frontmatter fields. They must not collide with, or be inferred from, any existing field, and the in-pod path must not start writing them.
 - The task status vocabulary is closed; the change adds no status value.
 - The service must never create, delete or modify a Kubernetes Job.
@@ -101,6 +102,17 @@ These steps are the operator's because this repository cannot reach the chart or
 | The in-pod closer and the sweep race on the same task | Both compute the same verdict; the second write is a no-op because the task is already terminal | None needed; the shared routing's idempotency guard covers it |
 | The sweep closes a task that is still current | Must not happen — the current-head branch is asserted in two ACs and re-checked on prod | Reopen the task and investigate the head comparison before the next deploy |
 | The topic is empty or the consumer never connects | No closures; the service is running but idle | Visible as a running Deployment with no sweep-pass log lines — the post-deploy ACs catch it |
+| The tracker grows without bound | Memory is bounded by the number of live review tasks; a terminal task is dropped on transition | If growth is observed, the tracker is keyed by task id and a terminal event evicts it; a task that never emits a terminal event is the defect to investigate |
+
+## Security / Abuse Cases
+
+The service mutates shared task records on the strength of a message it did not author, so the write scope is the control, not the read scope.
+
+- **A payload naming a task the tracker never admitted produces no write.** Admission is the only gate; an event for an untracked or filtered-out task is dropped, never acted on.
+- **Only the record the event names is ever written.** No pass writes to a task id it did not receive, and no bulk or wildcard update exists.
+- **A replayed or duplicated event cannot produce a second closure.** The routing is idempotent on an already-terminal task, so a duplicate delivery is a no-op rather than a second write.
+- **A GitHub failure is never treated as permission to close.** Only a positive verdict closes anything; an error is a no-op, so an unreachable or spoofed-failure state cannot clear a live task.
+- **No credentials are introduced beyond what the reviewer already holds.** The service reuses the existing GitHub client and the existing task-write command path; it adds no new secret, and its Deployment carries no broader permission than the reviewer's.
 
 ## Suggested Decomposition
 
