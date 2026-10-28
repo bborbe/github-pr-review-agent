@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **every record routed into `human_review` now carries a human owner.** This agent reaches that phase from twelve call sites across four steps, and none of them wrote an `assignee` — the controller's `human_review` chokepoint then cleared whatever the record had, so a record whose PR was still open sat in neither the human's queue nor any agent's. A single wrapper step (`NewHumanReviewOwnerStep`) around the planning, execution, review and override steps stamps `HUMAN_REVIEW_OWNER` as the `assignee` on any result whose `NextPhase` is `human_review`, so a new routing site added inside a step is covered automatically; every other result passes through untouched. It also writes `assignee_reassigned_by`, without which agent-task-controller's operator-owned-assignee guard keeps the on-disk agent assignee and discards the stamp — a silent no-op that would look correct in review. `HUMAN_REVIEW_OWNER` unset disables the stamp and logs a startup warning: no person's name is hard-coded, and the deploy supplies the value. The controller half (retaining a configured human at the chokepoint) ships separately; without it this stamp is wiped on the next result write.
+
 ## v0.14.5
 
 - fix: drop the checkout-mutating commands from the execution allowlist. Chunk reviews run concurrently in one shared worktree, and `executionTools` still granted `git fetch`, `git worktree`, `git branch` (plain and `git -C *` forms) and `rm -rf` — one chunk running them could mutate or delete the checkout its siblings and the posting step read, guarded only by an unenforced prompt notice. Go already owns every fetch, worktree add/prune and cleanup (`pkg/funnel.go`, `pkg/git`), so the review loses nothing; the prompt notice stays as defence in depth. A test now locks the allowlist to an exact list and asserts no entry or wildcard matches `git fetch origin`, `git -C /x worktree add y`, `git branch -D z` or `rm -rf /x`.

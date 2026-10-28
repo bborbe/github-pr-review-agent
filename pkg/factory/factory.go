@@ -26,6 +26,7 @@ import (
 	libkafka "github.com/bborbe/kafka"
 	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
+	"github.com/golang/glog"
 )
 
 const serviceName = "maintainer-agent-pr-reviewer"
@@ -214,6 +215,16 @@ func CreateAgent(
 	usage libmetrics.JobMetrics,
 ) *agentlib.Agent {
 	botLogin := ResolveBotLogin(env)
+	// The human owner stamped onto every human_review routing. Empty disables the
+	// stamp, which is the unconfigured default — see ResolveHumanReviewOwner.
+	humanReviewOwner := ResolveHumanReviewOwner(env)
+	if humanReviewOwner == "" {
+		glog.Warningf(
+			"%s is unset: a record routed to human_review keeps the agent's assignee, "+
+				"which the controller's chokepoint clears — so the record ends up owned by nobody",
+			HumanReviewOwnerEnv,
+		)
+	}
 	tokenCheck := prpkg.NewGHTokenCheckStep(ghToken)
 	// Every phase gets the PR-URL preflight so a URL-less task cannot burn a
 	// full review and then fail in the post step with failure_step=
@@ -225,13 +236,18 @@ func CreateAgent(
 	// Live GitHub PR-state client shared by every phase's prStateCheck
 	// pre/post-flight (gh CLI wrapper, reuses the ghToken auth path).
 	prStateClient := github.NewGHClient(ghToken)
-	planningPhase := agentlib.NewPhase("planning", tokenCheck, prURLCheck, prpkg.NewPlanningStep(
-		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools, usage),
-		prompts.BuildPlanningInstructions(),
-		maxDuration,
-		prStateClient,
-	))
-	executionStep := prpkg.NewCheckoutExecutionStep(
+	planningPhase := agentlib.NewPhase(
+		"planning",
+		tokenCheck,
+		prURLCheck,
+		prpkg.NewHumanReviewOwnerStep(prpkg.NewPlanningStep(
+			CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools, usage),
+			prompts.BuildPlanningInstructions(),
+			maxDuration,
+			prStateClient,
+		), humanReviewOwner),
+	)
+	executionStep := prpkg.NewHumanReviewOwnerStep(prpkg.NewCheckoutExecutionStep(
 		repoManager,
 		claudeConfigDir,
 		agentDir,
@@ -249,8 +265,8 @@ func CreateAgent(
 		chunkConfig,
 		prStatePollInterval,
 		usage,
-	)
-	reviewStep := prpkg.NewReviewStep(
+	), humanReviewOwner)
+	reviewStep := prpkg.NewHumanReviewOwnerStep(prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools, usage),
 		prPoster,
 		prompts.BuildReviewInstructions(),
@@ -260,7 +276,7 @@ func CreateAgent(
 		maxDuration,
 		prStateClient,
 		prStatePollInterval,
-	)
+	), humanReviewOwner)
 	return agentlib.NewAgent(
 		planningPhase,
 		agentlib.NewPhase(domain.TaskPhaseExecution, tokenCheck, prURLCheck, executionStep),
@@ -329,7 +345,10 @@ func CreateAgentProvider(
 		agentlib.NewPhase(
 			domain.TaskPhaseExecution,
 			prpkg.NewGHTokenCheckStep(ghToken),
-			prpkg.NewOverrideStep(poster, botLogin),
+			prpkg.NewHumanReviewOwnerStep(
+				prpkg.NewOverrideStep(poster, botLogin),
+				ResolveHumanReviewOwner(env),
+			),
 		),
 	)
 
