@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - fix: **every record routed into `human_review` now carries a human owner.** This agent reaches that phase from twelve call sites across four steps, and none of them wrote an `assignee` — the controller's `human_review` chokepoint then cleared whatever the record had, so a record whose PR was still open sat in neither the human's queue nor any agent's. A single wrapper step (`NewHumanReviewOwnerStep`) around the planning, execution, review and override steps stamps `HUMAN_REVIEW_OWNER` as the `assignee` on any result whose `NextPhase` is `human_review`, so a new routing site added inside a step is covered automatically; every other result passes through untouched. It also writes `assignee_reassigned_by`, without which agent-task-controller's operator-owned-assignee guard keeps the on-disk agent assignee and discards the stamp — a silent no-op that would look correct in review. `HUMAN_REVIEW_OWNER` unset disables the stamp and logs a startup warning: no person's name is hard-coded, and the deploy supplies the value. The controller half (retaining a configured human at the chokepoint) ships separately; without it this stamp is wiped on the next result write.
+- fix: bump `golang.org/x/net` to v0.62.0, clearing GO-2026-6860 (quadratic complexity when coalescing text nodes in html) and GO-2026-6866 (ancestor namespace transitions when rendering raw text). `make vulncheck` failed on master with both findings; it now exits 0.
 
 ## v0.14.5
 
