@@ -23,6 +23,8 @@ import (
 // configurable.
 const MootSweepInterval = 5 * time.Minute
 
+//counterfeiter:generate -o ../mocks/moot-sweep.go --fake-name MootSweep . MootSweep
+
 // MootSweep applies the shipped PR-state routing to tracked review tasks and
 // closes the ones that are moot.
 type MootSweep interface {

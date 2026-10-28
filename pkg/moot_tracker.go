@@ -18,6 +18,8 @@ import (
 // assigned to this agent are eligible for the pod-less moot closer.
 const mootSweepAssignee = agentlib.TaskAssignee("pr-reviewer-agent")
 
+//counterfeiter:generate -o ../mocks/moot-tracker.go --fake-name MootTracker . MootTracker
+
 // MootTracker holds the review tasks that are still eligible to be closed.
 // It is fed from the task-event topic and read once per sweep pass. It is
 // safe for concurrent use.
