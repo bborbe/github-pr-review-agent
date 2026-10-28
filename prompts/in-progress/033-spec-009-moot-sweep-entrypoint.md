@@ -1,7 +1,8 @@
 ---
-status: draft
+status: approved
 spec: [009-moot-sweep]
 created: "2026-10-28T18:24:00Z"
+queued: "2026-10-28T18:16:26Z"
 branch: dark-factory/moot-sweep
 ---
 

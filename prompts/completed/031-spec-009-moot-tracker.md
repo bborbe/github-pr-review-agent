@@ -1,7 +1,13 @@
 ---
-status: draft
+status: completed
 spec: [009-moot-sweep]
+summary: Added pkg/moot_tracker.go with a concurrency-safe MootTracker admitting reviewer tasks in planning/execution/ai_review phases, plus Ginkgo tests covering every admission row and lifecycle rule
+execution_id: github-pr-review-agent-moot-sweep-exec-031-spec-009-moot-tracker
+dark-factory-version: v0.198.7
 created: "2026-10-28T18:20:00Z"
+queued: "2026-10-28T18:16:26Z"
+started: "2026-10-28T18:16:28Z"
+completed: "2026-10-28T18:22:19Z"
 branch: dark-factory/moot-sweep
 ---
 
