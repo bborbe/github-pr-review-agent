@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.14.6
 
 - fix: bump `golang.org/x/net` to v0.62.0, clearing GO-2026-6860 (quadratic complexity when coalescing text nodes in html) and GO-2026-6866 (ancestor namespace transitions when rendering raw text). `make vulncheck` failed on master with both findings; it now exits 0.
 
