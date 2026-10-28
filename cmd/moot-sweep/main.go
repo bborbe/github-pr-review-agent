@@ -66,8 +66,9 @@ type application struct {
 }
 
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
-	token, err := a.resolveAuth(ctx)
-	if err != nil {
+	// Fail fast on bad credentials: a Deployment that starts with a token it
+	// cannot mint would otherwise run for its whole life closing nothing.
+	if _, err := a.resolveAuth(ctx); err != nil {
 		return err
 	}
 	tracker := prpkg.NewMootTracker()
@@ -75,7 +76,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	if err != nil {
 		return err
 	}
-	sweep, cleanup, err := a.createSweep(ctx, tracker, token)
+	sender, cleanup, err := a.createSender(ctx)
 	if err != nil {
 		return err
 	}
@@ -83,7 +84,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	return service.Run(
 		ctx,
 		consumer.Consume,
-		func(ctx context.Context) error { return a.runTickLoop(ctx, sweep) },
+		func(ctx context.Context) error { return a.runTickLoop(ctx, tracker, sender) },
 		a.createHTTPServer(),
 	)
 }
@@ -126,13 +127,13 @@ func (a *application) resolveAuth(ctx context.Context) (string, error) {
 	return iat, nil
 }
 
-// createSweep wires the sweep to Kafka, GitHub and the tracker. The returned
-// cleanup closes the sync producer and is safe to call once.
-func (a *application) createSweep(
+// createSender returns the long-lived CQRS command sender. The GitHub client is
+// deliberately NOT built here: it is rebuilt per pass from a freshly minted
+// installation token (see runTickLoop), because this process outlives a token.
+// The returned cleanup closes the sync producer and is safe to call once.
+func (a *application) createSender(
 	ctx context.Context,
-	tracker prpkg.MootTracker,
-	token string,
-) (prpkg.MootSweep, func(), error) {
+) (cdb.CommandObjectSender, func(), error) {
 	syncProducer, err := libkafka.NewSyncProducerWithName(ctx, a.KafkaBrokers, "moot-sweep")
 	if err != nil {
 		return nil, nil, errors.Wrap(ctx, err, "create sync producer")
@@ -143,10 +144,7 @@ func (a *application) createSweep(
 		}
 	}
 	sender := cdb.NewCommandObjectSender(syncProducer, a.TopicPrefix, log.DefaultSamplerFactory)
-	sweep := prpkg.NewMootSweep(
-		tracker, github.NewGHClient(token), sender, libtime.NewCurrentDateTime(),
-	)
-	return sweep, cleanup, nil
+	return sender, cleanup, nil
 }
 
 // createConsumer reads the task-event topic from the oldest offset into the
@@ -184,7 +182,17 @@ func (a *application) createConsumer(
 }
 
 // runTickLoop sweeps once per MootSweepInterval until the context is cancelled.
-func (a *application) runTickLoop(ctx context.Context, sweep prpkg.MootSweep) error {
+//
+// The GitHub installation token is re-minted on every pass. This process is a
+// long-lived Deployment, not the reviewer's per-run Job: a token minted once at
+// startup expires after about an hour, and from then on every gh call fails —
+// which the shipped routing correctly treats as a no-op, so the sweep would
+// stop closing anything while readiness kept reporting 200.
+func (a *application) runTickLoop(
+	ctx context.Context,
+	tracker prpkg.MootTracker,
+	sender cdb.CommandObjectSender,
+) error {
 	ticker := time.NewTicker(prpkg.MootSweepInterval)
 	defer ticker.Stop()
 	for {
@@ -192,8 +200,23 @@ func (a *application) runTickLoop(ctx context.Context, sweep prpkg.MootSweep) er
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			token, err := a.resolveAuth(ctx)
+			if err != nil {
+				// Skip this pass, keep the pod: a transient mint failure must
+				// not restart the Deployment, and a permanent one is loud here
+				// instead of silent.
+				glog.Errorf("moot-sweep: refresh github app iat failed: %v", err)
+				continue
+			}
+			sweep := prpkg.NewMootSweep(
+				tracker, github.NewGHClient(token), sender, libtime.NewCurrentDateTime(),
+			)
 			closed, err := sweep.SweepPass(ctx)
 			if err != nil {
+				if ctx.Err() != nil {
+					// Cancellation mid-pass is a normal shutdown, not a failure.
+					return nil
+				}
 				return errors.Wrap(ctx, err, "sweep pass")
 			}
 			glog.V(2).Infof(
