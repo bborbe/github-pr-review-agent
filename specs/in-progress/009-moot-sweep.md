@@ -1,8 +1,9 @@
 ---
-status: prompted
+status: verifying
 approved: "2026-10-28T17:38:48Z"
 generating: "2026-10-28T17:40:45Z"
 prompted: "2026-10-28T18:00:26Z"
+verifying: "2026-10-28T18:37:30Z"
 branch: dark-factory/moot-sweep
 ---
 
