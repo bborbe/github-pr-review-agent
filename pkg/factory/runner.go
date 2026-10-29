@@ -58,6 +58,11 @@ type RunConfig struct {
 	// is injected into the env map as BOT_GITHUB_LOGIN so ResolveBotLogin
 	// picks it up instead of the DefaultBotLogin fallback.
 	BotLogin string
+	// HumanReviewOwner is stamped as the assignee on every result routed into
+	// human_review. When non-empty it is injected into the env map as
+	// HUMAN_REVIEW_OWNER, which is the only channel ResolveHumanReviewOwner
+	// reads; empty or malformed disables the stamp.
+	HumanReviewOwner string
 	// Usage records the token and turn cost of every claude invocation. Nil
 	// disables recording — the agent then runs exactly as it did before the
 	// metric existed.
@@ -142,6 +147,9 @@ func RunAgent(ctx context.Context, cfg RunConfig) (*agentlib.Result, error) {
 	}
 	if cfg.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = cfg.BotLogin
+	}
+	if cfg.HumanReviewOwner != "" {
+		env[HumanReviewOwnerEnv] = cfg.HumanReviewOwner
 	}
 
 	agent := cfg.Agent

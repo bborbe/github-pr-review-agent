@@ -107,6 +107,12 @@ type application struct {
 	PEMKey         string `required:"false" arg:"pem-key"         env:"PEM_KEY"          usage:"GitHub App private key (PEM) as env var content; mutually exclusive with PEM_KEY_FILE" display:"length"`
 	BotLogin       string `required:"false" arg:"bot-login"       env:"BOT_GITHUB_LOGIN" usage:"Bot identity used by githubposter (e.g. ben-s-pull-request-reviewer[bot])"                              default:"ben-s-pull-request-reviewer[bot]"`
 
+	// HumanReviewOwner is the GitHub login stamped as the assignee on every record
+	// this agent routes into human_review. Empty or malformed disables the stamp —
+	// see ResolveHumanReviewOwner. The deploy supplies the value; the warning below
+	// fires when it does not resolve to a usable login.
+	HumanReviewOwner string `required:"false" arg:"human-review-owner" env:"HUMAN_REVIEW_OWNER" usage:"GitHub login stamped as assignee on every record routed to human_review; empty disables the stamp"`
+
 	// Anthropic-compatible provider routing. Setting AnthropicBaseURL + AnthropicAuthToken
 	// routes the claude CLI to an alt-provider (e.g. MiniMax via https://api.minimax.io/anthropic).
 	// AnthropicModel drives both the `--model` CLI flag and the ANTHROPIC_MODEL env var seen by
@@ -237,16 +243,13 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	return agentlib.PrintResult(ctx, result)
 }
 
-// dispatchAgent builds the correct agent for the configured task type.
-// resolvedToken is the GitHub App installation token minted in resolveAuth; it
-// is forwarded to the agent subprocess (gh CLI, git credential helper, repo
-// manager, and agent provider) — never read from a config input.
-func (a *application) dispatchAgent(
-	ctx context.Context,
-	repoAllowlist []string,
-	resolvedToken string,
-	jobMetrics libmetrics.JobMetrics,
-) (*agentlib.Agent, error) {
+// agentEnv builds the environment map handed to the factory. It is the only
+// channel a step ever sees, so a key missing here is invisible to every test
+// that starts from a pre-populated map — which is exactly how
+// HUMAN_REVIEW_OWNER was lost: the value existed on the config struct and
+// nothing wrote it into this map, so the stamp silently never fired. Extracted
+// from dispatchAgent so a test can assert the mapping directly.
+func (a *application) agentEnv(resolvedToken string) map[string]string {
 	env := map[string]string{}
 	if resolvedToken != "" {
 		env["GH_TOKEN"] = resolvedToken
@@ -275,10 +278,49 @@ func (a *application) dispatchAgent(
 	if a.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = a.BotLogin
 	}
+	// The owner reaches the factory through this map and nowhere else: the step
+	// only sees env, and Create* stays pure composition. Without this line
+	// ResolveHumanReviewOwner always resolves empty and the stamp never fires.
+	if a.HumanReviewOwner != "" {
+		env[factory.HumanReviewOwnerEnv] = a.HumanReviewOwner
+	}
+	return env
+}
+
+// dispatchAgent builds the correct agent for the configured task type.
+// resolvedToken is the GitHub App installation token minted in resolveAuth; it
+// is forwarded to the agent subprocess (gh CLI, git credential helper, repo
+// manager, and agent provider) — never read from a config input.
+func (a *application) dispatchAgent(
+	ctx context.Context,
+	repoAllowlist []string,
+	resolvedToken string,
+	jobMetrics libmetrics.JobMetrics,
+) (*agentlib.Agent, error) {
+	env := a.agentEnv(resolvedToken)
 	repoManager := git.NewRepoManager(git.WorkdirConfig{
 		ReposPath: a.ReposPath,
 		WorkPath:  a.WorkPath,
 	}, resolvedToken)
+	// Warn where env is read, not inside the factory: Create* functions stay pure
+	// composition (no conditional, no I/O). Either failure disables the stamp, so a
+	// record routed to human_review keeps the agent's assignee — which the
+	// controller's chokepoint then clears, leaving the record owned by nobody.
+	switch {
+	case a.HumanReviewOwner == "":
+		glog.Warningf(
+			"%s is unset: a record routed to human_review keeps the agent's assignee, "+
+				"which the controller's chokepoint clears — so the record ends up owned by nobody",
+			factory.HumanReviewOwnerEnv,
+		)
+	case !factory.IsHumanReviewOwnerValid(a.HumanReviewOwner):
+		glog.Warningf(
+			"%s=%q is not a valid GitHub login (alphanumerics and interior hyphens, "+
+				"at most 39 characters): the stamp is disabled, so a record routed to "+
+				"human_review ends up owned by nobody",
+			factory.HumanReviewOwnerEnv, a.HumanReviewOwner,
+		)
+	}
 	provider := factory.CreateAgentProvider(
 		a.ClaudeConfigDir,
 		a.AgentDir,
