@@ -15,7 +15,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	sarama "github.com/IBM/sarama"
@@ -63,6 +65,16 @@ type application struct {
 	InstallationID int64  `required:"false" arg:"installation-id" env:"INSTALLATION_ID" usage:"GitHub App Installation ID (numeric)"`
 	PEMKeyFile     string `required:"false" arg:"pem-key-file"    env:"PEM_KEY_FILE"    usage:"Path to the GitHub App private key (PEM file mounted from k8s Secret)"`
 	PEMKey         string `required:"false" arg:"pem-key"         env:"PEM_KEY"         usage:"GitHub App private key (PEM) as env var content; mutually exclusive with PEM_KEY_FILE" display:"length"`
+
+	// VaultAPIBaseURL points at the vault-api instance that serves the task
+	// records the tracker holds. When set, every closure decision reads the
+	// LIVE record instead of the replayed event snapshot.
+	//
+	// Empty is allowed so a missing value cannot crashloop the Deployment, but
+	// it is NOT a supported mode: without it the sweep decides from a snapshot
+	// that can be months older than the file, which is what closed five merged
+	// records as `aborted` on 2026-10-29. Startup warns when it is empty.
+	VaultAPIBaseURL string `required:"false" arg:"vault-api-base-url" env:"VAULT_API_BASE_URL" usage:"Base URL of the vault-api serving task records; empty disables the live read (stale-snapshot mode)"`
 }
 
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
@@ -145,6 +157,68 @@ func (a *application) createSender(
 	}
 	sender := cdb.NewCommandObjectSender(syncProducer, a.TopicPrefix, log.DefaultSamplerFactory)
 	return sender, cleanup, nil
+}
+
+// taskReader returns the live-record reader, or nil when no vault-api URL is
+// configured. nil is a real mode (the sweep falls back to the replayed event),
+// so it warns loudly rather than failing: a crashloop is worse than a loud
+// degradation, and the deployment sets the value.
+func (a *application) taskReader() prpkg.MootTaskReader {
+	if a.VaultAPIBaseURL == "" {
+		glog.Warningf(
+			"moot-sweep: VAULT_API_BASE_URL is empty — deciding from the replayed event snapshot. " +
+				"Closures made in this mode can act on stale state (stale status, stale current_job).",
+		)
+		return nil
+	}
+	return newVaultTaskReader(a.VaultAPIBaseURL)
+}
+
+// vaultTaskReader reads a task record from vault-api's
+// GET /api/v1/tasks/{id}, which returns {id,title,frontmatter,body}.
+type vaultTaskReader struct {
+	baseURL string
+	client  *http.Client
+}
+
+func newVaultTaskReader(baseURL string) *vaultTaskReader {
+	return &vaultTaskReader{
+		baseURL: strings.TrimSuffix(baseURL, "/"),
+		client:  &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+func (r *vaultTaskReader) ReadTask(
+	ctx context.Context,
+	id agentlib.TaskIdentifier,
+) (agentlib.TaskFrontmatter, string, error) {
+	requestURL := r.baseURL + "/api/v1/tasks/" + url.PathEscape(string(id))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, "", errors.Wrap(ctx, err, "build vault-api request")
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, "", errors.Wrap(ctx, err, "read task from vault-api")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// 404 is "the record is gone", not an error: the sweep must leave it alone.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, "", nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", errors.Errorf(
+			ctx, "vault-api GET /api/v1/tasks/%s returned %d", id, resp.StatusCode,
+		)
+	}
+	var document struct {
+		Frontmatter map[string]interface{} `json:"frontmatter"`
+		Body        string                 `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&document); err != nil {
+		return nil, "", errors.Wrap(ctx, err, "decode vault-api task document")
+	}
+	return agentlib.TaskFrontmatter(document.Frontmatter), document.Body, nil
 }
 
 // decodeTaskEvent decodes one task-event message into a Task, reporting whether
@@ -240,7 +314,8 @@ func (a *application) runTickLoop(
 				continue
 			}
 			sweep := prpkg.NewMootSweep(
-				tracker, github.NewGHClient(token), sender, libtime.NewCurrentDateTime(),
+				tracker, a.taskReader(), github.NewGHClient(token), sender,
+				libtime.NewCurrentDateTime(),
 			)
 			closed, err := sweep.SweepPass(ctx)
 			if err != nil {

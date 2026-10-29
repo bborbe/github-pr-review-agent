@@ -25,6 +25,26 @@ const MootSweepInterval = 5 * time.Minute
 
 //counterfeiter:generate -o ../mocks/moot-sweep.go --fake-name MootSweep . MootSweep
 
+//counterfeiter:generate -o ../mocks/moot-task-reader.go --fake-name MootTaskReader . MootTaskReader
+
+// MootTaskReader reads the CURRENT on-disk state of a task record.
+//
+// The tracker's copy comes from a replayed Kafka event and can be arbitrarily
+// older than the file. Deciding from it produced two measured defects on the
+// first live pass (2026-10-29): five records whose PR was MERGED were closed
+// as `aborted` because the event still said `in_progress`, and four records
+// were stamped `spawn_state: none` while carrying a real `current_job` the
+// event predated. Every decision therefore reads the live record first.
+//
+// A nil frontmatter with a nil error means the record does not exist (any
+// more) and the sweep must leave it alone.
+type MootTaskReader interface {
+	ReadTask(
+		ctx context.Context,
+		id agentlib.TaskIdentifier,
+	) (agentlib.TaskFrontmatter, string, error)
+}
+
 // MootSweep applies the shipped PR-state routing to tracked review tasks and
 // closes the ones that are moot.
 type MootSweep interface {
@@ -42,12 +62,14 @@ type MootSweep interface {
 // publishes closures through sender.
 func NewMootSweep(
 	tracker MootTracker,
+	reader MootTaskReader,
 	prState PRStateClient,
 	sender cdb.CommandObjectSender,
 	currentDateTime libtime.CurrentDateTimeGetter,
 ) MootSweep {
 	return &mootSweep{
 		tracker:         tracker,
+		reader:          reader,
 		prState:         prState,
 		sender:          sender,
 		currentDateTime: currentDateTime,
@@ -56,6 +78,7 @@ func NewMootSweep(
 
 type mootSweep struct {
 	tracker         MootTracker
+	reader          MootTaskReader
 	prState         PRStateClient
 	sender          cdb.CommandObjectSender
 	currentDateTime libtime.CurrentDateTimeGetter
@@ -64,9 +87,12 @@ type mootSweep struct {
 // SweepTask evaluates one tracked task through the shipped routing and
 // publishes the closure when the routing decided the review is moot.
 func (s *mootSweep) SweepTask(ctx context.Context, task agentlib.Task) (bool, error) {
-	md, err := buildMootMarkdown(ctx, task)
+	md, ok, err := s.liveMarkdown(ctx, task)
 	if err != nil {
 		return false, err
+	}
+	if !ok {
+		return false, nil
 	}
 	result, err := prStateCheck(ctx, md, s.prState)
 	if err != nil {
@@ -84,9 +110,47 @@ func (s *mootSweep) SweepTask(ctx context.Context, task agentlib.Task) (bool, er
 	glog.V(2).Infof(
 		"moot-sweep: closed task=%s spawn_state=%s",
 		task.TaskIdentifier,
-		mootSpawnState(task),
+		mootSpawnState(md.Frontmatter),
 	)
 	return true, nil
+}
+
+// liveMarkdown reads the record as it exists on disk right now and parses it.
+// ok=false means "do not close": either the record is gone, or its live state
+// could not be read. Closing on an unknown live state is exactly the mistake
+// that wrote `aborted` onto merged records, so the failure is fail-closed.
+func (s *mootSweep) liveMarkdown(
+	ctx context.Context,
+	task agentlib.Task,
+) (*agentlib.Markdown, bool, error) {
+	// No reader configured: fall back to the event snapshot. This is the
+	// pre-live-read behaviour, kept only so an unset VAULT_API_BASE_URL cannot
+	// crashloop the Deployment — it is NOT the correct mode and the stale-
+	// snapshot defects return with it, so main logs a startup warning.
+	if s.reader == nil {
+		return buildMootMarkdown(ctx, task)
+	}
+	fm, body, err := s.reader.ReadTask(ctx, task.TaskIdentifier)
+	if err != nil {
+		glog.V(2).Infof(
+			"moot-sweep: task=%s live read failed err=%v — not closing",
+			task.TaskIdentifier, err,
+		)
+		return nil, false, nil
+	}
+	if fm == nil {
+		glog.V(2).Infof(
+			"moot-sweep: task=%s not present in the vault — not closing",
+			task.TaskIdentifier,
+		)
+		return nil, false, nil
+	}
+	md, err := agentlib.ParseMarkdown(ctx, body)
+	if err != nil {
+		return nil, false, errors.Wrapf(ctx, err, "parse live task content")
+	}
+	md.Frontmatter = fm
+	return md, true, nil
 }
 
 // SweepPass evaluates every tracked task and returns the ids it closed. A
@@ -126,7 +190,7 @@ func (s *mootSweep) writeClosure(
 	md *agentlib.Markdown,
 ) error {
 	md.Frontmatter["closed_by"] = "sweep"
-	md.Frontmatter["spawn_state"] = mootSpawnState(task)
+	md.Frontmatter["spawn_state"] = mootSpawnState(md.Frontmatter)
 
 	full, err := md.Marshal(ctx)
 	if err != nil {
@@ -170,25 +234,33 @@ func (s *mootSweep) writeClosure(
 
 // buildMootMarkdown parses the task body and attaches a COPY of the event's
 // frontmatter, so mutating the returned markdown never corrupts the record the
-// tracker still holds.
-func buildMootMarkdown(ctx context.Context, task agentlib.Task) (*agentlib.Markdown, error) {
+// tracker still holds. Used only when no MootTaskReader is configured.
+func buildMootMarkdown(
+	ctx context.Context,
+	task agentlib.Task,
+) (*agentlib.Markdown, bool, error) {
 	md, err := agentlib.ParseMarkdown(ctx, string(task.Content))
 	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "parse task content")
+		return nil, false, errors.Wrapf(ctx, err, "parse task content")
 	}
 	fm := make(agentlib.TaskFrontmatter, len(task.Frontmatter))
 	for k, v := range task.Frontmatter {
 		fm[k] = v
 	}
 	md.Frontmatter = fm
-	return md, nil
+	return md, true, nil
 }
 
 // mootSpawnState reports whether a job had already been assigned when the
 // task was closed: "job_assigned" when the executor recorded a current job,
 // "none" otherwise.
-func mootSpawnState(task agentlib.Task) string {
-	if task.Frontmatter.CurrentJob() != "" {
+//
+// It reads the LIVE frontmatter, never the tracker's event snapshot. The
+// event predates the executor's `current_job` write, so the snapshot answered
+// "none" on records that had a job — the exact evidence SC1 needs to be
+// trustworthy.
+func mootSpawnState(fm agentlib.TaskFrontmatter) string {
+	if fm.CurrentJob() != "" {
 		return "job_assigned"
 	}
 	return "none"

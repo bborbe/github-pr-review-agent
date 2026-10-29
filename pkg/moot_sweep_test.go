@@ -24,8 +24,13 @@ const (
 	sweepHead  = "def456"
 )
 
+// sweepLive is what the fake vault reader returns for a given task id. It is
+// seeded by newSweepTask to mirror the event, so every pre-existing test keeps
+// its meaning; a test that wants a DIFFERENT live state overwrites the entry.
+var sweepLive = map[agentlib.TaskIdentifier]agentlib.Task{}
+
 func newSweepTask(id, currentJob string) agentlib.Task {
-	return agentlib.Task{
+	task := agentlib.Task{
 		TaskIdentifier: agentlib.TaskIdentifier(id),
 		Vault:          "maintainer",
 		Frontmatter: agentlib.TaskFrontmatter{
@@ -37,6 +42,8 @@ func newSweepTask(id, currentJob string) agentlib.Task {
 		},
 		Content: agentlib.TaskContent(sweepPRURL + "\n\nsome content\n"),
 	}
+	sweepLive[task.TaskIdentifier] = task
+	return task
 }
 
 var _ = Describe("MootSweep", func() {
@@ -55,7 +62,21 @@ var _ = Describe("MootSweep", func() {
 		fakePRState = &mocks.PRStateClient{}
 		fakeSender = &cqrsmocks.CDBCommandObjectSender{}
 		currentDateTime = libtime.NewCurrentDateTime()
-		sweep = pkg.NewMootSweep(tracker, fakePRState, fakeSender, currentDateTime)
+		sweepLive = map[agentlib.TaskIdentifier]agentlib.Task{}
+		fakeReader := &mocks.MootTaskReader{}
+		fakeReader.ReadTaskStub = func(
+			_ context.Context,
+			id agentlib.TaskIdentifier,
+		) (agentlib.TaskFrontmatter, string, error) {
+			live, ok := sweepLive[id]
+			if !ok {
+				return nil, "", nil
+			}
+			return live.Frontmatter, string(live.Content), nil
+		}
+		sweep = pkg.NewMootSweep(
+			tracker, fakeReader, fakePRState, fakeSender, currentDateTime,
+		)
 	})
 
 	// assertClosure reads back the single published command object and checks
@@ -185,6 +206,9 @@ var _ = Describe("MootSweep", func() {
 		currentTask.Content = agentlib.TaskContent(
 			"https://github.com/bborbe/maintainer/pull/3\n\nsome content\n",
 		)
+		// The live record must reflect the mutation above: newSweepTask seeds
+		// the reader from the task as it was built, and Content is a value.
+		sweepLive[currentTask.TaskIdentifier] = currentTask
 
 		tracker.Observe(ctx, mootTask)
 		tracker.Observe(ctx, currentTask)
@@ -195,5 +219,92 @@ var _ = Describe("MootSweep", func() {
 		Expect(fakeSender.SendCommandObjectCallCount()).To(Equal(1))
 		Expect(tracker.List()).To(HaveLen(1))
 		Expect(tracker.List()[0]).To(Equal(currentTask))
+	})
+})
+
+// The live-record tests exist because deciding from the replayed Kafka event
+// produced two measured defects on the first live pass (2026-10-29): five
+// records whose PR was MERGED were closed as `aborted` (the event still said
+// in_progress, so the terminal guard never fired), and four were stamped
+// `spawn_state: none` while the file carried a real `current_job` the event
+// predated. Both are asserted here against a live record that DIFFERS from the
+// event, which is the only shape that catches either bug.
+var _ = Describe("MootSweep live record", func() {
+	var (
+		ctx         context.Context
+		tracker     pkg.MootTracker
+		fakePRState *mocks.PRStateClient
+		fakeSender  *cqrsmocks.CDBCommandObjectSender
+		fakeReader  *mocks.MootTaskReader
+		sweep       pkg.MootSweep
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		tracker = pkg.NewMootTracker()
+		fakePRState = &mocks.PRStateClient{}
+		fakeSender = &cqrsmocks.CDBCommandObjectSender{}
+		fakeReader = &mocks.MootTaskReader{}
+		sweepLive = map[agentlib.TaskIdentifier]agentlib.Task{}
+		sweep = pkg.NewMootSweep(
+			tracker, fakeReader, fakePRState, fakeSender, libtime.NewCurrentDateTime(),
+		)
+	})
+
+	It("does not close a record that is already terminal on disk", func() {
+		// The event still says in_progress — this is the stale snapshot that
+		// closed five merged PRs as aborted.
+		task := newSweepTask("task-terminal", "")
+		live := newSweepTask("task-terminal", "")
+		live.Frontmatter["status"] = "completed"
+		fakeReader.ReadTaskReturns(live.Frontmatter, string(live.Content), nil)
+		fakePRState.PRStateReturns("MERGED", "2026-09-09T05:52:35Z", sweepHead, nil)
+
+		closed, err := sweep.SweepTask(ctx, task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(closed).To(BeFalse())
+		Expect(fakeSender.SendCommandObjectCallCount()).To(Equal(0))
+	})
+
+	It("stamps job_assigned from the live current_job, not the event", func() {
+		task := newSweepTask("task-live-job", "")
+		live := newSweepTask("task-live-job", "pr-reviewer-agent-abc-20261029")
+		fakeReader.ReadTaskReturns(live.Frontmatter, string(live.Content), nil)
+		fakePRState.PRStateReturns("OPEN", "", "999999", nil)
+
+		closed, err := sweep.SweepTask(ctx, task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(closed).To(BeTrue())
+
+		_, commandObject := fakeSender.SendCommandObjectArgsForCall(0)
+		var written agentlib.Task
+		Expect(commandObject.Command.Data.MarshalInto(ctx, &written)).To(Succeed())
+		Expect(written.Frontmatter["spawn_state"]).To(Equal("job_assigned"))
+	})
+
+	It("stamps none when the live record has no current_job", func() {
+		task := newSweepTask("task-no-job", "pr-reviewer-agent-stale-20260901")
+		live := newSweepTask("task-no-job", "")
+		fakeReader.ReadTaskReturns(live.Frontmatter, string(live.Content), nil)
+		fakePRState.PRStateReturns("OPEN", "", "999999", nil)
+
+		closed, err := sweep.SweepTask(ctx, task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(closed).To(BeTrue())
+
+		_, commandObject := fakeSender.SendCommandObjectArgsForCall(0)
+		var written agentlib.Task
+		Expect(commandObject.Command.Data.MarshalInto(ctx, &written)).To(Succeed())
+		Expect(written.Frontmatter["spawn_state"]).To(Equal("none"))
+	})
+
+	It("does not close a record the vault no longer has", func() {
+		task := newSweepTask("task-gone", "")
+		fakeReader.ReadTaskReturns(nil, "", nil)
+
+		closed, err := sweep.SweepTask(ctx, task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(closed).To(BeFalse())
+		Expect(fakeSender.SendCommandObjectCallCount()).To(Equal(0))
 	})
 })
