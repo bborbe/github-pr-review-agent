@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.15.5
 
 - chore: Update `github.com/bborbe/agent` to `v0.134.1`, which carries the result-deliverer phase-advance fix introduced in v0.132.5: a delivery that advances no phase no longer republishes the Job-start phase over a phase an executor had already advanced. Before it, a late publish rewrote the on-disk `phase` back to the value the run started from, un-parking a task an executor had moved to `human_review` and letting it run again on a second cluster. Single-module bump — the indirect block is unchanged and the alpha `k8s.io/*` bump that sank `#65` is absent.
 
