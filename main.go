@@ -243,16 +243,13 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	return agentlib.PrintResult(ctx, result)
 }
 
-// dispatchAgent builds the correct agent for the configured task type.
-// resolvedToken is the GitHub App installation token minted in resolveAuth; it
-// is forwarded to the agent subprocess (gh CLI, git credential helper, repo
-// manager, and agent provider) — never read from a config input.
-func (a *application) dispatchAgent(
-	ctx context.Context,
-	repoAllowlist []string,
-	resolvedToken string,
-	jobMetrics libmetrics.JobMetrics,
-) (*agentlib.Agent, error) {
+// agentEnv builds the environment map handed to the factory. It is the only
+// channel a step ever sees, so a key missing here is invisible to every test
+// that starts from a pre-populated map — which is exactly how
+// HUMAN_REVIEW_OWNER was lost: the value existed on the config struct and
+// nothing wrote it into this map, so the stamp silently never fired. Extracted
+// from dispatchAgent so a test can assert the mapping directly.
+func (a *application) agentEnv(resolvedToken string) map[string]string {
 	env := map[string]string{}
 	if resolvedToken != "" {
 		env["GH_TOKEN"] = resolvedToken
@@ -281,12 +278,26 @@ func (a *application) dispatchAgent(
 	if a.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = a.BotLogin
 	}
-	// The owner reaches the factory through this map and nowhere else: the step only
-	// sees env, and Create* stays pure composition. Without this line
+	// The owner reaches the factory through this map and nowhere else: the step
+	// only sees env, and Create* stays pure composition. Without this line
 	// ResolveHumanReviewOwner always resolves empty and the stamp never fires.
 	if a.HumanReviewOwner != "" {
 		env[factory.HumanReviewOwnerEnv] = a.HumanReviewOwner
 	}
+	return env
+}
+
+// dispatchAgent builds the correct agent for the configured task type.
+// resolvedToken is the GitHub App installation token minted in resolveAuth; it
+// is forwarded to the agent subprocess (gh CLI, git credential helper, repo
+// manager, and agent provider) — never read from a config input.
+func (a *application) dispatchAgent(
+	ctx context.Context,
+	repoAllowlist []string,
+	resolvedToken string,
+	jobMetrics libmetrics.JobMetrics,
+) (*agentlib.Agent, error) {
+	env := a.agentEnv(resolvedToken)
 	repoManager := git.NewRepoManager(git.WorkdirConfig{
 		ReposPath: a.ReposPath,
 		WorkPath:  a.WorkPath,
@@ -304,8 +315,9 @@ func (a *application) dispatchAgent(
 		)
 	case !factory.IsHumanReviewOwnerValid(a.HumanReviewOwner):
 		glog.Warningf(
-			"%s=%q is not a valid GitHub login (alphanumerics and interior hyphens): "+
-				"the stamp is disabled, so a record routed to human_review ends up owned by nobody",
+			"%s=%q is not a valid GitHub login (alphanumerics and interior hyphens, "+
+				"at most 39 characters): the stamp is disabled, so a record routed to "+
+				"human_review ends up owned by nobody",
 			factory.HumanReviewOwnerEnv, a.HumanReviewOwner,
 		)
 	}

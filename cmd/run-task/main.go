@@ -165,6 +165,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	if a.SkipPost {
 		glog.V(2).Infof("pr-reviewer skip-post enabled — GitHub writes suppressed")
 	}
+	a.warnHumanReviewOwner()
 
 	authSetup := githubauth.NewNoopAuthSetup()
 	result, err := factory.RunAgent(ctx, factory.RunConfig{
@@ -197,6 +198,26 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return errors.Wrap(ctx, err, "agent run failed")
 	}
 	return agentlib.PrintResult(ctx, result)
+}
+
+// warnHumanReviewOwner logs when the owner is unset or malformed. Same wording
+// as the pod entry point: a local run otherwise loses the stamp silently, and
+// docs/pr-post-back.md promises startup visibility.
+func (a *application) warnHumanReviewOwner() {
+	switch {
+	case a.HumanReviewOwner == "":
+		glog.Warningf(
+			"%s is unset: a record routed to human_review keeps the agent's assignee, "+
+				"which the controller's chokepoint clears — so the record ends up owned by nobody",
+			factory.HumanReviewOwnerEnv,
+		)
+	case !factory.IsHumanReviewOwnerValid(a.HumanReviewOwner):
+		glog.Warningf(
+			"%s=%q is not a valid GitHub login (alphanumerics and interior hyphens, "+
+				"at most 39 characters): the stamp is disabled",
+			factory.HumanReviewOwnerEnv, a.HumanReviewOwner,
+		)
+	}
 }
 
 // resolveAuth mints a GitHub App installation token and returns it. The token

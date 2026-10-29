@@ -22,6 +22,12 @@ const HumanReviewOwnerEnv = "HUMAN_REVIEW_OWNER"
 // here would re-create the unowned-record defect this stamp exists to fix.
 var humanLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$`)
 
+// maxGitHubLoginLength bounds the value at GitHub's own limit. An over-long
+// login would pass the charset test, be stamped as the assignee, and then never
+// match the controller's HUMAN_ASSIGNEES set — reproducing the unowned-record
+// state this stamp exists to fix, with no error anywhere.
+const maxGitHubLoginLength = 39
+
 // ResolveHumanReviewOwner returns the trimmed env[HumanReviewOwnerEnv], or the
 // empty string when it is unset or is not a valid GitHub login.
 //
@@ -35,7 +41,7 @@ var humanLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0
 // that lost their owner.
 func ResolveHumanReviewOwner(env map[string]string) string {
 	owner := strings.TrimSpace(env[HumanReviewOwnerEnv])
-	if !humanLoginPattern.MatchString(owner) {
+	if !IsHumanReviewOwnerValid(owner) {
 		return ""
 	}
 	return owner
@@ -46,5 +52,6 @@ func ResolveHumanReviewOwner(env map[string]string) string {
 // startup warning — the two need different operator actions, and a malformed
 // value disables the stamp exactly as an unset one does.
 func IsHumanReviewOwnerValid(value string) bool {
-	return humanLoginPattern.MatchString(strings.TrimSpace(value))
+	trimmed := strings.TrimSpace(value)
+	return len(trimmed) <= maxGitHubLoginLength && humanLoginPattern.MatchString(trimmed)
 }
