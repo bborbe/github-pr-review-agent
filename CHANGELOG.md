@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: Update `github.com/bborbe/agent` to `v0.134.1`, which carries the result-deliverer phase-advance fix introduced in v0.132.5: a delivery that advances no phase no longer republishes the Job-start phase over a phase an executor had already advanced. Before it, a late publish rewrote the on-disk `phase` back to the value the run started from, un-parking a task an executor had moved to `human_review` and letting it run again on a second cluster. Single-module bump — the indirect block is unchanged and the alpha `k8s.io/*` bump that sank `#65` is absent.
+
 ## v0.15.4
 
 - fix: **`moot-sweep`'s live read now authenticates, and says so when it cannot.** `vault-api` applies `gatewaySecretMiddleware` to every `/api/v1/*` route whenever `GATEWAY_SECRET` is non-empty, and the deployed `vault-api-openclaw` does set it — as an **env var**, which binds to the same flag (`vault-api main.go:56` `arg:"gateway-secret" env:"GATEWAY_SECRET"`). The previous revision inferred "no auth" from a grep of the container's `args`, where the flag never appears, and the read would have 401'd in production. `VAULT_API_GATEWAY_SECRET` is now sent as `X-Gateway-Secret` when set, and an empty value logs a startup warning naming the exact consequence — every read 401s and the sweep closes nothing — because the failure is otherwise invisible: the sweep fails closed, which looks identical to a quiet topic. Three tests pin the behaviour: the header is sent when configured and absent when not, a 404 stays "record gone, not an error", and a 401 surfaces as an error so the sweep fails closed rather than silently deciding from a stale snapshot.
