@@ -75,6 +75,18 @@ type application struct {
 	// that can be months older than the file, which is what closed five merged
 	// records as `aborted` on 2026-10-29. Startup warns when it is empty.
 	VaultAPIBaseURL string `required:"false" arg:"vault-api-base-url" env:"VAULT_API_BASE_URL" usage:"Base URL of the vault-api serving task records; empty disables the live read (stale-snapshot mode)"`
+
+	// VaultAPIGatewaySecret is the shared secret vault-api requires in
+	// X-Gateway-Secret for every /api/v1/* request when it is started with a
+	// non-empty --gateway-secret.
+	//
+	// The deployments DO set it: `vault-api-openclaw` carries GATEWAY_SECRET as
+	// an env var, which binds to the same flag (vault-api main.go:56
+	// `arg:"gateway-secret" env:"GATEWAY_SECRET"`). An earlier version of this
+	// file claimed no auth was needed because a grep of the container's `args`
+	// found no --gateway-secret — the flag was supplied by env instead, and the
+	// read would have 401'd. Never infer a flag's absence from `args` alone.
+	VaultAPIGatewaySecret string `required:"false" arg:"vault-api-gateway-secret" env:"VAULT_API_GATEWAY_SECRET" usage:"Shared secret sent as X-Gateway-Secret; must match vault-api's GATEWAY_SECRET" display:"length"`
 }
 
 func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
@@ -171,19 +183,30 @@ func (a *application) taskReader() prpkg.MootTaskReader {
 		)
 		return nil
 	}
-	return newVaultTaskReader(a.VaultAPIBaseURL)
+	if a.VaultAPIGatewaySecret == "" {
+		// Not fatal: a vault-api started without --gateway-secret accepts the
+		// call. But when it IS set server-side, every read 401s and the sweep
+		// fails closed, closing nothing — so say so once, loudly, at startup.
+		glog.Warningf(
+			"moot-sweep: VAULT_API_GATEWAY_SECRET is empty — the live read sends no X-Gateway-Secret. " +
+				"If vault-api runs with GATEWAY_SECRET set, every read 401s and the sweep closes nothing.",
+		)
+	}
+	return newVaultTaskReader(a.VaultAPIBaseURL, a.VaultAPIGatewaySecret)
 }
 
 // vaultTaskReader reads a task record from vault-api's
 // GET /api/v1/tasks/{id}, which returns {id,title,frontmatter,body}.
 type vaultTaskReader struct {
 	baseURL string
+	secret  string
 	client  *http.Client
 }
 
-func newVaultTaskReader(baseURL string) *vaultTaskReader {
+func newVaultTaskReader(baseURL, secret string) *vaultTaskReader {
 	return &vaultTaskReader{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
+		secret:  secret,
 		client:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -196,6 +219,9 @@ func (r *vaultTaskReader) ReadTask(
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, "", errors.Wrap(ctx, err, "build vault-api request")
+	}
+	if r.secret != "" {
+		req.Header.Set("X-Gateway-Secret", r.secret)
 	}
 	resp, err := r.client.Do(req)
 	if err != nil {
