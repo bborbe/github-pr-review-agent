@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: stop a single undecodable Kafka message from killing `moot-sweep`. The task-event handler returned an error when `json.Unmarshal` failed, and the consumer starts at `OffsetOldest` and rebuilds its whole view on every restart — so one bad message was replayed on every start rather than failed once. The first dev deploy died on it and restarted into the same message three times in under three minutes: `application failed: run failed: consume message failed: consume message failed: unmarshal task event: unexpected end of JSON input`. Two shapes are now skipped instead of fatal, both named in `decodeTaskEvent`: an empty value, which is a Kafka **tombstone** left by topic compaction, and a value that is not JSON, which is another producer's event on the same topic. Neither carries task state, and neither may take the sweep down. ⚠️ The skip is deliberate rather than lenient: a consumer that dies on replay-visible input can never make progress, so tolerating it is the only behaviour that converges.
+
 ## v0.15.0
 
 - feat: close moot PR-review tasks without spawning a reviewer pod. A new `moot-sweep` Deployment consumes the task-event topic, applies the shipped `prStateCheck` routing on a fixed five-minute tick, and publishes closures through the same CQRS command path the reviewer uses — aborted + superseded when the commit is no longer the pull request's head, completed for a merged or closed-unmerged pull request. Each closure carries `closed_by: sweep` and `spawn_state` (`none` / `job_assigned`), so a task closed before any pod existed stays distinguishable from one closed after a job was assigned; the in-pod path writes neither field, a GitHub error closes nothing, and a task whose commit is still the head is never touched.

@@ -147,6 +147,41 @@ func (a *application) createSender(
 	return sender, cleanup, nil
 }
 
+// decodeTaskEvent decodes one task-event message into a Task, reporting whether
+// the message is a task event at all.
+//
+// A message that cannot be decoded is SKIPPED, never returned as an error, and
+// that is load-bearing rather than lenient. This consumer starts at
+// OffsetOldest and rebuilds its entire view on every restart, so a single
+// undecodable message is replayed on every start: returning an error here does
+// not fail one message, it holds the pod in CrashLoopBackOff forever. That is
+// not hypothetical — the first dev deploy died on
+//
+//	application failed: run failed: consume message failed:
+//	consume message failed: unmarshal task event: unexpected end of JSON input
+//
+// and restarted into the same message three times in under three minutes.
+//
+// Two shapes are expected and both are skipped: an empty value is a Kafka
+// TOMBSTONE left behind by topic compaction, and a value that is not JSON is
+// another producer's event on the same topic. Neither carries task state, and
+// neither may take the sweep down.
+func decodeTaskEvent(value []byte) (agentlib.Task, bool) {
+	var task agentlib.Task
+	if len(value) == 0 {
+		glog.V(2).Infof("moot-sweep: skip empty task event (tombstone)")
+		return task, false
+	}
+	// The event topic value is the JSON of the base.Event map produced by
+	// base.ParseEvent; its keys line up with the agentlib.Task JSON tags, so
+	// decoding straight into Task is the same path the tracker test locks.
+	if err := json.Unmarshal(value, &task); err != nil {
+		glog.Warningf("moot-sweep: skip undecodable task event: %v", err)
+		return task, false
+	}
+	return task, true
+}
+
 // createConsumer reads the task-event topic from the oldest offset into the
 // tracker. OffsetOldest is deliberate: every restart rebuilds the in-memory
 // view from the topic, which is the recovery behaviour the sweep relies on.
@@ -160,13 +195,9 @@ func (a *application) createConsumer(
 	}
 	handler := libkafka.MessageHandlerFunc(
 		func(ctx context.Context, msg *sarama.ConsumerMessage) error {
-			// The event topic value is the JSON of the base.Event map produced
-			// by base.ParseEvent; its keys line up with the agentlib.Task JSON
-			// tags, so decoding straight into Task is the same path the
-			// tracker test locks.
-			var task agentlib.Task
-			if err := json.Unmarshal(msg.Value, &task); err != nil {
-				return errors.Wrapf(ctx, err, "unmarshal task event")
+			task, ok := decodeTaskEvent(msg.Value)
+			if !ok {
+				return nil
 			}
 			tracker.Observe(ctx, task)
 			return nil
