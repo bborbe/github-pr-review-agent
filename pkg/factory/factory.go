@@ -213,6 +213,46 @@ func CreateAgent(
 	prStatePollInterval libtime.Duration,
 	usage libmetrics.JobMetrics,
 ) *agentlib.Agent {
+	return agentlib.NewAgent(createPhases(
+		claudeConfigDir,
+		agentDir,
+		model,
+		ghToken,
+		env,
+		repoManager,
+		reviewMode,
+		repoAllowlist,
+		prPoster,
+		verifier,
+		currentDateTime,
+		maxDuration,
+		chunkConfig,
+		prStatePollInterval,
+		usage,
+	)...)
+}
+
+// createPhases builds the three review phases CreateAgent composes. It is split
+// out so a composition test can assert that every phase body carries the
+// human-review owner stamp: *agentlib.Agent keeps its phase list unexported, so
+// a factory that forgets one wrapper is otherwise unobservable from a test.
+func createPhases(
+	claudeConfigDir claudelib.ClaudeConfigDir,
+	agentDir claudelib.AgentDir,
+	model claudelib.ClaudeModel,
+	ghToken string,
+	env map[string]string,
+	repoManager git.RepoManager,
+	reviewMode string,
+	repoAllowlist []string,
+	prPoster prpkg.PrPoster,
+	verifier prpkg.ReviewVerifier,
+	currentDateTime libtime.CurrentDateTimeGetter,
+	maxDuration libtime.Duration,
+	chunkConfig prpkg.ReviewChunkConfig,
+	prStatePollInterval libtime.Duration,
+	usage libmetrics.JobMetrics,
+) []agentlib.Phase {
 	botLogin := ResolveBotLogin(env)
 	// The human owner stamped onto every human_review routing. Empty disables the
 	// stamp, which is the unconfigured default — see ResolveHumanReviewOwner. The
@@ -271,11 +311,11 @@ func CreateAgent(
 		prStateClient,
 		prStatePollInterval,
 	), humanReviewOwner)
-	return agentlib.NewAgent(
+	return []agentlib.Phase{
 		planningPhase,
 		agentlib.NewPhase(domain.TaskPhaseExecution, tokenCheck, prURLCheck, executionStep),
 		agentlib.NewPhase("ai_review", tokenCheck, prURLCheck, reviewStep),
-	)
+	}
 }
 
 // CreateAgentProvider wires the per-task-type dispatch table for maintainer-agent-pr-reviewer.
@@ -336,14 +376,7 @@ func CreateAgentProvider(
 	// task_type pr-override, not the phase name, is what routes here, so there
 	// is no collision with the review agent's execution phase.
 	overrideAgent := agentlib.NewAgent(
-		agentlib.NewPhase(
-			domain.TaskPhaseExecution,
-			prpkg.NewGHTokenCheckStep(ghToken),
-			prpkg.NewHumanReviewOwnerStep(
-				prpkg.NewOverrideStep(poster, botLogin),
-				ResolveHumanReviewOwner(env),
-			),
-		),
+		createOverridePhase(ghToken, poster, botLogin, ResolveHumanReviewOwner(env)),
 	)
 
 	return agentlib.NewAgentProvider(serviceName, map[agentlib.TaskType]*agentlib.Agent{
@@ -351,6 +384,24 @@ func CreateAgentProvider(
 		agentlib.TaskTypeHealthcheck: livenessAgent,
 		prpkg.TaskTypePROverride:     overrideAgent,
 	})
+}
+
+// createOverridePhase builds the pr-override phase. Split from
+// CreateAgentProvider for the same composition-test reason as createPhases.
+func createOverridePhase(
+	ghToken string,
+	poster prpkg.PrPoster,
+	botLogin string,
+	humanReviewOwner string,
+) agentlib.Phase {
+	return agentlib.NewPhase(
+		domain.TaskPhaseExecution,
+		prpkg.NewGHTokenCheckStep(ghToken),
+		prpkg.NewHumanReviewOwnerStep(
+			prpkg.NewOverrideStep(poster, botLogin),
+			humanReviewOwner,
+		),
+	)
 }
 
 // CreateDeliverer builds the Kafka result deliverer used by the Kafka

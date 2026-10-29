@@ -107,6 +107,12 @@ type application struct {
 	PEMKey         string `required:"false" arg:"pem-key"         env:"PEM_KEY"          usage:"GitHub App private key (PEM) as env var content; mutually exclusive with PEM_KEY_FILE" display:"length"`
 	BotLogin       string `required:"false" arg:"bot-login"       env:"BOT_GITHUB_LOGIN" usage:"Bot identity used by githubposter (e.g. ben-s-pull-request-reviewer[bot])"                              default:"ben-s-pull-request-reviewer[bot]"`
 
+	// HumanReviewOwner is the GitHub login stamped as the assignee on every record
+	// this agent routes into human_review. Empty or malformed disables the stamp —
+	// see ResolveHumanReviewOwner. The deploy supplies the value; the warning below
+	// fires when it does not resolve to a usable login.
+	HumanReviewOwner string `required:"false" arg:"human-review-owner" env:"HUMAN_REVIEW_OWNER" usage:"GitHub login stamped as assignee on every record routed to human_review; empty disables the stamp"`
+
 	// Anthropic-compatible provider routing. Setting AnthropicBaseURL + AnthropicAuthToken
 	// routes the claude CLI to an alt-provider (e.g. MiniMax via https://api.minimax.io/anthropic).
 	// AnthropicModel drives both the `--model` CLI flag and the ANTHROPIC_MODEL env var seen by
@@ -275,19 +281,32 @@ func (a *application) dispatchAgent(
 	if a.BotLogin != "" {
 		env["BOT_GITHUB_LOGIN"] = a.BotLogin
 	}
+	// The owner reaches the factory through this map and nowhere else: the step only
+	// sees env, and Create* stays pure composition. Without this line
+	// ResolveHumanReviewOwner always resolves empty and the stamp never fires.
+	if a.HumanReviewOwner != "" {
+		env[factory.HumanReviewOwnerEnv] = a.HumanReviewOwner
+	}
 	repoManager := git.NewRepoManager(git.WorkdirConfig{
 		ReposPath: a.ReposPath,
 		WorkPath:  a.WorkPath,
 	}, resolvedToken)
 	// Warn where env is read, not inside the factory: Create* functions stay pure
-	// composition (no conditional, no I/O). An unset owner disables the stamp, so a
+	// composition (no conditional, no I/O). Either failure disables the stamp, so a
 	// record routed to human_review keeps the agent's assignee — which the
 	// controller's chokepoint then clears, leaving the record owned by nobody.
-	if factory.ResolveHumanReviewOwner(env) == "" {
+	switch {
+	case a.HumanReviewOwner == "":
 		glog.Warningf(
 			"%s is unset: a record routed to human_review keeps the agent's assignee, "+
 				"which the controller's chokepoint clears — so the record ends up owned by nobody",
 			factory.HumanReviewOwnerEnv,
+		)
+	case !factory.IsHumanReviewOwnerValid(a.HumanReviewOwner):
+		glog.Warningf(
+			"%s=%q is not a valid GitHub login (alphanumerics and interior hyphens): "+
+				"the stamp is disabled, so a record routed to human_review ends up owned by nobody",
+			factory.HumanReviewOwnerEnv, a.HumanReviewOwner,
 		)
 	}
 	provider := factory.CreateAgentProvider(

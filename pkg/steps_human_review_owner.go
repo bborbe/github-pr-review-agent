@@ -58,6 +58,21 @@ func NewHumanReviewOwnerStep(inner agentlib.Step, owner string) agentlib.Step {
 	return &humanReviewOwnerStep{inner: inner, owner: owner}
 }
 
+// IsHumanReviewOwnerStep reports whether step is a human-review owner wrapper
+// and, when it is, the owner it stamps.
+//
+// It exists for composition tests. The agent's phase list is unexported, so a
+// factory that forgets to wrap one of the four phase bodies is invisible to any
+// test that exercises the wrapper directly — which is exactly how the
+// unread-owner defect reached review. Production code never calls it.
+func IsHumanReviewOwnerStep(step agentlib.Step) (string, bool) {
+	s, ok := step.(*humanReviewOwnerStep)
+	if !ok {
+		return "", false
+	}
+	return s.owner, true
+}
+
 // Name implements agentlib.Step by delegating, so wrapping a step does not
 // change the name the phase machinery reports for it.
 func (s *humanReviewOwnerStep) Name() string { return s.inner.Name() }

@@ -4,12 +4,26 @@
 
 package factory
 
+import (
+	"regexp"
+	"strings"
+)
+
 // HumanReviewOwnerEnv names the environment variable carrying the human owner
 // this agent stamps onto every record it routes into human_review.
 const HumanReviewOwnerEnv = "HUMAN_REVIEW_OWNER"
 
-// ResolveHumanReviewOwner returns env[HumanReviewOwnerEnv], or the empty string
-// when it is unset.
+// humanLoginPattern matches a GitHub user or organisation login: alphanumerics
+// with interior hyphens, no leading or trailing hyphen.
+//
+// The owner is written verbatim into task frontmatter and consumed cross-repo as
+// an assignee, so an unvalidated deploy value could corrupt the YAML the
+// controller parses. A `[bot]` suffix is deliberately rejected — a bot login
+// here would re-create the unowned-record defect this stamp exists to fix.
+var humanLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$`)
+
+// ResolveHumanReviewOwner returns the trimmed env[HumanReviewOwnerEnv], or the
+// empty string when it is unset or is not a valid GitHub login.
 //
 // There is deliberately no fallback name: the owner is a person, and hard-coding
 // one here would make the deployment's behaviour depend on a name written into
@@ -20,5 +34,17 @@ const HumanReviewOwnerEnv = "HUMAN_REVIEW_OWNER"
 // misconfiguration is visible at startup rather than inferred later from records
 // that lost their owner.
 func ResolveHumanReviewOwner(env map[string]string) string {
-	return env[HumanReviewOwnerEnv]
+	owner := strings.TrimSpace(env[HumanReviewOwnerEnv])
+	if !humanLoginPattern.MatchString(owner) {
+		return ""
+	}
+	return owner
+}
+
+// IsHumanReviewOwnerValid reports whether value, trimmed, is a usable owner
+// login. main uses it to distinguish "unset" from "set but malformed" in its
+// startup warning — the two need different operator actions, and a malformed
+// value disables the stamp exactly as an unset one does.
+func IsHumanReviewOwnerValid(value string) bool {
+	return humanLoginPattern.MatchString(strings.TrimSpace(value))
 }
