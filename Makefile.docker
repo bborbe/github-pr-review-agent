@@ -19,6 +19,33 @@ build: check-version-tag check-go-mod
 	-t $(DOCKER_REGISTRY)/bborbe/$(SERVICE):$(VERSION) \
 	-f Dockerfile .
 
+# Second image: the long-running moot-sweep service (cmd/moot-sweep). It uses
+# its own Dockerfile so the reviewer image built above stays unchanged. Build
+# and push are operator-side; `make precommit` never invokes them.
+MOOT_SWEEP_SERVICE ?= moot-sweep
+
+.PHONY: build-moot-sweep
+build-moot-sweep: check-version-tag check-go-mod
+	@if [ -z "$(VERSION)" ]; then echo "ERROR: no VERSION set and no git tag found — set VERSION=vX.Y.Z or create a tag" >&2; exit 1; fi
+	DOCKER_BUILDKIT=1 \
+	docker build \
+	--pull \
+	--no-cache \
+	--rm=true \
+	--platform=linux/amd64 \
+	--build-arg DOCKER_REGISTRY=$(DOCKER_REGISTRY) \
+	--build-arg BUILD_GIT_COMMIT=$$(git rev-parse --short HEAD) \
+	--build-arg BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+	-t $(DOCKER_REGISTRY)/bborbe/$(MOOT_SWEEP_SERVICE):$(VERSION) \
+	-f cmd/moot-sweep/Dockerfile .
+
+.PHONY: upload-moot-sweep
+upload-moot-sweep:
+	docker push $(DOCKER_REGISTRY)/bborbe/$(MOOT_SWEEP_SERVICE):$(VERSION)
+
+.PHONY: buca-moot-sweep
+buca-moot-sweep: build-moot-sweep upload-moot-sweep
+
 .PHONY: check-version-tag
 check-version-tag:
 	@if [ -n "$(ALLOW_UNTAGGED_BUILD)" ]; then \
