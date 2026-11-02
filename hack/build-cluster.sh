@@ -41,6 +41,15 @@ require TAG
 require IMAGE
 require PUSH_SECRET
 
+# `git fetch` on the remote accepts a ref name or a full 40-character SHA but not
+# a short SHA, which `git log` resolves happily here — so a short REF would pass
+# every local check and then die inside the clone init container, after the Job had
+# already been created. Expand it to the full SHA the operator meant.
+if printf '%s' "${REF}" | grep -qE '^[0-9a-f]{7,39}$'; then
+	expanded_ref="$(git rev-parse --verify --quiet "${REF}^{commit}" 2>/dev/null || true)"
+	[ -z "${expanded_ref}" ] || REF="${expanded_ref}"
+fi
+
 # Values are substituted into the manifest with sed and land in shell scripts
 # inside it, so each one is restricted to a whitelist before rendering. A value
 # outside the whitelist is rejected, never escaped.
