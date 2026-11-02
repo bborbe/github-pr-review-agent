@@ -44,8 +44,12 @@ require PUSH_SECRET
 # Values are substituted into the manifest with sed and land in shell scripts
 # inside it, so each one is restricted to a whitelist before rendering. A value
 # outside the whitelist is rejected, never escaped.
-printf '%s' "${REF}" | grep -qE '^[A-Za-z0-9._/-]+$' ||
-	die "REF '${REF}' contains characters outside [A-Za-z0-9._/-]"
+# A leading '-' passes the character class but would be consumed as an option by
+# `git log -1 --format=%ct "${REF}"` below and by the Job's git fetch/checkout, so
+# it is rejected separately rather than folded into the class (git forbids a ref
+# beginning with '-' anyway, and a raw SHA is hex).
+printf '%s' "${REF}" | grep -qE '^[A-Za-z0-9._/][A-Za-z0-9._/-]*$' ||
+	die "REF '${REF}' must start with [A-Za-z0-9._/] and contain only [A-Za-z0-9._/-]"
 printf '%s' "${TAG}" | grep -qE '^[A-Za-z0-9._-]+$' ||
 	die "TAG '${TAG}' contains characters outside [A-Za-z0-9._-]"
 printf '%s' "${IMAGE}" | grep -qE '^[A-Za-z0-9._/:-]+$' ||
@@ -175,10 +179,28 @@ fi
 # 10# forces base 10: TIMEOUT is validated as digits only, but a value with a
 # leading zero (0800) would otherwise be parsed as octal and abort the arithmetic.
 deadline=$(( $(date +%s) + 10#${TIMEOUT} + 120 ))
+poll_err="$(mktemp)"
+trap 'rm -f "${rendered}" "${kubectl_err}" "${poll_err}"' EXIT
+# A read that keeps failing is not a Job that keeps running. Discarding kubectl's
+# stderr would make an RBAC denial, a deleted namespace or an API outage look
+# identical to a healthy Job and burn the whole TIMEOUT (default 3600s) before a
+# generic timeout message, so three consecutive failures abort with the error.
+consecutive_errors=0
 outcome=""
 while [ -z "${outcome}" ]; do
-	succeeded="$(kc -n "${NAMESPACE}" get job "${JOB_NAME}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
-	failed="$(kc -n "${NAMESPACE}" get job "${JOB_NAME}" -o jsonpath='{.status.failed}' 2>/dev/null || true)"
+	# One call, not two: the two counters are read from the same object, and a
+	# second call would let them come from different points in time.
+	if ! status="$(kc -n "${NAMESPACE}" get job "${JOB_NAME}" \
+		-o jsonpath='{.status.succeeded}/{.status.failed}' 2>"${poll_err}")"; then
+		consecutive_errors=$((consecutive_errors + 1))
+		[ "${consecutive_errors}" -lt 3 ] ||
+			die "cannot read job ${NAMESPACE}/${JOB_NAME} (${consecutive_errors} consecutive failures): $(cat "${poll_err}")"
+		sleep 5
+		continue
+	fi
+	consecutive_errors=0
+	succeeded="${status%%/*}"
+	failed="${status##*/}"
 	if [ "${succeeded:-0}" -ge 1 ]; then
 		outcome=succeeded
 	elif [ "${failed:-0}" -ge 1 ]; then
