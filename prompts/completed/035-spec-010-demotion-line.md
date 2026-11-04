@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [010-bug-review-body-disagrees-with-posted-event]
+summary: Added a demotion reason line to gate-demoted review bodies, covering all four demotion producers, with table and negative tests.
+execution_id: c1fb3e45-826f-5fb9-b58a-f8cc73282a59-exec-035-spec-010-demotion-line
+dark-factory-version: dev
 created: "2026-11-04T17:49:28Z"
 queued: "2026-11-04T18:07:51Z"
+started: "2026-11-04T18:20:14Z"
+completed: "2026-11-04T18:31:07Z"
 branch: dark-factory/bug-review-body-disagrees-with-posted-event
 ---
 
