@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - fix: **the image now carries the fixed `coding` scripts.** The Dockerfile pinned `bborbe/coding@v0.51.0`, whose `ast-grep-runner.sh` and `rule-checks.sh` still build findings through `jq --arg`, so a single 128 KiB match killed the mechanical funnel with `E2BIG` and fail-closed every clean approve. The Go-side fixes in v0.16.2 could not reach a running reviewer while that pin stood. Now pinned to `v0.65.5`, which bounds each field on a UTF-8 boundary and assembles findings from files.
+- fix: **a deletion-only PR is no longer fail-closed.** `v0.65.5`'s runner exits 2 when it is given changed-file arguments and none of them resolve, and `changedFiles` passed deleted paths straight through — so a PR that only removes files reported `Ran: false` and every approve was demoted to `CHANGES_REQUESTED`. The funnel now scans only paths that still exist; a diff with nothing left to scan is the same clean-empty result as a diff with no changes.
 
 ## v0.16.2
 

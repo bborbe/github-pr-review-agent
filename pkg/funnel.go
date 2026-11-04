@@ -108,11 +108,12 @@ func (r *funnelRunner) Run(
 	// fail the funnel closed — the review still runs, just unscoped.
 	inventory, inventoryDetail := r.changedFileInventory(ctx, worktreePath, resolved, files)
 
-	if len(files) == 0 {
+	runnerArgs, ok := runnerFilesToScan(worktreePath, files)
+	if !ok {
 		return emptyFindingsResult(inventory, inventoryDetail), nil
 	}
 
-	args := append([]string{worktreePath}, files...)
+	args := append([]string{worktreePath}, runnerArgs...)
 	start := time.Now()
 	// #nosec G204 -- runner is a fixed operator-shipped script beneath the trusted
 	// CLAUDE_CONFIG_DIR; args are the target dir plus repo-relative changed-file
@@ -293,6 +294,28 @@ func (r *funnelRunner) changedFiles(
 		files = append(files, line)
 	}
 	return files, nil
+}
+
+// runnerFilesToScan returns the changed files that still exist under
+// worktreePath, and ok=false when nothing remains to scan.
+//
+// A deleted file is still listed by `git diff --name-only` but has nothing to
+// scan. The mechanical runner refuses to report an empty scan as clean — given
+// arguments where none resolve it exits 2, because that is usually a caller
+// that word-split its file list — so a deletion-only PR would fail the funnel
+// closed and demote every approve. Scanning only what exists makes that case
+// the same clean-empty result as a diff with no changes at all.
+func runnerFilesToScan(worktreePath string, files []string) ([]string, bool) {
+	existing := make([]string, 0, len(files))
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(worktreePath, f)); err == nil {
+			existing = append(existing, f)
+		}
+	}
+	if len(existing) == 0 {
+		return nil, false
+	}
+	return existing, true
 }
 
 // resolveAndCollectChangedFiles resolves the PR diff base and returns the
