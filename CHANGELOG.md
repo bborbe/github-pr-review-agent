@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a posted review's body now agrees with its GitHub event.** `StripJSONVerdict` removes every verdict block — not only a single-line `"verdict"`+`"reason"` line — so the pretty-printed block the reviewer actually emits, and every per-chunk block in a chunked review, no longer reaches the posted body; and a gate-demoted `approve` now opens its body with the demotion reason instead of posting `CHANGES_REQUESTED` beneath an `approve` body. Each of the four Go-side demotion producers names itself on the first line — funnel did not run, unverified concerns at budget, blocking finding present, and the chunked fold — while the full review prose survives beneath it. A model-authored `request-changes` gains no such line and keeps its prose verbatim, minus the verdict JSON.
+
 ## v0.16.1
 
 - chore: update github.com/bborbe/agent to v0.138.0, github.com/bborbe/argument/v2 to v2.13.9, github.com/bborbe/cqrs to v0.6.15, github.com/bborbe/errors to v1.6.6, github.com/bborbe/http to v1.26.32, github.com/bborbe/kafka to v1.29.11, github.com/bborbe/log to v1.7.6, github.com/bborbe/maintainer to v0.51.0, github.com/bborbe/run to v1.11.10, github.com/bborbe/sentry to v1.10.7, github.com/bborbe/service to v1.11.2, github.com/bborbe/time to v1.27.25, github.com/bborbe/vault-cli to v0.186.2, github.com/onsi/ginkgo/v2 to v2.34.0

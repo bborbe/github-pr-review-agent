@@ -906,6 +906,99 @@ prior review body
 			)
 		})
 
+		Context("demotion line", func() {
+			approveChunk := "```json\n{\"verdict\":\"approve\",\"reason\":\"ok\"}\n```\n"
+			changesChunk := "```json\n{\"verdict\":\"request-changes\",\"reason\":\"bad\"}\n```\n"
+			chunkedBody, _ := pkg.MergeChunkReviews([]string{approveChunk, changesChunk})
+
+			DescribeTable("prepends the demotion reason once per producer",
+				func(body string, funnelRan bool, wantReason string) {
+					fakePoster := &mocks.PrPoster{}
+					fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 99})
+					md := buildMD(ctx, body)
+
+					result, err := pkg.PostAndRouteForTest(
+						ctx, fakePoster, md, prURL, "", fixedTime, funnelRan,
+					)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(result.NextPhase).To(Equal("ai_review"))
+					Expect(fakePoster.PostCallCount()).To(Equal(1))
+
+					_, req := fakePoster.PostArgsForCall(0)
+					section, ok := md.FindSection("## Review")
+					Expect(ok).To(BeTrue())
+					Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+					Expect(req.Summary).To(
+						Equal(wantReason + "\n\n" + pkg.StripJSONVerdict(section.Body)),
+					)
+					Expect(strings.SplitN(req.Summary, "\n", 2)[0]).To(Equal(wantReason))
+					Expect(req.Summary).NotTo(ContainSubstring(`"verdict"`))
+				},
+				Entry(
+					"funnel did not run",
+					"LGTM. All checks pass.\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\"}\n```\n",
+					false,
+					pkg.ReasonFunnelDidNotRun,
+				),
+				Entry(
+					"unverified concerns at budget",
+					"LGTM.\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\",\"concerns_addressed\":[{\"concern\":\"security: rate-limit\",\"disposition\":\"not-verified\"}]}\n```\n",
+					true,
+					pkg.ReasonConcernsNotVerified,
+				),
+				Entry(
+					"blocking finding present",
+					"LGTM.\n\n```json\n{\"verdict\":\"approve\",\"reason\":\"ok\",\"comments\":[{\"blocking\":true}]}\n```\n",
+					true,
+					pkg.ReasonBlockingFindingPresent,
+				),
+				Entry("chunked fold",
+					chunkedBody,
+					true,
+					"chunked review: at least one chunk requested changes"),
+			)
+		})
+
+		It("prepends the reason even when the stripped body is empty", func() {
+			fakePoster := &mocks.PrPoster{}
+			fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 100})
+			md := buildMD(ctx, `{"verdict":"approve","reason":"ok"}`)
+
+			_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fakePoster.PostCallCount()).To(Equal(1))
+
+			_, req := fakePoster.PostArgsForCall(0)
+			Expect(req.Summary).To(Equal(pkg.ReasonFunnelDidNotRun + "\n\n"))
+			Expect(req.Summary).NotTo(BeEmpty())
+		})
+
+		It(
+			"leaves a model-authored request-changes body exactly stripped, with no demotion line",
+			func() {
+				fakePoster := &mocks.PrPoster{}
+				fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 101})
+				md := buildMD(
+					ctx,
+					"The code has issues.\n\n```json\n{\"verdict\":\"request-changes\",\"reason\":\"missing tests\"}\n```\n",
+				)
+
+				_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime, true)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fakePoster.PostCallCount()).To(Equal(1))
+
+				_, req := fakePoster.PostArgsForCall(0)
+				section, ok := md.FindSection("## Review")
+				Expect(ok).To(BeTrue())
+				Expect(req.Verdict).To(Equal(pkg.VerdictRequestChanges))
+				Expect(req.Summary).To(Equal(pkg.StripJSONVerdict(section.Body)))
+				Expect(req.Summary).NotTo(HavePrefix("mechanical funnel did not run"))
+				Expect(req.Summary).NotTo(HavePrefix("one or more ## Plan concerns not verified"))
+				Expect(req.Summary).NotTo(HavePrefix("blocking finding present"))
+				Expect(req.Summary).NotTo(HavePrefix("chunked review:"))
+			},
+		)
+
 		Context("chain-precedence: funnel gate fires before the blocking gate", func() {
 			// funnelRan=false: the funnel gate demotes the approve first (to
 			// ReasonFunnelDidNotRun), so the blocking gate — composed after it —

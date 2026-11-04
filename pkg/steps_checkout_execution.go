@@ -971,41 +971,14 @@ func (s *checkoutExecutionStep) postAndRoute(
 	verdict := ParseVerdict(reviewBody)
 	summary := StripJSONVerdict(reviewBody)
 
-	// Fail-closed gate: the Go-side mechanical funnel could not run, so the model
-	// had NO machine-verified MUST-tier result. An `approve` here is unverified —
-	// override it to request-changes in code rather than trust the model to have
-	// self-gated per the funnel-failed prompt (self-gating on a weak model is the
-	// exact silent-approve this agent's Go-side funnel exists to prevent). Mirrors
-	// the unparseable-verdict fail-close below; request-changes verdicts already
-	// produced by the model are left untouched.
-	if !funnelRan && verdict.Verdict == VerdictApprove {
-		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonFunnelDidNotRun}
-	}
-	// Fail-closed gate: the review flags one or more ## Plan concerns as
-	// unexamined admissions yet still emits approve. Budget-keyed (spec 004's
-	// named follow-up lever): only a run that consumed at least 0.8 of its soft
-	// budget fail-closes — a budget-heavy run that stopped before examining its
-	// concerns must never green-light a PR, while a `not-verified` on a run that
-	// finished well inside the budget is provably a mislabel (the model had
-	// budget left and examined the concern) and the approve stands. Under fan-out
-	// the budget is the chunk's own, and the worst chunk decides (budgetUse =
-	// max(elapsed_i / budget_i)) — the wall span would hide a chunk that burned
-	// its whole budget behind a short concurrent run. The disposition is the
-	// admission; concern prose is never inspected. Fires only when the funnel
-	// gate above did not already demote the verdict (i.e. the funnel ran) — an
-	// unverified concern is the more specific diagnosis and keeps its reason.
-	if verdict.Verdict == VerdictApprove && s.demotesUnverifiedConcerns(reviewBody, budgetUse) {
-		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
-	}
+	verdict, demotionReason := s.demotionReasonFor(verdict, reviewBody, funnelRan, budgetUse)
 
-	// Fail-closed gate: the model emitted `approve` while a comment carries
-	// `blocking: true` (or the severity fallback says a comment blocks) — the
-	// model contradicted itself. Override to request-changes so an approve never
-	// posts while a blocking finding exists. Composed AFTER the funnel and
-	// concerns gates: each gate only overrides approve → request-changes, so the
-	// earlier, coarser gates keep their reasons (funnel first, then concerns,
-	// then blocking) and this gate never rewrites an already-fail-closed verdict.
-	verdict = ApplyBlockingGate(verdict, reviewBody)
+	// A demoted review must never post a request-changes event whose body says
+	// nothing about why. Prepend the reason; the full review prose survives
+	// beneath it (the reason is never substituted for the review).
+	if demotionReason != "" {
+		summary = demotionReason + "\n\n" + summary
+	}
 
 	// Diagnostic for the recurring false-CHANGES_REQUESTED symptom: a
 	// request-changes verdict produced by ParseVerdict fail-closing (empty /
@@ -1065,6 +1038,74 @@ func (s *checkoutExecutionStep) postAndRoute(
 		NextPhase: "human_review",
 		Message:   "posting failed: " + result.ErrorMessage,
 	}, nil
+}
+
+// demotionReasonFor applies the three fail-closed gates in precedence order —
+// funnel, then concerns, then blocking — and reports which one (if any)
+// converted an approve to request-changes, plus the chunked-fold reason when the
+// fold already produced the verdict. Every gate keeps its condition, comment,
+// and precedence exactly as it was inline in postAndRoute; this helper exists
+// only to keep postAndRoute within the funlen/gocognit budgets.
+func (s *checkoutExecutionStep) demotionReasonFor(
+	verdict Result,
+	reviewBody string,
+	funnelRan bool,
+	budgetUse float64,
+) (Result, string) {
+	var demotionReason string
+
+	// Fail-closed gate: the Go-side mechanical funnel could not run, so the model
+	// had NO machine-verified MUST-tier result. An `approve` here is unverified —
+	// override it to request-changes in code rather than trust the model to have
+	// self-gated per the funnel-failed prompt (self-gating on a weak model is the
+	// exact silent-approve this agent's Go-side funnel exists to prevent). Mirrors
+	// the unparseable-verdict fail-close below; request-changes verdicts already
+	// produced by the model are left untouched.
+	if !funnelRan && verdict.Verdict == VerdictApprove {
+		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonFunnelDidNotRun}
+		demotionReason = ReasonFunnelDidNotRun
+	}
+	// Fail-closed gate: the review flags one or more ## Plan concerns as
+	// unexamined admissions yet still emits approve. Budget-keyed (spec 004's
+	// named follow-up lever): only a run that consumed at least 0.8 of its soft
+	// budget fail-closes — a budget-heavy run that stopped before examining its
+	// concerns must never green-light a PR, while a `not-verified` on a run that
+	// finished well inside the budget is provably a mislabel (the model had
+	// budget left and examined the concern) and the approve stands. Under fan-out
+	// the budget is the chunk's own, and the worst chunk decides (budgetUse =
+	// max(elapsed_i / budget_i)) — the wall span would hide a chunk that burned
+	// its whole budget behind a short concurrent run. The disposition is the
+	// admission; concern prose is never inspected. Fires only when the funnel
+	// gate above did not already demote the verdict (i.e. the funnel ran) — an
+	// unverified concern is the more specific diagnosis and keeps its reason.
+	if verdict.Verdict == VerdictApprove && s.demotesUnverifiedConcerns(reviewBody, budgetUse) {
+		verdict = Result{Verdict: VerdictRequestChanges, Reason: ReasonConcernsNotVerified}
+		demotionReason = ReasonConcernsNotVerified
+	}
+
+	// Fail-closed gate: the model emitted `approve` while a comment carries
+	// `blocking: true` (or the severity fallback says a comment blocks) — the
+	// model contradicted itself. Override to request-changes so an approve never
+	// posts while a blocking finding exists. Composed AFTER the funnel and
+	// concerns gates: each gate only overrides approve → request-changes, so the
+	// earlier, coarser gates keep their reasons (funnel first, then concerns,
+	// then blocking) and this gate never rewrites an already-fail-closed verdict.
+	preBlockingVerdict := verdict.Verdict
+	verdict = ApplyBlockingGate(verdict, reviewBody)
+	if preBlockingVerdict == VerdictApprove && verdict.Verdict == VerdictRequestChanges {
+		demotionReason = ReasonBlockingFindingPresent
+	}
+
+	// The chunked fold sets the merged verdict to request-changes with
+	// chunkReviewChangesReason before postAndRoute parses the merged body, so the
+	// same body must gain the same first line. The empty guard keeps the funnel /
+	// concerns / blocking reason when one of those gates already fired.
+	if demotionReason == "" && verdict.Verdict == VerdictRequestChanges &&
+		verdict.Reason == chunkReviewChangesReason {
+		demotionReason = chunkReviewChangesReason
+	}
+
+	return verdict, demotionReason
 }
 
 // noReviewResult reports whether the run produced no review at all and, when it
