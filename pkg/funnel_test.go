@@ -141,6 +141,46 @@ var _ = Describe("FunnelRunner", func() {
 		})
 	})
 
+	Describe("deletion-only diff", func() {
+		It("treats paths that no longer exist as a clean empty scan", func() {
+			// The mechanical runner refuses to report an empty scan as clean: given
+			// arguments where none resolve, it exits 2 (coding@v0.65.5). A PR that
+			// only deletes files produces exactly that input, so passing the deleted
+			// paths would fail the funnel closed and demote every approve.
+			cfg := writeRunner(
+				"#!/usr/bin/env bash\necho 'no argument should reach the runner' >&2\nexit 2\n",
+			)
+			work := filepath.Join(tmpDir, "delwork")
+			Expect(os.MkdirAll(work, 0750)).To(Succeed())
+			run := func(args ...string) {
+				// #nosec G204 -- test helper; git args are hardcoded literals in this file.
+				cmd := exec.CommandContext(ctx, "git", append([]string{"-C", work}, args...)...)
+				cmd.Env = append(os.Environ(),
+					"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+					"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+				)
+				out, err := cmd.CombinedOutput()
+				Expect(err).NotTo(HaveOccurred(), string(out))
+			}
+			run("init", "-q")
+			run("checkout", "-q", "-b", "main")
+			Expect(
+				os.WriteFile(filepath.Join(work, "gone.go"), []byte("package p\n"), 0600),
+			).To(Succeed())
+			run("add", "-A")
+			run("commit", "-q", "-m", "base")
+			run("checkout", "-q", "-b", "feature")
+			Expect(os.Remove(filepath.Join(work, "gone.go"))).To(Succeed())
+			run("add", "-A")
+			run("commit", "-q", "-m", "delete the only file")
+
+			result, err := pkg.NewFunnelRunner(cfg).Run(ctx, work, "main")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Ran).To(BeTrue())
+			Expect(result.FindingsJSON).To(ContainSubstring(`"findings_count":0`))
+		})
+	})
+
 	Describe("runner exits non-zero", func() {
 		It("fail-closes with the runner's stderr detail", func() {
 			cfg := writeRunner("#!/usr/bin/env bash\necho 'ast-grep missing' >&2\nexit 2\n")
