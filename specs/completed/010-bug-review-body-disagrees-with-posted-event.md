@@ -1,8 +1,10 @@
 ---
-status: prompted
+status: completed
 approved: "2026-11-04T14:11:32Z"
 generating: "2026-11-04T14:52:08Z"
 prompted: "2026-11-04T17:56:12Z"
+verifying: "2026-11-04T18:31:07Z"
+completed: "2026-11-04T18:31:15Z"
 branch: dark-factory/bug-review-body-disagrees-with-posted-event
 ---
 
