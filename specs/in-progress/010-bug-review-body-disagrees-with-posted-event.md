@@ -1,6 +1,7 @@
 ---
 status: approved
 approved: "2026-11-04T14:11:32Z"
+generating: "2026-11-04T14:52:08Z"
 branch: dark-factory/bug-review-body-disagrees-with-posted-event
 ---
 
@@ -42,6 +43,7 @@ A posted review's body and its GitHub event always agree. A clean approve posts 
   | funnel did not run | `mechanical funnel did not run` |
   | unverified concerns at budget | `one or more ## Plan concerns not verified` |
   | blocking finding present | `blocking finding present` |
+  | chunked fold (merged verdict set before `postAndRoute`) | `chunked review: at least one chunk requested changes` |
 
 - [ ] AC5: A model-authored `request-changes` body is unchanged in substance — and, specifically, gains **no** demotion line. Evidence: a test asserting the captured `PostRequest.Summary` equals `StripJSONVerdict(reviewBody)` exactly, for a body whose verdict the model itself wrote as `request-changes`. This is the negative that separates "a gate demoted" from "the model chose to reject".
 - [ ] AC6: No new posting path and no change to the event mapping. Evidence: `git diff pkg/githubposter/poster.go` shows no change at either pre-existing `"COMMENT"` site (`PostLGTM`, `postHallucinationComment`), and `grep -n 'case prpkg.Verdict' pkg/githubposter/poster.go` returns exactly two lines — `approve` and `request-changes`, no `COMMENT`.
@@ -72,7 +74,7 @@ A posted review's body and its GitHub event always agree. A clean approve posts 
 ## Desired Behavior
 
 1. `StripJSONVerdict` locates verdict blocks the same way `ParseVerdict` already does — fence-first, brace-walk fallback — and removes **every** block in the body, not only the last one. It iterates `findVerdictBlock` until the locator reports no block remains, leaving no dangling fence markers and no more than one consecutive blank line at each seam (the existing tests already assert `NotTo(HaveSuffix("\n\n\n"))`).
-2. When any gate demotes an approve to request-changes, the demotion reason is **prepended** to the stripped body: the first line names the gate in the same vocabulary the code logs (`mechanical funnel did not run`, `one or more ## Plan concerns not verified`, `blocking finding present`), and the full review prose follows unchanged beneath it. A demoted body never becomes the reason line alone.
+2. When any gate demotes an approve to request-changes, the demotion reason is **prepended** to the stripped body: the first line names the gate in the same vocabulary the code logs (`mechanical funnel did not run`, `one or more ## Plan concerns not verified`, `blocking finding present`), and the full review prose follows unchanged beneath it. A demoted body never becomes the reason line alone. This includes the **chunked fold**: `MergeChunkReviews` sets the merged verdict to request-changes with its own reason before `postAndRoute` sees it, so that path must prepend a first line too — otherwise a chunked review posts `CHANGES_REQUESTED` with no statement of why, and stripping the blocks removes the only explanation it had.
 3. A demoted body carries no `verdict` JSON of any kind — neither the original approve nor a rewritten request-changes block.
 4. A model-authored `request-changes` body equals `StripJSONVerdict(reviewBody)` exactly: it keeps its prose and findings verbatim, gains no demotion line, and loses only its JSON block.
 5. A block the locator cannot delimit — neither fenced nor brace-matchable — is left in place. Stripping fails open; the posted event stays correct either way.
