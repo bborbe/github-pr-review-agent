@@ -20,6 +20,12 @@ The poster receives:
 - **HeadSHA** — the `ref` frontmatter field, used to anchor the review to the exact commit.
 - **WorkDir** — the worktree path, used by the poster to read `.maintainer.yaml` for `prReviewer.autoApprove` (read for operator tooling; does not gate the posted event — see spec 060).
 
+`StripJSONVerdict` removes **every** verdict block from the body — not only a single-line `"verdict"`+`"reason"` line, but the pretty-printed multi-line block the reviewer actually emits, and every per-chunk block plus the aggregate block in a chunked review. A block the locator cannot delimit is left in place (fail-open), because the posted event is derived from the verdict alone.
+
+### Demoted bodies
+
+The posted event is derived from the verdict alone (spec 060). When a Go-side gate demotes an `approve` to `request-changes` — the mechanical funnel did not run, a `## Plan` concern is unverified at budget, a blocking finding is present, or the chunked fold saw a chunk request changes — the posted body **opens with the demotion reason on its first line**, followed by the stripped review body. The full review prose survives beneath the reason; the demotion line is never substituted for the review. A model-authored `request-changes` gains no demotion line: its body is exactly the review with the verdict block removed.
+
 ### GitHub body length limit (65,536 chars)
 
 GitHub's API rejects PR review bodies, issue comments, and PR descriptions longer than **65,536 characters** with HTTP 422 "Body is too long" (per [REST API docs](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request)). The poster truncates over-length bodies just below the limit and appends a one-line notice pointing to the full content in the vault `## Review` section. The truncation event is recorded as a `soft-warning` in the diagnostics block so the operator can audit without crashing the agent. In practice, agent reviews run 2-8 KiB; the truncation is a defensive guardrail, not a routine code path.

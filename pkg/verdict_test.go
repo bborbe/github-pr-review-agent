@@ -5,6 +5,7 @@
 package pkg_test
 
 import (
+	"os"
 	"strings"
 
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
@@ -734,6 +735,65 @@ Here's an example:
 		It("only removes verdict JSON", func() {
 			Expect(stripped).NotTo(ContainSubstring(`"verdict"`))
 			Expect(stripped).To(ContainSubstring(`"config"`))
+		})
+	})
+
+	Context("strips a pretty-printed multi-line verdict block (vault-cli#243)", func() {
+		BeforeEach(func() {
+			body, err := os.ReadFile("testdata/review_bborbe_vault_cli_243.md")
+			Expect(err).NotTo(HaveOccurred())
+			reviewText = string(body)
+		})
+
+		It("removes the whole block so no verdict JSON reaches the body", func() {
+			Expect(stripped).NotTo(ContainSubstring(`"verdict"`))
+			Expect(stripped).NotTo(ContainSubstring(`"summary"`))
+			Expect(stripped).NotTo(ContainSubstring(`"comments"`))
+			Expect(stripped).NotTo(ContainSubstring(`"concerns_addressed"`))
+			Expect(stripped).NotTo(ContainSubstring("```"))
+		})
+
+		It("keeps every numbered prose item", func() {
+			Expect(stripped).To(ContainSubstring("1. **`--by` enforcement"))
+			Expect(stripped).To(ContainSubstring("2. **Atomicity of flag+provenance write"))
+			Expect(stripped).To(ContainSubstring("3. **`flag_set_at`"))
+			Expect(stripped).To(ContainSubstring("4. **`ClearFlag` removes all three keys"))
+			Expect(stripped).To(ContainSubstring("5. **`flag_set_by`/`flag_set_at`"))
+			Expect(stripped).To(ContainSubstring("6. **`NewFrontmatterSetOperation`"))
+		})
+	})
+
+	Context("strips every verdict block in a chunked review", func() {
+		BeforeEach(func() {
+			reviewText = "### Chunk 1/3\n\nFirst chunk prose.\n\n```json\n" +
+				`{"verdict":"approve","summary":"a","comments":[],"concerns_addressed":[]}` +
+				"\n```\n\n### Chunk 2/3\n\nSecond chunk prose.\n\n```json\n" +
+				`{"verdict":"request-changes","summary":"b","comments":[],"concerns_addressed":[]}` +
+				"\n```\n\n### Chunk 3/3\n\nThird chunk prose.\n\n```json\n" +
+				`{"verdict":"request-changes","reason":"chunked review: at least one chunk requested changes"}` +
+				"\n```\n"
+		})
+
+		It("removes the per-chunk and aggregate blocks while keeping the prose", func() {
+			Expect(strings.Count(stripped, `"verdict"`)).To(Equal(0))
+			Expect(strings.Count(stripped, `"summary"`)).To(Equal(0))
+			Expect(strings.Count(stripped, `"comments"`)).To(Equal(0))
+			Expect(strings.Count(stripped, `"concerns_addressed"`)).To(Equal(0))
+			Expect(strings.Count(stripped, "```json")).To(Equal(0))
+			Expect(stripped).To(ContainSubstring("### Chunk 1/3"))
+			Expect(stripped).To(ContainSubstring("### Chunk 2/3"))
+			Expect(stripped).To(ContainSubstring("### Chunk 3/3"))
+		})
+	})
+
+	Context("fails open when the verdict block cannot be delimited", func() {
+		BeforeEach(func() {
+			reviewText = "# Review\n\nSome prose.\n\n```json\n{\"verdict\": \"approve\""
+		})
+
+		It("returns the text unchanged and parses fail-closed", func() {
+			Expect(stripped).To(Equal(reviewText))
+			Expect(pkg.ParseVerdict(reviewText).Verdict).To(Equal(pkg.VerdictRequestChanges))
 		})
 	})
 })

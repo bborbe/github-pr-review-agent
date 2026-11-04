@@ -25,7 +25,8 @@ type Result struct {
 	Reason  string
 }
 
-// jsonVerdict is used for unmarshaling JSON verdict blocks (legacy use by StripJSONVerdict)
+// jsonVerdict is the minimal shape ParseVerdict unmarshals from a located
+// verdict block: the verdict value and its optional reason.
 type jsonVerdict struct {
 	Verdict string `json:"verdict"`
 	Reason  string `json:"reason"`
@@ -514,143 +515,63 @@ func lastChars(s string, n int) string {
 	return string(r[len(r)-n:])
 }
 
-// StripJSONVerdict removes the JSON verdict line (and surrounding code fence if present)
-// from the review text. Returns the cleaned review text for posting as a PR comment.
-// If no JSON verdict found, returns the text unchanged.
+// blankRunRegexp collapses a run of three or more newlines to a blank line. It
+// only runs after at least one block was removed, so a body with no verdict
+// block is returned byte-identical to its input.
+var blankRunRegexp = regexp.MustCompile(`\n{3,}`)
+
+// StripJSONVerdict removes every JSON verdict block (with its surrounding
+// ```json fence when present) from the review text. It iterates
+// findVerdictBlock until no block remains, so a chunked review loses every
+// per-chunk block and the aggregate block. A block the locator cannot delimit
+// is left in place (fail-open): the posted event is derived from the verdict
+// alone and stays correct either way. If no block is found, the text is
+// returned unchanged.
 func StripJSONVerdict(reviewText string) string {
-	lines := strings.Split(reviewText, "\n")
-	linesToRemove := findVerdictLinesToRemove(lines)
-
-	if len(linesToRemove) == 0 {
-		return reviewText
-	}
-
-	return buildCleanedText(lines, linesToRemove)
-}
-
-// findVerdictLinesToRemove scans lines and returns a map of line indices to remove
-func findVerdictLinesToRemove(lines []string) map[int]bool {
-	startIdx := calculateStartIndex(lines)
-	linesToRemove := make(map[int]bool)
-	inCodeFence := false
-	fenceStartIdx := -1
-
-	for i := startIdx; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-
-		if handleCodeFenceStart(line, &inCodeFence, &fenceStartIdx, i) {
-			continue
-		}
-
-		if handleCodeFenceEnd(line, &inCodeFence, &fenceStartIdx) {
-			continue
-		}
-
-		if containsVerdictJSON(line) {
-			processVerdictLine(lines, i, line, inCodeFence, fenceStartIdx, linesToRemove)
-		}
-	}
-
-	return linesToRemove
-}
-
-// calculateStartIndex returns the index to start searching (last 50 lines)
-func calculateStartIndex(lines []string) int {
-	if len(lines) > 50 {
-		return len(lines) - 50
-	}
-	return 0
-}
-
-// handleCodeFenceStart checks for code fence start and updates state
-func handleCodeFenceStart(line string, inCodeFence *bool, fenceStartIdx *int, i int) bool {
-	if line == "```json" && !*inCodeFence {
-		*inCodeFence = true
-		*fenceStartIdx = i
-		return true
-	}
-	return false
-}
-
-// handleCodeFenceEnd checks for code fence end and updates state
-func handleCodeFenceEnd(line string, inCodeFence *bool, fenceStartIdx *int) bool {
-	if line == "```" && *inCodeFence {
-		*inCodeFence = false
-		*fenceStartIdx = -1
-		return true
-	}
-	return false
-}
-
-// containsVerdictJSON checks if a line contains verdict JSON markers
-func containsVerdictJSON(line string) bool {
-	return strings.Contains(line, `"verdict"`) && strings.Contains(line, `"reason"`)
-}
-
-// processVerdictLine validates and marks lines for removal if valid verdict found
-func processVerdictLine(
-	lines []string,
-	i int,
-	line string,
-	inCodeFence bool,
-	fenceStartIdx int,
-	linesToRemove map[int]bool,
-) {
-	if !isValidVerdictJSON(line) {
-		return
-	}
-
-	// Mark verdict line for removal
-	linesToRemove[i] = true
-
-	// If inside code fence, mark fence lines too
-	if inCodeFence && fenceStartIdx >= 0 {
-		markCodeFenceLinesForRemoval(lines, i, fenceStartIdx, linesToRemove)
-	}
-}
-
-// isValidVerdictJSON checks if the line contains a valid verdict JSON
-func isValidVerdictJSON(line string) bool {
-	jsonStr := strings.TrimSpace(line)
-	jsonStr = strings.TrimPrefix(jsonStr, "```json")
-	jsonStr = strings.TrimSuffix(jsonStr, "```")
-	jsonStr = strings.TrimSpace(jsonStr)
-
-	var jv jsonVerdict
-	if err := json.Unmarshal([]byte(jsonStr), &jv); err != nil {
-		return false
-	}
-
-	return jv.Verdict != ""
-}
-
-// markCodeFenceLinesForRemoval marks fence start and end lines for removal
-func markCodeFenceLinesForRemoval(
-	lines []string,
-	currentIdx int,
-	fenceStartIdx int,
-	linesToRemove map[int]bool,
-) {
-	linesToRemove[fenceStartIdx] = true
-
-	// Find and mark the closing fence
-	for j := currentIdx + 1; j < len(lines); j++ {
-		if strings.TrimSpace(lines[j]) == "```" {
-			linesToRemove[j] = true
+	result := reviewText
+	removed := false
+	for {
+		block, fenced, ok := findVerdictBlock(result)
+		if !ok || block == "" {
 			break
 		}
+		next, ok := removeVerdictBlock(result, block, fenced)
+		if !ok {
+			break
+		}
+		result = next
+		removed = true
 	}
+	if !removed {
+		return reviewText
+	}
+	return blankRunRegexp.ReplaceAllString(strings.TrimRight(result, "\n"), "\n\n")
 }
 
-// buildCleanedText constructs the final text without removed lines
-func buildCleanedText(lines []string, linesToRemove map[int]bool) string {
-	var cleaned []string
-	for i, line := range lines {
-		if !linesToRemove[i] {
-			cleaned = append(cleaned, line)
-		}
+// removeVerdictBlock removes one located block. For a bare block it removes the
+// block substring; for a fenced block it removes the opening ```json line, the
+// block lines, and the closing ``` line. Returns ok=false when the fence cannot
+// be delimited, so the caller fails open and leaves the text untouched.
+func removeVerdictBlock(text, block string, fenced bool) (string, bool) {
+	idx := strings.LastIndex(text, block)
+	if idx < 0 {
+		return text, false
 	}
-
-	result := strings.Join(cleaned, "\n")
-	return strings.TrimRight(result, "\n")
+	if !fenced {
+		return text[:idx] + text[idx+len(block):], true
+	}
+	lines := strings.Split(text, "\n")
+	startLine := strings.Count(text[:idx], "\n")
+	endLine := startLine + strings.Count(block, "\n")
+	if startLine == 0 || strings.TrimSpace(lines[startLine-1]) != "```json" {
+		return text, false
+	}
+	closeLine := endLine + 1
+	if closeLine >= len(lines) || strings.TrimSpace(lines[closeLine]) != "```" {
+		return text, false
+	}
+	remaining := make([]string, 0, len(lines)-(closeLine-startLine+2))
+	remaining = append(remaining, lines[:startLine-1]...)
+	remaining = append(remaining, lines[closeLine+1:]...)
+	return strings.Join(remaining, "\n"), true
 }
