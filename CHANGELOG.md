@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.16.2
 
 - fix: **a posted review's body now agrees with its GitHub event.** `StripJSONVerdict` removes every verdict block — not only a single-line `"verdict"`+`"reason"` line — so the pretty-printed block the reviewer actually emits, and every per-chunk block in a chunked review, no longer reaches the posted body; and a gate-demoted `approve` now opens its body with the demotion reason instead of posting `CHANGES_REQUESTED` beneath an `approve` body. Each of the four Go-side demotion producers names itself on the first line — funnel did not run, unverified concerns at budget, blocking finding present, and the chunked fold — while the full review prose survives beneath it. A model-authored `request-changes` gains no such line and keeps its prose verbatim, minus the verdict JSON.
 
