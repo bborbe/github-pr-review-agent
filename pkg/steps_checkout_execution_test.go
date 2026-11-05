@@ -973,6 +973,26 @@ prior review body
 			Expect(req.Summary).NotTo(BeEmpty())
 		})
 
+		It("posts the verdict block's own summary when the body is only the block", func() {
+			fakePoster := &mocks.PrPoster{}
+			fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 102})
+			md := buildMD(
+				ctx,
+				"```json\n"+
+					`{"verdict":"approve","summary":"the model's own summary","comments":[]}`+
+					"\n```",
+			)
+
+			_, err := pkg.PostAndRouteForTest(ctx, fakePoster, md, prURL, "", fixedTime, true)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fakePoster.PostCallCount()).To(Equal(1))
+
+			_, req := fakePoster.PostArgsForCall(0)
+			Expect(req.Verdict).To(Equal(pkg.VerdictApprove))
+			Expect(req.Summary).To(Equal("the model's own summary"))
+			Expect(req.Summary).NotTo(ContainSubstring("no summary produced"))
+		})
+
 		It(
 			"leaves a model-authored request-changes body exactly stripped, with no demotion line",
 			func() {

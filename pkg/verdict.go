@@ -40,6 +40,14 @@ type jsonVerdict struct {
 // request-changes into an approve.
 var verdictFieldRegexp = regexp.MustCompile(`"verdict"\s*:\s*"([^"]*)"`)
 
+// summaryFieldRegexp mirrors verdictFieldRegexp for the "summary" field. It is
+// the recovery path for a fenced verdict block that is well-delimited but not
+// valid JSON — the same blocks recoverFencedVerdict rescues the verdict from.
+// Like its sibling it surfaces only text the model actually wrote. Unlike the
+// verdict capture it walks backslash escapes, so an escaped quote inside the
+// summary does not end the match.
+var summaryFieldRegexp = regexp.MustCompile(`"summary"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+
 // findVerdictBlock locates the verdict JSON block, preferring a fenced ```json
 // block (fence-delimited, so immune to brace/quote content) and falling back to
 // the end-anchored brace walk for bare, unfenced JSON. The bool `fenced` reports
@@ -546,6 +554,85 @@ func StripJSONVerdict(reviewText string) string {
 		return reviewText
 	}
 	return blankRunRegexp.ReplaceAllString(strings.TrimRight(result, "\n"), "\n\n")
+}
+
+// VerdictSummary returns the "summary" field of the located verdict block, or ""
+// when there is no block or the field is absent/unparseable.
+//
+// It exists because StripJSONVerdict can legitimately leave nothing behind: a
+// review whose entire body is the fenced verdict block strips to an empty
+// string, and the poster then substitutes "automated review — no summary
+// produced" for a summary the model did write. That substitution is a body
+// disagreeing with the review — the exact class of defect this package exists to
+// remove — so the summary has to be read from the block before the stripped body
+// is trusted to be the body.
+//
+// The locator returns the LAST verdict block in the text, matching what
+// ParseVerdict reads. On the chunked path that is per chunk, not for the merged
+// body: MergeChunkReviews calls ReviewBody on each chunk's own output, so each
+// "### Chunk i/n" section carries that chunk's summary. The merged body's
+// synthesized aggregate block has no summary field and never reaches this
+// fallback anyway — the chunk headings keep the stripped body non-empty.
+func VerdictSummary(reviewText string) string {
+	block, fenced, ok := findVerdictBlock(reviewText)
+	if !ok || block == "" {
+		return ""
+	}
+	var v struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(block), &v); err == nil {
+		return strings.TrimSpace(v.Summary)
+	}
+	// A malformed block is recovered only when it is fenced, mirroring
+	// ParseVerdict: recoverFencedVerdict runs for a fence and never for a bare
+	// block. Recovering a bare one would post a summary beneath a fail-closed
+	// request-changes — the body/event disagreement this package exists to
+	// remove.
+	if !fenced {
+		return ""
+	}
+	// Gate on the same recovery ParseVerdict uses, so a block whose verdict it
+	// refuses cannot still contribute a summary. Without this, a fenced block
+	// with an unquoted verdict value would post the model's summary beneath a
+	// fail-closed REQUEST_CHANGES.
+	if _, ok := recoverFencedVerdict(block, fenced); !ok {
+		return ""
+	}
+	return recoverFencedSummary(block)
+}
+
+// recoverFencedSummary reads the "summary" field out of a fenced verdict block
+// that is not valid JSON. It is only reachable once recoverFencedVerdict has
+// accepted the same block, so a summary can never outlive a verdict the parser
+// refused. The regex walks backslash escapes
+// (an escaped quote inside the summary does not end the match) and the captured
+// fragment is decoded as a JSON string before use. It surfaces only text the
+// model wrote.
+func recoverFencedSummary(block string) string {
+	m := summaryFieldRegexp.FindStringSubmatch(block)
+	if m == nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal([]byte(`"`+m[1]+`"`), &s); err == nil {
+		return strings.TrimSpace(s)
+	}
+	return strings.TrimSpace(m[1])
+}
+
+// ReviewBody returns the review text a reader should see: the body with every
+// verdict block stripped, falling back to the located block's own "summary"
+// field when the strip leaves nothing behind. A review whose entire body is the
+// verdict block would otherwise post empty — or, one layer up, the poster's
+// "no summary produced" placeholder, which asserts the model wrote no summary
+// when it did.
+func ReviewBody(reviewText string) string {
+	body := StripJSONVerdict(reviewText)
+	if strings.TrimSpace(body) != "" {
+		return body
+	}
+	return VerdictSummary(reviewText)
 }
 
 // removeVerdictBlock removes one located block. For a bare block it removes the

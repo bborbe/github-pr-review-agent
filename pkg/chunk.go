@@ -386,7 +386,7 @@ func MergeChunkReviews(outputs []string) (string, Result) {
 		}
 		sections = append(
 			sections,
-			fmt.Sprintf("### Chunk %d/%d\n\n%s", i+1, n, StripJSONVerdict(out)),
+			fmt.Sprintf("### Chunk %d/%d\n\n%s", i+1, n, ReviewBody(out)),
 		)
 		for _, c := range verdictConcerns(out) {
 			key := string(c)

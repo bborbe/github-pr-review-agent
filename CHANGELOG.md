@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a review whose body is only the verdict block keeps its summary.** `StripJSONVerdict` removes the whole fenced block, so a model that emitted nothing but the JSON left an empty body and the poster substituted `automated review — no summary produced` — discarding a summary the model had written. That placeholder is itself a body disagreeing with the review. The body now falls back to the block's own `summary` field, so what is posted is the review the model produced. The fallback is shared by every body-producing site — the posted review, each `### Chunk i/n` section of a merged chunked review, and `cmd/cli` — and it recovers the summary from a fenced block that is not valid JSON, the same blocks `ParseVerdict` already recovers a verdict from.
+
 ## v0.16.3
 
 - fix: **the image now carries the fixed `coding` scripts.** The Dockerfile pinned `bborbe/coding@v0.51.0`, whose `ast-grep-runner.sh` and `rule-checks.sh` still build findings through `jq --arg`, so a single 128 KiB match killed the mechanical funnel with `E2BIG` and fail-closed every clean approve. The Go-side fixes in v0.16.2 could not reach a running reviewer while that pin stood. Now pinned to `v0.65.5`, which bounds each field on a UTF-8 boundary and assembles findings from files.

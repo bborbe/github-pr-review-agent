@@ -798,6 +798,174 @@ Here's an example:
 	})
 })
 
+var _ = Describe("VerdictSummary", func() {
+	var reviewText string
+
+	// The regression this covers (measured on bborbe/pr-review-fixtures#20,
+	// 2026-11-05): the model emitted ONLY the fenced verdict block, so
+	// StripJSONVerdict left an empty body and the poster substituted
+	// "automated review — no summary produced" — discarding a summary the model
+	// had written. That placeholder is itself a body/review disagreement.
+	Context("a review body that is only the fenced verdict block", func() {
+		const summaryText = "Clean fix: start() now threads its caller's context into loadConfig instead of context.Background(), so a cancelled run aborts the config load. No other changes."
+
+		BeforeEach(func() {
+			reviewText = "```json\n" +
+				`{"verdict":"approve","summary":"` + summaryText + `","comments":[],"concerns_addressed":[]}` +
+				"\n```\n"
+		})
+
+		It("strips the body to empty", func() {
+			Expect(strings.TrimSpace(pkg.StripJSONVerdict(reviewText))).To(BeEmpty())
+		})
+
+		It("returns the summary the model wrote, not a placeholder", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal(summaryText))
+		})
+	})
+
+	Context("a chunked review", func() {
+		BeforeEach(func() {
+			reviewText = "### Chunk 1/2\n\nProse.\n\n```json\n" +
+				`{"verdict":"approve","summary":"chunk one summary"}` +
+				"\n```\n\n### Chunk 2/2\n\nProse.\n\n```json\n" +
+				`{"verdict":"approve","summary":"aggregate summary"}` +
+				"\n```\n"
+		})
+
+		It("returns the last (aggregate) block's summary", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal("aggregate summary"))
+		})
+	})
+
+	Context("a body with prose and a verdict block", func() {
+		BeforeEach(func() {
+			reviewText = "## Review\n\nSome prose.\n\n```json\n" +
+				`{"verdict":"approve","summary":"block summary"}` +
+				"\n```\n"
+		})
+
+		It("still returns the block summary — the caller decides when to use it", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal("block summary"))
+			Expect(pkg.StripJSONVerdict(reviewText)).To(ContainSubstring("Some prose."))
+		})
+	})
+
+	DescribeTable(
+		"returns empty when there is nothing to read",
+		func(input string) {
+			Expect(pkg.VerdictSummary(input)).To(BeEmpty())
+		},
+		Entry("no verdict block", "## Review\n\nJust prose, no JSON."),
+		Entry("empty input", ""),
+		Entry("block without a summary field", "```json\n{\"verdict\":\"approve\"}\n```"),
+		Entry(
+			"block with an empty summary",
+			"```json\n{\"verdict\":\"approve\",\"summary\":\"\"}\n```",
+		),
+	)
+
+	// ParseVerdict recovers a malformed block only when it is fenced; a bare one
+	// fail-closes to request-changes. VerdictSummary must mirror that, or the
+	// body would carry a summary under an event the parser refused.
+	Context("a bare (unfenced) block that is not valid JSON", func() {
+		BeforeEach(func() {
+			reviewText = `{"verdict": "approve", "summary": "a"b"}`
+		})
+
+		It("is located but fail-closes in ParseVerdict", func() {
+			result := pkg.ParseVerdict(reviewText)
+			Expect(result.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			Expect(result.Reason).To(HavePrefix("malformed JSON:"))
+		})
+
+		It("is not recovered by VerdictSummary", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(BeEmpty())
+		})
+	})
+
+	// The summary must never outlive a verdict the parser refused: a fenced
+	// block with an unquoted verdict value fail-closes in ParseVerdict, so
+	// recovering its summary would post the model's text beneath a
+	// REQUEST_CHANGES event it never asked for.
+	Context("a fenced block whose verdict value is not a quoted string", func() {
+		BeforeEach(func() {
+			reviewText = "```json\n" +
+				`{"verdict": approve, "summary": "should not be posted"}` +
+				"\n```"
+		})
+
+		It("fail-closes in ParseVerdict", func() {
+			Expect(pkg.ParseVerdict(reviewText).Verdict).To(Equal(pkg.VerdictRequestChanges))
+		})
+
+		It("does not recover the summary", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(BeEmpty())
+		})
+	})
+
+	// ParseVerdict recovers a verdict from a fenced block that is not valid
+	// JSON (recoverFencedVerdict), so the summary must survive that same input —
+	// otherwise a block whose verdict parses fine still posts the placeholder.
+	Context("a fenced block that is not valid JSON", func() {
+		BeforeEach(func() {
+			reviewText = "```json\n{\"verdict\": \"approve\", \"summary\": \"recovered text\"\n```"
+		})
+
+		It("is accepted by ParseVerdict", func() {
+			Expect(pkg.ParseVerdict(reviewText).Verdict).To(Equal(pkg.VerdictApprove))
+		})
+
+		It("recovers the summary too, rather than dropping it", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal("recovered text"))
+		})
+	})
+
+	Context("a fenced block that is not valid JSON, with escaped quotes in the summary", func() {
+		BeforeEach(func() {
+			// Invalid JSON overall (the unterminated comments array), but the
+			// summary itself is a well-formed JSON string with escaped quotes.
+			reviewText = "```json\n" +
+				`{"verdict":"approve","summary":"The \"fix\" is correct","comments":[}` +
+				"\n```"
+		})
+
+		It("decodes the escapes instead of truncating at the first quote", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal(`The "fix" is correct`))
+		})
+	})
+
+	Context("a bare (unfenced) JSON-only body", func() {
+		BeforeEach(func() {
+			reviewText = `{"verdict":"approve","summary":"bare summary"}`
+		})
+
+		It("strips to empty and falls back to the summary", func() {
+			Expect(strings.TrimSpace(pkg.StripJSONVerdict(reviewText))).To(BeEmpty())
+			Expect(pkg.ReviewBody(reviewText)).To(Equal("bare summary"))
+		})
+	})
+})
+
+var _ = Describe("ReviewBody", func() {
+	DescribeTable("returns a body a reader can read",
+		func(input, expected string) {
+			Expect(pkg.ReviewBody(input)).To(Equal(expected))
+		},
+		Entry(
+			"prose survives the strip",
+			"## Review\n\nSome prose.\n\n```json\n{\"verdict\":\"approve\",\"summary\":\"s\"}\n```\n",
+			"## Review\n\nSome prose.",
+		),
+		Entry("JSON-only body falls back to its summary",
+			"```json\n{\"verdict\":\"approve\",\"summary\":\"the model's own summary\"}\n```\n",
+			"the model's own summary"),
+		Entry("JSON-only body with no summary stays empty rather than inventing one",
+			"```json\n{\"verdict\":\"approve\"}\n```\n",
+			""),
+	)
+})
+
 var _ = Describe("ParseVerdict normalisation regression (spec-030)", func() {
 	DescribeTable("verdict spelling and case normalisation",
 		func(reviewText string, expectedVerdict pkg.Verdict) {
