@@ -592,12 +592,20 @@ func VerdictSummary(reviewText string) string {
 	if !fenced {
 		return ""
 	}
+	// Gate on the same recovery ParseVerdict uses, so a block whose verdict it
+	// refuses cannot still contribute a summary. Without this, a fenced block
+	// with an unquoted verdict value would post the model's summary beneath a
+	// fail-closed REQUEST_CHANGES.
+	if _, ok := recoverFencedVerdict(block, fenced); !ok {
+		return ""
+	}
 	return recoverFencedSummary(block)
 }
 
 // recoverFencedSummary reads the "summary" field out of a fenced verdict block
-// that is not valid JSON — the same blocks recoverFencedVerdict rescues the
-// verdict from, so the two stay consistent. The regex walks backslash escapes
+// that is not valid JSON. It is only reachable once recoverFencedVerdict has
+// accepted the same block, so a summary can never outlive a verdict the parser
+// refused. The regex walks backslash escapes
 // (an escaped quote inside the summary does not end the match) and the captured
 // fragment is decoded as a JSON string before use. It surfaces only text the
 // model wrote.

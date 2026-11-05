@@ -884,6 +884,26 @@ var _ = Describe("VerdictSummary", func() {
 		})
 	})
 
+	// The summary must never outlive a verdict the parser refused: a fenced
+	// block with an unquoted verdict value fail-closes in ParseVerdict, so
+	// recovering its summary would post the model's text beneath a
+	// REQUEST_CHANGES event it never asked for.
+	Context("a fenced block whose verdict value is not a quoted string", func() {
+		BeforeEach(func() {
+			reviewText = "```json\n" +
+				`{"verdict": approve, "summary": "should not be posted"}` +
+				"\n```"
+		})
+
+		It("fail-closes in ParseVerdict", func() {
+			Expect(pkg.ParseVerdict(reviewText).Verdict).To(Equal(pkg.VerdictRequestChanges))
+		})
+
+		It("does not recover the summary", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(BeEmpty())
+		})
+	})
+
 	// ParseVerdict recovers a verdict from a fenced block that is not valid
 	// JSON (recoverFencedVerdict), so the summary must survive that same input —
 	// otherwise a block whose verdict parses fine still posts the placeholder.

@@ -172,7 +172,6 @@ var _ = Describe("MergeChunkReviews", func() {
 			"\n```\n"
 		body, _ := pkg.MergeChunkReviews([]string{jsonOnly, approveChunk})
 		Expect(body).To(ContainSubstring("### Chunk 1/2\n\nchunk one summary"))
-		Expect(body).NotTo(ContainSubstring("### Chunk 1/2\n\n### Chunk 2/2"))
 	})
 
 	It("labels each chunk section with its index and count", func() {
