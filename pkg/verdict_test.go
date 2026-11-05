@@ -863,8 +863,35 @@ var _ = Describe("VerdictSummary", func() {
 			"block with an empty summary",
 			"```json\n{\"verdict\":\"approve\",\"summary\":\"\"}\n```",
 		),
-		Entry("malformed JSON", "```json\n{\"verdict\": \"approve\", \"summary\": \"x\"\n```"),
 	)
+
+	// ParseVerdict recovers a verdict from a fenced block that is not valid
+	// JSON (recoverFencedVerdict), so the summary must survive that same input —
+	// otherwise a block whose verdict parses fine still posts the placeholder.
+	Context("a fenced block that is not valid JSON", func() {
+		BeforeEach(func() {
+			reviewText = "```json\n{\"verdict\": \"approve\", \"summary\": \"recovered text\"\n```"
+		})
+
+		It("is accepted by ParseVerdict", func() {
+			Expect(pkg.ParseVerdict(reviewText).Verdict).To(Equal(pkg.VerdictApprove))
+		})
+
+		It("recovers the summary too, rather than dropping it", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal("recovered text"))
+		})
+	})
+
+	Context("a bare (unfenced) JSON-only body", func() {
+		BeforeEach(func() {
+			reviewText = `{"verdict":"approve","summary":"bare summary"}`
+		})
+
+		It("strips to empty and falls back to the summary", func() {
+			Expect(strings.TrimSpace(pkg.StripJSONVerdict(reviewText))).To(BeEmpty())
+			Expect(pkg.ReviewBody(reviewText)).To(Equal("bare summary"))
+		})
+	})
 })
 
 var _ = Describe("ReviewBody", func() {

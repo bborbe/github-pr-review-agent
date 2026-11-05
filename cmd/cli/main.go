@@ -308,8 +308,9 @@ func runReview(
 	result := prpkg.ParseVerdict(reviewText)
 	logAlways("verdict: %s (%s)", result.Verdict, result.Reason)
 
-	// Strip JSON verdict block before posting to PR
-	cleanedText := prpkg.StripJSONVerdict(reviewText)
+	// Strip JSON verdict block before posting to PR, falling back to the
+	// block's own summary when the strip leaves nothing (a JSON-only review).
+	cleanedText := prpkg.ReviewBody(reviewText)
 
 	return cleanedText, result, nil
 }

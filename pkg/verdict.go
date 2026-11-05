@@ -40,6 +40,13 @@ type jsonVerdict struct {
 // request-changes into an approve.
 var verdictFieldRegexp = regexp.MustCompile(`"verdict"\s*:\s*"([^"]*)"`)
 
+// summaryFieldRegexp mirrors verdictFieldRegexp for the "summary" field. It is
+// the recovery path for a fenced verdict block that is well-delimited but not
+// valid JSON — the same blocks recoverFencedVerdict rescues the verdict from.
+// Like its sibling it surfaces only text the model actually wrote, and it
+// truncates at the first unescaped quote rather than inventing a value.
+var summaryFieldRegexp = regexp.MustCompile(`"summary"\s*:\s*"([^"]*)"`)
+
 // findVerdictBlock locates the verdict JSON block, preferring a fenced ```json
 // block (fence-delimited, so immune to brace/quote content) and falling back to
 // the end-anchored brace walk for bare, unfenced JSON. The bool `fenced` reports
@@ -570,6 +577,15 @@ func VerdictSummary(reviewText string) string {
 		Summary string `json:"summary"`
 	}
 	if err := json.Unmarshal([]byte(block), &v); err != nil {
+		// A fenced block with unescaped quotes is not valid JSON but is still a
+		// block ParseVerdict accepts: it recovers the verdict via
+		// recoverFencedVerdict. Bailing here would drop the summary for exactly
+		// the input whose verdict survives, so mirror that recovery. The regex
+		// surfaces only text the model wrote and truncates at the first
+		// unescaped quote rather than inventing anything.
+		if m := summaryFieldRegexp.FindStringSubmatch(block); m != nil {
+			return strings.TrimSpace(m[1])
+		}
 		return ""
 	}
 	return strings.TrimSpace(v.Summary)
