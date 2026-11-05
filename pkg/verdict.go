@@ -548,6 +548,47 @@ func StripJSONVerdict(reviewText string) string {
 	return blankRunRegexp.ReplaceAllString(strings.TrimRight(result, "\n"), "\n\n")
 }
 
+// VerdictSummary returns the "summary" field of the located verdict block, or ""
+// when there is no block or the field is absent/unparseable.
+//
+// It exists because StripJSONVerdict can legitimately leave nothing behind: a
+// review whose entire body is the fenced verdict block strips to an empty
+// string, and the poster then substitutes "automated review — no summary
+// produced" for a summary the model did write. That substitution is a body
+// disagreeing with the review — the exact class of defect this package exists to
+// remove — so the summary has to be read from the block before the stripped body
+// is trusted to be the body.
+//
+// For a chunked review the locator returns the LAST block, which is the aggregate
+// roll-up: the one whose summary describes the whole review.
+func VerdictSummary(reviewText string) string {
+	block, _, ok := findVerdictBlock(reviewText)
+	if !ok || block == "" {
+		return ""
+	}
+	var v struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(block), &v); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v.Summary)
+}
+
+// ReviewBody returns the review text a reader should see: the body with every
+// verdict block stripped, falling back to the located block's own "summary"
+// field when the strip leaves nothing behind. A review whose entire body is the
+// verdict block would otherwise post empty — or, one layer up, the poster's
+// "no summary produced" placeholder, which asserts the model wrote no summary
+// when it did.
+func ReviewBody(reviewText string) string {
+	body := StripJSONVerdict(reviewText)
+	if strings.TrimSpace(body) != "" {
+		return body
+	}
+	return VerdictSummary(reviewText)
+}
+
 // removeVerdictBlock removes one located block. For a bare block it removes the
 // block substring; for a fenced block it removes the opening ```json line, the
 // block lines, and the closing ``` line. Returns ok=false when the fence cannot

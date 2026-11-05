@@ -969,7 +969,11 @@ func (s *checkoutExecutionStep) postAndRoute(
 		reviewBody = reviewSection.Body
 	}
 	verdict := ParseVerdict(reviewBody)
-	summary := StripJSONVerdict(reviewBody)
+	// A review whose whole body is the fenced verdict block strips to nothing;
+	// ReviewBody falls back to the block's own summary rather than posting the
+	// poster's "no summary produced" placeholder, which claims the model wrote
+	// no summary when it did.
+	summary := ReviewBody(reviewBody)
 
 	verdict, demotionReason := s.demotionReasonFor(verdict, reviewBody, funnelRan, budgetUse)
 
