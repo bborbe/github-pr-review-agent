@@ -865,6 +865,25 @@ var _ = Describe("VerdictSummary", func() {
 		),
 	)
 
+	// ParseVerdict recovers a malformed block only when it is fenced; a bare one
+	// fail-closes to request-changes. VerdictSummary must mirror that, or the
+	// body would carry a summary under an event the parser refused.
+	Context("a bare (unfenced) block that is not valid JSON", func() {
+		BeforeEach(func() {
+			reviewText = `{"verdict": "approve", "summary": "a"b"}`
+		})
+
+		It("is located but fail-closes in ParseVerdict", func() {
+			result := pkg.ParseVerdict(reviewText)
+			Expect(result.Verdict).To(Equal(pkg.VerdictRequestChanges))
+			Expect(result.Reason).To(HavePrefix("malformed JSON:"))
+		})
+
+		It("is not recovered by VerdictSummary", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(BeEmpty())
+		})
+	})
+
 	// ParseVerdict recovers a verdict from a fenced block that is not valid
 	// JSON (recoverFencedVerdict), so the summary must survive that same input —
 	// otherwise a block whose verdict parses fine still posts the placeholder.

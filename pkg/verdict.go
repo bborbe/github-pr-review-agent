@@ -574,31 +574,43 @@ func StripJSONVerdict(reviewText string) string {
 // synthesized aggregate block has no summary field and never reaches this
 // fallback anyway — the chunk headings keep the stripped body non-empty.
 func VerdictSummary(reviewText string) string {
-	block, _, ok := findVerdictBlock(reviewText)
+	block, fenced, ok := findVerdictBlock(reviewText)
 	if !ok || block == "" {
 		return ""
 	}
 	var v struct {
 		Summary string `json:"summary"`
 	}
-	if err := json.Unmarshal([]byte(block), &v); err != nil {
-		// A fenced block with an unescaped quote is not valid JSON but is still a
-		// block ParseVerdict accepts: it recovers the verdict via
-		// recoverFencedVerdict. Bailing here would drop the summary for exactly
-		// the input whose verdict survives, so mirror that recovery. The regex
-		// walks escapes (so an escaped quote inside the summary does not end it),
-		// and the captured fragment is decoded as a JSON string before use — it
-		// surfaces only text the model wrote.
-		if m := summaryFieldRegexp.FindStringSubmatch(block); m != nil {
-			var s string
-			if err := json.Unmarshal([]byte(`"`+m[1]+`"`), &s); err == nil {
-				return strings.TrimSpace(s)
-			}
-			return strings.TrimSpace(m[1])
-		}
+	if err := json.Unmarshal([]byte(block), &v); err == nil {
+		return strings.TrimSpace(v.Summary)
+	}
+	// A malformed block is recovered only when it is fenced, mirroring
+	// ParseVerdict: recoverFencedVerdict runs for a fence and never for a bare
+	// block. Recovering a bare one would post a summary beneath a fail-closed
+	// request-changes — the body/event disagreement this package exists to
+	// remove.
+	if !fenced {
 		return ""
 	}
-	return strings.TrimSpace(v.Summary)
+	return recoverFencedSummary(block)
+}
+
+// recoverFencedSummary reads the "summary" field out of a fenced verdict block
+// that is not valid JSON — the same blocks recoverFencedVerdict rescues the
+// verdict from, so the two stay consistent. The regex walks backslash escapes
+// (an escaped quote inside the summary does not end the match) and the captured
+// fragment is decoded as a JSON string before use. It surfaces only text the
+// model wrote.
+func recoverFencedSummary(block string) string {
+	m := summaryFieldRegexp.FindStringSubmatch(block)
+	if m == nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal([]byte(`"`+m[1]+`"`), &s); err == nil {
+		return strings.TrimSpace(s)
+	}
+	return strings.TrimSpace(m[1])
 }
 
 // ReviewBody returns the review text a reader should see: the body with every

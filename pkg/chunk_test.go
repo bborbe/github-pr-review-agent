@@ -166,6 +166,15 @@ var _ = Describe("MergeChunkReviews", func() {
 		Expect(pkg.ParseVerdict(body).Verdict).To(Equal(pkg.VerdictApprove))
 	})
 
+	It("fills a JSON-only chunk section with that chunk's own summary", func() {
+		jsonOnly := "```json\n" +
+			`{"verdict":"approve","summary":"chunk one summary","comments":[]}` +
+			"\n```\n"
+		body, _ := pkg.MergeChunkReviews([]string{jsonOnly, approveChunk})
+		Expect(body).To(ContainSubstring("### Chunk 1/2\n\nchunk one summary"))
+		Expect(body).NotTo(ContainSubstring("### Chunk 1/2\n\n### Chunk 2/2"))
+	})
+
 	It("labels each chunk section with its index and count", func() {
 		body, _ := pkg.MergeChunkReviews([]string{approveChunk, approveChunk, approveChunk})
 		Expect(body).To(ContainSubstring("### Chunk 1/3"))
