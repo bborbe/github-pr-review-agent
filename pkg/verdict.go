@@ -43,9 +43,10 @@ var verdictFieldRegexp = regexp.MustCompile(`"verdict"\s*:\s*"([^"]*)"`)
 // summaryFieldRegexp mirrors verdictFieldRegexp for the "summary" field. It is
 // the recovery path for a fenced verdict block that is well-delimited but not
 // valid JSON — the same blocks recoverFencedVerdict rescues the verdict from.
-// Like its sibling it surfaces only text the model actually wrote, and it
-// truncates at the first unescaped quote rather than inventing a value.
-var summaryFieldRegexp = regexp.MustCompile(`"summary"\s*:\s*"([^"]*)"`)
+// Like its sibling it surfaces only text the model actually wrote. Unlike the
+// verdict capture it walks backslash escapes, so an escaped quote inside the
+// summary does not end the match.
+var summaryFieldRegexp = regexp.MustCompile(`"summary"\s*:\s*"((?:[^"\\]|\\.)*)"`)
 
 // findVerdictBlock locates the verdict JSON block, preferring a fenced ```json
 // block (fence-delimited, so immune to brace/quote content) and falling back to
@@ -566,8 +567,12 @@ func StripJSONVerdict(reviewText string) string {
 // remove — so the summary has to be read from the block before the stripped body
 // is trusted to be the body.
 //
-// For a chunked review the locator returns the LAST block, which is the aggregate
-// roll-up: the one whose summary describes the whole review.
+// The locator returns the LAST verdict block in the text, matching what
+// ParseVerdict reads. On the chunked path that is per chunk, not for the merged
+// body: MergeChunkReviews calls ReviewBody on each chunk's own output, so each
+// "### Chunk i/n" section carries that chunk's summary. The merged body's
+// synthesized aggregate block has no summary field and never reaches this
+// fallback anyway — the chunk headings keep the stripped body non-empty.
 func VerdictSummary(reviewText string) string {
 	block, _, ok := findVerdictBlock(reviewText)
 	if !ok || block == "" {
@@ -577,13 +582,18 @@ func VerdictSummary(reviewText string) string {
 		Summary string `json:"summary"`
 	}
 	if err := json.Unmarshal([]byte(block), &v); err != nil {
-		// A fenced block with unescaped quotes is not valid JSON but is still a
+		// A fenced block with an unescaped quote is not valid JSON but is still a
 		// block ParseVerdict accepts: it recovers the verdict via
 		// recoverFencedVerdict. Bailing here would drop the summary for exactly
 		// the input whose verdict survives, so mirror that recovery. The regex
-		// surfaces only text the model wrote and truncates at the first
-		// unescaped quote rather than inventing anything.
+		// walks escapes (so an escaped quote inside the summary does not end it),
+		// and the captured fragment is decoded as a JSON string before use — it
+		// surfaces only text the model wrote.
 		if m := summaryFieldRegexp.FindStringSubmatch(block); m != nil {
+			var s string
+			if err := json.Unmarshal([]byte(`"`+m[1]+`"`), &s); err == nil {
+				return strings.TrimSpace(s)
+			}
 			return strings.TrimSpace(m[1])
 		}
 		return ""

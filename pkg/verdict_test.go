@@ -882,6 +882,20 @@ var _ = Describe("VerdictSummary", func() {
 		})
 	})
 
+	Context("a fenced block that is not valid JSON, with escaped quotes in the summary", func() {
+		BeforeEach(func() {
+			// Invalid JSON overall (the unterminated comments array), but the
+			// summary itself is a well-formed JSON string with escaped quotes.
+			reviewText = "```json\n" +
+				`{"verdict":"approve","summary":"The \"fix\" is correct","comments":[}` +
+				"\n```"
+		})
+
+		It("decodes the escapes instead of truncating at the first quote", func() {
+			Expect(pkg.VerdictSummary(reviewText)).To(Equal(`The "fix" is correct`))
+		})
+	})
+
 	Context("a bare (unfenced) JSON-only body", func() {
 		BeforeEach(func() {
 			reviewText = `{"verdict":"approve","summary":"bare summary"}`
