@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: restate the `do-not-merge` gate message to name its bypass actors — the Admin repository role and Integration `3907226`, both `bypass_mode: always` in the `master-protection` ruleset — instead of asserting an unqualified block
+
 ## v0.16.4
 
 - fix: **a review whose body is only the verdict block keeps its summary.** `StripJSONVerdict` removes the whole fenced block, so a model that emitted nothing but the JSON left an empty body and the poster substituted `automated review — no summary produced` — discarding a summary the model had written. That placeholder is itself a body disagreeing with the review. The body now falls back to the block's own `summary` field, so what is posted is the review the model produced. The fallback is shared by every body-producing site — the posted review, each `### Chunk i/n` section of a merged chunked review, and `cmd/cli` — and it recovers the summary from a fenced block that is not valid JSON, the same blocks `ParseVerdict` already recovers a verdict from.
