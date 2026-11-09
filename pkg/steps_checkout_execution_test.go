@@ -1273,11 +1273,19 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(result.Message).To(ContainSubstring("soft time budget"))
 			Expect(result.Message).To(ContainSubstring("20ms"))
 			Expect(repoManager.EnsureWorktreeCallCount()).To(Equal(1))
-			// Budget-terminated runs never write ## Review and never post.
+			// Budget-terminated runs never write ## Review and never post — but
+			// they DO record why in ## Diagnostics. That assertion was inverted
+			// until 2026-11-09: the budget path wrote nothing at all, so the cause
+			// lived only in Result.Message and was garbage-collected with the Job.
+			// Measured on bborbe/nuke#1007 — a task file stopping after ## Plan
+			// with phase: human_review and an empty current_job, indistinguishable
+			// from a review awaiting the operator.
 			_, exists := md.FindSection("## Review")
 			Expect(exists).To(BeFalse())
-			_, exists = md.FindSection("## Diagnostics")
-			Expect(exists).To(BeFalse())
+			diag, exists := md.FindSection("## Diagnostics")
+			Expect(exists).To(BeTrue())
+			Expect(diag.Body).To(ContainSubstring("outcome: failed"))
+			Expect(diag.Body).To(ContainSubstring("failure_step: soft_budget_expired:execution"))
 		})
 
 		Context("salvage", func() {

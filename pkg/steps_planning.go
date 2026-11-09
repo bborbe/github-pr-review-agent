@@ -124,7 +124,7 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 				glog.V(2).
 					Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
 				writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
-				return budgetExpiredResult("planning", s.maxDuration), nil
+				return budgetExpiredResult(md, "planning", s.maxDuration), nil
 			}
 			// Transport error (nil result + err) is NOT retried — controller territory.
 			glog.V(2).Infof("planning: claude failed nextPhase=human_review err=%v", runErr)

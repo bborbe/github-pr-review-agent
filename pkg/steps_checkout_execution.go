@@ -544,7 +544,7 @@ func (s *checkoutExecutionStep) chunkOutcome(
 		return r.budgetExpired
 	}); i >= 0 {
 		writeSalvage(md, fmt.Sprintf("Chunk %d/%d\n\n%s", i+1, n, results[i].partial))
-		return budgetExpiredResult("execution", s.maxDuration), true, nil
+		return budgetExpiredResult(md, "execution", s.maxDuration), true, nil
 	}
 	// The genuine failure that triggered the cancel wins over a sibling it
 	// killed: siblings are recorded with a wrapped CLI exit error that does not
@@ -870,7 +870,7 @@ func (s *checkoutExecutionStep) runClaude(
 			glog.V(2).
 				Infof("execution: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
 			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
-			return budgetExpiredResult("execution", s.maxDuration), nil
+			return budgetExpiredResult(md, "execution", s.maxDuration), nil
 		}
 		return &agentlib.Result{
 			Status:  agentlib.AgentStatusFailed,
