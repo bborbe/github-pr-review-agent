@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.16.6
 
 - fix: **a budget-terminated run now records why it stopped.** `budgetExpiredResult` returned `Done` + `human_review` and wrote nothing to the task body, so its cause lived only in `Result.Message` and was garbage-collected with the Job. A task file from such a run reads `phase: human_review` with an empty `current_job` and stops after `## Plan` — byte-identical to a review awaiting the operator. Measured 2026-11-09 on `bborbe/nuke#1007`, which was the one stalled record of 33 in the 2026-11-07→09 window that no section could explain. It now appends a `## Diagnostics` block carrying `outcome: failed`, `failure_step: soft_budget_expired:<phase>` and `class: permanent`; the routing, the message and the never-posts guarantee are unchanged.
 
