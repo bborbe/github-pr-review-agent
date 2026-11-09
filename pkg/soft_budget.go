@@ -48,14 +48,45 @@ func runWithSoftBudget(
 // the phase and the soft budget. Shared by all three phase steps so the
 // budget-naming message and routing stay consistent; each step calls it only
 // after its own runWithSoftBudget reported expired=true (a fired deadline).
-func budgetExpiredResult(stepName string, maxDuration libtime.Duration) *agentlib.Result {
+//
+// It also records WHY in ## Diagnostics. A budget-terminated run writes no review
+// and posts nothing, and before this block it wrote nothing to the record either:
+// its cause lived only in Result.Message, which reaches the pod log and is
+// garbage-collected with the Job. That made it the one shape of dead run a record
+// could not explain at all — measured 2026-11-09 on bborbe/nuke#1007, whose task
+// file stops after ## Plan carrying phase: human_review and an empty current_job,
+// indistinguishable from a review awaiting the operator. The diagnostic is what
+// makes the record self-describing. md is nil-tolerant, so a caller without a
+// markdown still routes exactly as before.
+func budgetExpiredResult(
+	md *agentlib.Markdown,
+	stepName string,
+	maxDuration libtime.Duration,
+) *agentlib.Result {
+	message := fmt.Sprintf(
+		"%s claude run exceeded the %s soft time budget — routed to human review",
+		stepName,
+		maxDuration,
+	)
+	if md != nil {
+		appendDiagnosticsSection(md, buildDiagnosticBlock(
+			time.Now(),
+			md.Frontmatter.TriggerCount(),
+			PostResult{
+				Outcome: "failed",
+				// The step name is part of failure_step so a reader can tell a
+				// planning-phase expiry from an execution one without inferring it
+				// from which section happens to be missing.
+				FailureStep:  "soft_budget_expired:" + stepName,
+				Class:        ErrorClassPermanent,
+				EscalateHint: true,
+				ErrorMessage: message,
+			},
+		))
+	}
 	return &agentlib.Result{
 		Status:    agentlib.AgentStatusDone,
 		NextPhase: "human_review",
-		Message: fmt.Sprintf(
-			"%s claude run exceeded the %s soft time budget — routed to human review",
-			stepName,
-			maxDuration,
-		),
+		Message:   message,
 	}
 }

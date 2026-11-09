@@ -147,7 +147,7 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 			glog.V(2).
 				Infof("ai-review: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
 			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
-			return budgetExpiredResult("ai-review", s.maxDuration), nil
+			return budgetExpiredResult(md, "ai-review", s.maxDuration), nil
 		}
 		return &agentlib.Result{
 			Status:  agentlib.AgentStatusFailed,
