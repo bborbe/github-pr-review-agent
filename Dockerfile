@@ -39,7 +39,7 @@ ENV CLAUDE_CONFIG_DIR=/home/claude/.claude
 COPY claude-config/settings.json /home/claude/.claude/settings.json
 RUN set -eux \
  && mkdir -p /home/claude/.claude \
- && timeout 300 claude plugin marketplace add bborbe/coding@v0.65.5 \
+ && timeout 300 claude plugin marketplace add bborbe/coding@v0.65.7 \
  && timeout 300 claude plugin install coding \
  && claude plugin list | grep -q coding
 ENV ZONEINFO=/zoneinfo.zip

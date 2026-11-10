@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **the image now carries the fixed funnel error path.** The Dockerfile pinned `bborbe/coding@v0.65.5`, whose `ast-grep-runner.sh` still passed a failing `rule-checks.sh`'s whole stdout through `jq --arg` — so on a large PR the detail exceeded the kernel's 128 KiB per-argument limit, the runner died with `E2BIG`, and the funnel reported only `runner exited non-zero (jq: Argument list too long)`. That overflow replaced the failure it was meant to report, so the review read as "the funnel is not available in this environment" and a clean large PR was demoted to `CHANGES_REQUESTED` for a cause it never named. Pinned to `v0.65.7`, which builds the detail with `--rawfile` and bounds it to 8192 bytes on a UTF-8 boundary, and appends every error entry with `--slurpfile`. Reproduced in this image against a 302,420-byte payload: `line 322: /usr/bin/jq: Argument list too long` before; exit 0 with `errors[0].kind=rule-checks-error` and an 8227-byte bounded detail after.
+
 ## v0.16.6
 
 - fix: **a budget-terminated run now records why it stopped.** `budgetExpiredResult` returned `Done` + `human_review` and wrote nothing to the task body, so its cause lived only in `Result.Message` and was garbage-collected with the Job. A task file from such a run reads `phase: human_review` with an empty `current_job` and stops after `## Plan` — byte-identical to a review awaiting the operator. Measured 2026-11-09 on `bborbe/nuke#1007`, which was the one stalled record of 33 in the 2026-11-07→09 window that no section could explain. It now appends a `## Diagnostics` block carrying `outcome: failed`, `failure_step: soft_budget_expired:<phase>` and `class: permanent`; the routing, the message and the never-posts guarantee are unchanged.
