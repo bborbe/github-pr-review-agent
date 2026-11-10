@@ -23,6 +23,7 @@ import (
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
+	"github.com/bborbe/github-pr-review-agent/pkg/factory"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo/v2"
@@ -1286,6 +1287,38 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(exists).To(BeTrue())
 			Expect(diag.Body).To(ContainSubstring("outcome: failed"))
 			Expect(diag.Body).To(ContainSubstring("failure_step: soft_budget_expired:execution"))
+
+			// ...and it must survive the two transformations between the step and
+			// the file on disk: the runner marshals the mutated markdown, then the
+			// deliverer writes it. Asserting only the in-memory section leaves the
+			// write unproven, and a diagnostic that never reaches the record is the
+			// same defect this change exists to fix. Exercised locally so the
+			// proof needs no GitHub App credentials.
+			marshalled, marshalErr := md.Marshal(ctx)
+			Expect(marshalErr).NotTo(HaveOccurred())
+
+			writtenPath := filepath.Join(tmpDir, "task.md")
+			// The file deliverer merges into an existing record, so seed one.
+			Expect(os.WriteFile(
+				writtenPath,
+				[]byte("---\nstatus: in_progress\nphase: execution\n---\n\n# PR Review\n"),
+				0600,
+			)).To(Succeed())
+			Expect(factory.CreateFileResultDeliverer(writtenPath).DeliverResult(
+				ctx,
+				agentlib.AgentResultInfo{
+					Status:    agentlib.AgentStatusDone,
+					NextPhase: result.NextPhase,
+					Output:    string(marshalled),
+					Message:   result.Message,
+				},
+			)).To(Succeed())
+
+			written, readErr := os.ReadFile(writtenPath)
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(
+				string(written),
+			).To(ContainSubstring("failure_step: soft_budget_expired:execution"))
 		})
 
 		Context("salvage", func() {
