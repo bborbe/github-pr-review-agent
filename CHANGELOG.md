@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: `make build` resolves `BUILD_TARGET` from a bounded sun probe - sun when reachable, local docker as the fallback. An explicit `BUILD_TARGET` always wins, and the decision prints at parse time so it is visible under `make -n`
+
 ## v0.16.7
 
 - fix: **the image now carries the fixed funnel error path.** The Dockerfile pinned `bborbe/coding@v0.65.5`, whose `ast-grep-runner.sh` still passed a failing `rule-checks.sh`'s whole stdout through `jq --arg` — so on a large PR the detail exceeded the kernel's 128 KiB per-argument limit, the runner died with `E2BIG`, and the funnel reported only `runner exited non-zero (jq: Argument list too long)`. That overflow replaced the failure it was meant to report, so the review read as "the funnel is not available in this environment" and a clean large PR was demoted to `CHANGES_REQUESTED` for a cause it never named. Pinned to `v0.65.7`, which builds the detail with `--rawfile` and bounds it to 8192 bytes on a UTF-8 boundary, and appends every error entry with `--slurpfile`. Reproduced in this image against a 302,420-byte payload: `line 322: /usr/bin/jq: Argument list too long` before; exit 0 with `errors[0].kind=rule-checks-error` and an 8227-byte bounded detail after.
