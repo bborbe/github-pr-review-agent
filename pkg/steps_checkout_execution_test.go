@@ -574,6 +574,7 @@ prior review body
 				Expect(diag.Body).To(ContainSubstring("outcome: skipped"))
 				Expect(diag.Body).To(ContainSubstring("no_review_produced"))
 				Expect(diag.Body).NotTo(ContainSubstring("outcome: failed"))
+				Expect(md.Frontmatter["run_outcome"]).To(Equal("no_review"))
 			})
 
 			It("posts nothing when the ## Review section is absent (empty review text)", func() {
@@ -1109,6 +1110,11 @@ prior review body
 				diagSection, ok := md.FindSection("## Diagnostics")
 				Expect(ok).To(BeTrue())
 				Expect(diagSection.Body).To(ContainSubstring("class: transient"))
+
+				// The record must be distinguishable from a hand-off WITHOUT
+				// reading the body: same phase, same empty current_job.
+				Expect(md.Frontmatter["run_outcome"]).To(Equal("post_failed"))
+				Expect(md.Frontmatter["failure_reason"]).To(ContainSubstring("post"))
 			})
 		})
 
@@ -1286,6 +1292,7 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(exists).To(BeTrue())
 			Expect(diag.Body).To(ContainSubstring("outcome: failed"))
 			Expect(diag.Body).To(ContainSubstring("failure_step: soft_budget_expired:execution"))
+			Expect(md.Frontmatter["run_outcome"]).To(Equal("budget_expired"))
 		})
 
 		Context("salvage", func() {

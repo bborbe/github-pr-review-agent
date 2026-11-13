@@ -1037,6 +1037,10 @@ func (s *checkoutExecutionStep) postAndRoute(
 		}, nil
 	}
 
+	// A failed post is not a hand-off. The routing stays Done + human_review —
+	// a blocked PR does need a human — but without this stamp the record is
+	// indistinguishable from a review awaiting the operator.
+	stampRunOutcome(md, RunOutcomePostFailed, postFailureReason(result))
 	return &agentlib.Result{
 		Status:    agentlib.AgentStatusDone,
 		NextPhase: "human_review",
@@ -1172,6 +1176,9 @@ func (s *checkoutExecutionStep) noReviewResult(
 			),
 		}),
 	)
+	// A deliberate no-post is not a completed review either: same phase, same
+	// empty current_job, so it needs the same machine-readable marker.
+	stampRunOutcome(md, RunOutcomeNoReview, "no_review_produced")
 	return &agentlib.Result{
 		Status:    agentlib.AgentStatusDone,
 		NextPhase: "human_review",

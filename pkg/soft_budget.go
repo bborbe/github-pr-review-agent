@@ -84,6 +84,7 @@ func budgetExpiredResult(
 			},
 		))
 	}
+	stampRunOutcome(md, RunOutcomeBudgetExpired, message)
 	return &agentlib.Result{
 		Status:    agentlib.AgentStatusDone,
 		NextPhase: "human_review",

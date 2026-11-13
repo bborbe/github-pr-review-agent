@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a record that ended without posting now says so in frontmatter.** Every terminal routing in this agent — a failed post, a deliberate no-review skip, an expired soft budget — returns `Done` + `human_review`, so the controller writes `phase: human_review` and clears `current_job`. The record then reads exactly like a review that completed and is awaiting the operator, and nothing downstream can separate the two: measured 2026-11-09, all 15 of the 33 started records in a two-day window that ended with no verdict read that way. Each of those routings now stamps `run_outcome` (`post_failed` / `no_review` / `budget_expired`) plus a bounded `failure_reason`, so the distinction is machine-readable without parsing the body. Routing, phase, status and the never-posts guarantees are unchanged; a record without `run_outcome` simply took a path that does not stamp it.
+
 ## v0.17.0
 
 - feat: `make build` resolves `BUILD_TARGET` from a bounded sun probe - sun when reachable, local docker as the fallback. An explicit `BUILD_TARGET` always wins, and the decision prints at parse time so it is visible under `make -n`
