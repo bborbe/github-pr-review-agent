@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- test: **the budget-expiry diagnostic is proven to reach the task file, not just the in-memory markdown.** The existing spec asserted only the `## Diagnostics` section on the parsed markdown, leaving the two transformations after it unexercised — the runner's `md.Marshal` and the deliverer's write. A diagnostic that never reaches the record is the same defect the trace exists to fix. The spec now marshals the mutated markdown, delivers it through the real `factory.CreateFileResultDeliverer`, reads the file back, and asserts the block survived. Test-only; no production behaviour changes.
+
 ## v0.17.0
 
 - feat: `make build` resolves `BUILD_TARGET` from a bounded sun probe - sun when reachable, local docker as the fallback. An explicit `BUILD_TARGET` always wins, and the decision prints at parse time so it is visible under `make -n`
