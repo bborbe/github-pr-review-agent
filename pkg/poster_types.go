@@ -77,8 +77,12 @@ type PostResult struct {
 	HTTPStatus   int
 	ErrorMessage string
 	ResponseBody string
-	ElapsedMs    int64
-	Warnings     []string
+	// RateLimitRemaining and RateLimitReset carry the GitHub rate-limit response
+	// headers when the failed attempt was rate-limited, for the ## Diagnostics block.
+	RateLimitRemaining string
+	RateLimitReset     string
+	ElapsedMs          int64
+	Warnings           []string
 }
 
 // ErrorClass categorizes a posting failure for retry and escalation decisions.

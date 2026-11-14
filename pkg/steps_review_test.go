@@ -1085,6 +1085,8 @@ var _ = Describe("shouldVerifyPost", func() {
 					"error_message: \"forbidden\"\n" +
 					"response_body: \"{}\"\n" +
 					"elapsed_ms: 100\n" +
+					"rate_limit_remaining: 0\n" +
+					"rate_limit_reset: 1763000000\n" +
 					"```\n"
 				md := taskWithReview(diagBody)
 				result, err := pkg.ShouldVerifyPostForTest(ctx, md)
@@ -1146,5 +1148,54 @@ var _ = Describe("appendVerifyDiagnostic", func() {
 		Expect(sec.Body).To(ContainSubstring("class=transient"))
 		Expect(sec.Body).To(ContainSubstring("http_status=429"))
 		Expect(sec.Body).To(ContainSubstring("rate limited"))
+	})
+})
+
+var _ = Describe("buildDiagnosticBlock", func() {
+	jobRunTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	It("emits rate-limit lines when the PostResult carries them", func() {
+		block := pkg.BuildDiagnosticBlockForTest(jobRunTime, 1, pkg.PostResult{
+			Outcome:            "failed",
+			FailureStep:        "GET /pulls/N/reviews (dismiss-list)",
+			Class:              pkg.ErrorClassTransient,
+			Attempt:            1,
+			HTTPStatus:         403,
+			ErrorMessage:       "rate limited",
+			ResponseBody:       "{}",
+			ElapsedMs:          5,
+			RateLimitRemaining: "0",
+			RateLimitReset:     "1763000000",
+		})
+		Expect(block).To(ContainSubstring("rate_limit_remaining: 0\n"))
+		Expect(block).To(ContainSubstring("rate_limit_reset: 1763000000\n"))
+	})
+
+	It("is byte-identical to the no-header format when both are empty", func() {
+		block := pkg.BuildDiagnosticBlockForTest(jobRunTime, 1, pkg.PostResult{
+			Outcome:      "failed",
+			FailureStep:  "POST /pulls/N/reviews",
+			Class:        pkg.ErrorClassPermanent,
+			EscalateHint: true,
+			Attempt:      1,
+			HTTPStatus:   403,
+			ErrorMessage: "forbidden",
+			ResponseBody: "{}",
+			ElapsedMs:    100,
+		})
+		expected := "```yaml\n" +
+			"job_run: 2026-01-01T00:00:00Z\n" +
+			"trigger_count: 1\n" +
+			"outcome: failed\n" +
+			"failure_step: POST /pulls/N/reviews\n" +
+			"class: permanent\n" +
+			"escalate_hint: true\n" +
+			"attempt: 1\n" +
+			"http_status: 403\n" +
+			"error_message: \"forbidden\"\n" +
+			"response_body: \"{}\"\n" +
+			"elapsed_ms: 100\n" +
+			"```\n"
+		Expect(block).To(Equal(expected))
 	})
 })
