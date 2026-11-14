@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.18.1
 
 - fix: **a GitHub App installation rate limit no longer ends a review with no verdict.** `classifyError` mapped every 403 to `permanent`, so a rate-limited dismiss-list GET (the most common recorded failure step: 29 of 76 all-time, 11 of 11 in the 2026-11-07→09 window) was never retried and the PR stayed merge-gated. A 403/429 whose `X-RateLimit-Remaining` is `0` or whose body names a rate limit is now `transient`; a plain 403 (bad token, missing permission) stays `permanent`. The retry waits until `X-RateLimit-Reset` (or `Retry-After`, for a secondary limit) when that lies further out than the base delay, capped at 15 minutes — a reset beyond the cap ends the step as `transient` with one attempt rather than parking the pod, since the posting path has no caller deadline. The reset wait applies only when the failure actually is a rate limit, so the phantom-POST verify-GET keeps its normal backoff. Both rate-limit headers are persisted into the `## Diagnostics` block as optional `rate_limit_remaining` / `rate_limit_reset` lines, so the next real rate-limited run leaves the captured pair behind.
 ## v0.18.0
