@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a GitHub App installation rate limit no longer ends a review with no verdict.** `classifyError` mapped every 403 to `permanent`, so a rate-limited dismiss-list GET (the most common recorded failure step: 29 of 76 all-time, 11 of 11 in the 2026-11-07→09 window) was never retried and the PR stayed merge-gated. A 403/429 whose `X-RateLimit-Remaining` is `0` or whose body names a rate limit is now `transient`; a plain 403 (bad token, missing permission) stays `permanent`. The retry waits until `X-RateLimit-Reset` when that lies further out than the base delay, and a reset beyond the step deadline ends the step as `transient` instead of sleeping. Both rate-limit headers are persisted into the `## Diagnostics` block as optional `rate_limit_remaining` / `rate_limit_reset` lines, so the next real rate-limited run leaves the captured pair behind.
+
 ## v0.17.1
 
 - fix: **a record that ended without posting now says so in frontmatter.** Every terminal routing in this agent — a failed post, a deliberate no-review skip, an expired soft budget — returns `Done` + `human_review`, so the controller writes `phase: human_review` and clears `current_job`. The record then reads exactly like a review that completed and is awaiting the operator, and nothing downstream can separate the two: measured 2026-11-09, all 15 of the 33 started records in a two-day window that ended with no verdict read that way. Each of those routings now stamps `run_outcome` (`post_failed` / `no_review` / `budget_expired`) plus a bounded `failure_reason`, so the distinction is machine-readable without parsing the body. Routing, phase, status and the never-posts guarantees are unchanged; a record without `run_outcome` simply took a path that does not stamp it.

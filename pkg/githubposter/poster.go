@@ -202,13 +202,15 @@ func (p *prPoster) listBotReviews(
 		pr.Repo,
 		pr.Number,
 	)
-	cr := retryCall(ctx, step, func(ctx context.Context) (botReviewList, int, string, error) {
-		status, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
+	cr := retryCall(ctx, step, func(
+		ctx context.Context,
+	) (botReviewList, int, http.Header, string, error) {
+		status, header, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
 		if err != nil {
-			return botReviewList{}, status, truncateBody(body), err
+			return botReviewList{}, status, header, truncateBody(body), err
 		}
 		if status != 200 {
-			return botReviewList{}, status, truncateBody(
+			return botReviewList{}, status, header, truncateBody(
 					body,
 				), errors.Errorf(
 					ctx,
@@ -218,7 +220,7 @@ func (p *prPoster) listBotReviews(
 		}
 		var all []reviewEntry
 		if err := json.Unmarshal(body, &all); err != nil {
-			return botReviewList{}, status, truncateBody(
+			return botReviewList{}, status, header, truncateBody(
 					body,
 				), errors.Wrapf(
 					ctx,
@@ -244,7 +246,7 @@ func (p *prPoster) listBotReviews(
 				list.prior = append(list.prior, r)
 			}
 		}
-		return list, status, truncateBody(body), nil
+		return list, status, header, truncateBody(body), nil
 	})
 	if cr.Err != nil {
 		return nil, nil, buildFailedResult(step, cr), false
@@ -263,8 +265,10 @@ func (p *prPoster) dismissOne(
 		pr.Owner, pr.Repo, pr.Number, reviewID,
 	)
 	payload := []byte(`{"message":"superseded by new automated review"}`)
-	cr := retryCall(ctx, step, func(ctx context.Context) (struct{}, int, string, error) {
-		status, body, err := doRequest(
+	cr := retryCall(ctx, step, func(
+		ctx context.Context,
+	) (struct{}, int, http.Header, string, error) {
+		status, header, body, err := doRequest(
 			ctx,
 			p.httpClient,
 			p.ghToken,
@@ -273,10 +277,10 @@ func (p *prPoster) dismissOne(
 			bytes.NewReader(payload),
 		)
 		if err != nil {
-			return struct{}{}, status, truncateBody(body), err
+			return struct{}{}, status, header, truncateBody(body), err
 		}
 		if status < 200 || status >= 300 {
-			return struct{}{}, status, truncateBody(
+			return struct{}{}, status, header, truncateBody(
 					body,
 				), errors.Errorf(
 					ctx,
@@ -284,7 +288,7 @@ func (p *prPoster) dismissOne(
 					status,
 				)
 		}
-		return struct{}{}, status, truncateBody(body), nil
+		return struct{}{}, status, header, truncateBody(body), nil
 	})
 	if cr.Err != nil {
 		return buildFailedResult(step, cr), false
@@ -308,13 +312,15 @@ func (p *prPoster) listBotReviewsAtHead(
 		pr.Repo,
 		pr.Number,
 	)
-	cr := retryCall(ctx, step, func(ctx context.Context) ([]reviewEntry, int, string, error) {
-		status, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
+	cr := retryCall(ctx, step, func(
+		ctx context.Context,
+	) ([]reviewEntry, int, http.Header, string, error) {
+		status, header, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
 		if err != nil {
-			return nil, status, truncateBody(body), err
+			return nil, status, header, truncateBody(body), err
 		}
 		if status != 200 {
-			return nil, status, truncateBody(
+			return nil, status, header, truncateBody(
 					body,
 				), errors.Errorf(
 					ctx,
@@ -324,7 +330,7 @@ func (p *prPoster) listBotReviewsAtHead(
 		}
 		var all []reviewEntry
 		if err := json.Unmarshal(body, &all); err != nil {
-			return nil, status, truncateBody(body), errors.Wrapf(ctx, err, "parse reviews")
+			return nil, status, header, truncateBody(body), errors.Wrapf(ctx, err, "parse reviews")
 		}
 		var filtered []reviewEntry
 		for _, r := range all {
@@ -333,7 +339,7 @@ func (p *prPoster) listBotReviewsAtHead(
 				filtered = append(filtered, r)
 			}
 		}
-		return filtered, status, truncateBody(body), nil
+		return filtered, status, header, truncateBody(body), nil
 	})
 	if cr.Err != nil {
 		return nil, buildFailedResult(step, cr), false
@@ -386,18 +392,20 @@ func (p *prPoster) executeDismissPUT(
 		pr.Owner, pr.Repo, pr.Number, reviewID,
 	)
 	step := fmt.Sprintf("PUT /pulls/%d/reviews/%d/dismissals", pr.Number, reviewID)
-	cr := retryCall(ctx, step, func(ctx context.Context) (struct{}, int, string, error) {
-		status, body, err := doRequest(
+	cr := retryCall(ctx, step, func(
+		ctx context.Context,
+	) (struct{}, int, http.Header, string, error) {
+		status, header, body, err := doRequest(
 			ctx, p.httpClient, p.ghToken, "PUT", url, bytes.NewReader(dismissPayload),
 		)
 		if err != nil {
-			return struct{}{}, status, truncateBody(body), err
+			return struct{}{}, status, header, truncateBody(body), err
 		}
 		if status < 200 || status >= 300 {
-			return struct{}{}, status, truncateBody(body),
+			return struct{}{}, status, header, truncateBody(body),
 				errors.Errorf(ctx, "unexpected status %d", status)
 		}
-		return struct{}{}, status, truncateBody(body), nil
+		return struct{}{}, status, header, truncateBody(body), nil
 	})
 	glog.Infof(
 		"dismiss-current: step=%s http_status=%d attempts=%d err=%v",
@@ -529,8 +537,10 @@ func (p *prPoster) postReview(
 			Class: prpkg.ErrorClassPermanent, EscalateHint: true, Attempt: 1, ErrorMessage: err.Error(),
 		}, false
 	}
-	cr := retryCall(ctx, step, func(ctx context.Context) (postReviewResp, int, string, error) {
-		status, rb, err := doRequest(
+	cr := retryCall(ctx, step, func(
+		ctx context.Context,
+	) (postReviewResp, int, http.Header, string, error) {
+		status, header, rb, err := doRequest(
 			ctx,
 			p.httpClient,
 			p.ghToken,
@@ -540,22 +550,30 @@ func (p *prPoster) postReview(
 		)
 		tb := truncateBody(rb)
 		if err != nil {
-			return postReviewResp{}, status, tb, err
+			return postReviewResp{}, status, header, tb, err
 		}
 		if status == 422 {
-			return postReviewResp{}, status, tb, errors.Errorf(
+			return postReviewResp{}, status, header, tb, errors.Errorf(
 				ctx,
 				"PR closed or validation error (422)",
 			)
 		}
 		if status < 200 || status >= 300 {
-			return postReviewResp{}, status, tb, errors.Errorf(ctx, "unexpected status %d", status)
+			return postReviewResp{}, status, header, tb, errors.Errorf(
+				ctx,
+				"unexpected status %d",
+				status,
+			)
 		}
 		var r postReviewResp
 		if err := json.Unmarshal(rb, &r); err != nil {
-			return postReviewResp{}, status, tb, errors.Wrapf(ctx, err, "parse POST response")
+			return postReviewResp{}, status, header, tb, errors.Wrapf(
+				ctx,
+				err,
+				"parse POST response",
+			)
 		}
-		return r, status, tb, nil
+		return r, status, header, tb, nil
 	})
 	if cr.HTTPStatus == 422 {
 		return 0, prpkg.PostResult{
@@ -583,13 +601,13 @@ func (p *prPoster) verifyAfterPost(
 		pr.Number,
 	)
 	expectedState := eventToState(event)
-	cr := retryCall(ctx, step, func(ctx context.Context) (bool, int, string, error) {
-		status, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
+	cr := retryCall(ctx, step, func(ctx context.Context) (bool, int, http.Header, string, error) {
+		status, header, body, err := doRequest(ctx, p.httpClient, p.ghToken, "GET", url, nil)
 		if err != nil {
-			return false, status, truncateBody(body), err
+			return false, status, header, truncateBody(body), err
 		}
 		if status != 200 {
-			return false, status, truncateBody(
+			return false, status, header, truncateBody(
 					body,
 				), errors.Errorf(
 					ctx,
@@ -599,14 +617,18 @@ func (p *prPoster) verifyAfterPost(
 		}
 		var reviews []reviewEntry
 		if err := json.Unmarshal(body, &reviews); err != nil {
-			return false, status, truncateBody(body), errors.Wrapf(ctx, err, "parse reviews")
+			return false, status, header, truncateBody(body), errors.Wrapf(
+				ctx,
+				err,
+				"parse reviews",
+			)
 		}
 		for _, r := range reviews {
 			if r.User.Login == p.botLogin && r.CommitID == headSHA && r.State == expectedState {
-				return true, status, truncateBody(body), nil
+				return true, status, header, truncateBody(body), nil
 			}
 		}
-		return false, 200, truncateBody(body), errPhantomPOST
+		return false, 200, header, truncateBody(body), errPhantomPOST
 	})
 	if errors.Is(cr.Err, errPhantomPOST) {
 		return prpkg.PostResult{
@@ -638,10 +660,10 @@ func doRequest(
 	client HTTPClient,
 	token, method, rawURL string,
 	body io.Reader,
-) (int, []byte, error) {
+) (int, http.Header, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
-		return 0, nil, errors.Wrapf(ctx, err, "create request %s %s", method, rawURL)
+		return 0, nil, nil, errors.Wrapf(ctx, err, "create request %s %s", method, rawURL)
 	}
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -650,14 +672,14 @@ func doRequest(
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, errors.Wrapf(ctx, err, "do request %s %s", method, rawURL)
+		return 0, nil, nil, errors.Wrapf(ctx, err, "do request %s %s", method, rawURL)
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, nil, errors.Wrapf(ctx, err, "read response body")
+		return resp.StatusCode, nil, nil, errors.Wrapf(ctx, err, "read response body")
 	}
-	return resp.StatusCode, bodyBytes, nil
+	return resp.StatusCode, resp.Header, bodyBytes, nil
 }
 
 // truncateBody returns at most 500 bytes of the body as a string, for diagnostics.
@@ -740,13 +762,16 @@ func buildFailedResult[T any](step string, cr CallResult[T]) prpkg.PostResult {
 		msg = cr.Err.Error()
 	}
 	return prpkg.PostResult{
-		Outcome:      "failed",
-		FailureStep:  step,
-		Class:        cr.Class,
-		EscalateHint: cr.Class == prpkg.ErrorClassPermanent || cr.Class == prpkg.ErrorClassUnknown,
-		Attempt:      cr.Attempts,
-		HTTPStatus:   cr.HTTPStatus,
-		ErrorMessage: msg,
-		ResponseBody: cr.ResponseBody,
+		Outcome:     "failed",
+		FailureStep: step,
+		Class:       cr.Class,
+		EscalateHint: cr.Class == prpkg.ErrorClassPermanent ||
+			cr.Class == prpkg.ErrorClassUnknown,
+		Attempt:            cr.Attempts,
+		HTTPStatus:         cr.HTTPStatus,
+		ErrorMessage:       msg,
+		ResponseBody:       cr.ResponseBody,
+		RateLimitRemaining: cr.ResponseHeader.Get("X-RateLimit-Remaining"),
+		RateLimitReset:     cr.ResponseHeader.Get("X-RateLimit-Reset"),
 	}
 }

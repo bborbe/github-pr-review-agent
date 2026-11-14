@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	errors "github.com/bborbe/errors"
@@ -75,24 +76,26 @@ func (v *reviewVerifier) VerifyReview(
 		"https://api.github.com/repos/%s/%s/pulls/%d/reviews",
 		req.PR.Owner, req.PR.Repo, req.PR.Number,
 	)
-	cr := retryCall(ctx, step, func(ctx context.Context) (reviewEntry, int, string, error) {
-		status, body, err := doRequest(ctx, v.httpClient, v.ghToken, "GET", url, nil)
+	cr := retryCall(ctx, step, func(
+		ctx context.Context,
+	) (reviewEntry, int, http.Header, string, error) {
+		status, header, body, err := doRequest(ctx, v.httpClient, v.ghToken, "GET", url, nil)
 		if err != nil {
-			return reviewEntry{}, status, truncateBody(body), err
+			return reviewEntry{}, status, header, truncateBody(body), err
 		}
 		if status != 200 {
-			return reviewEntry{}, status, truncateBody(body),
+			return reviewEntry{}, status, header, truncateBody(body),
 				errors.Errorf(ctx, "unexpected status %d", status)
 		}
 		var reviews []reviewEntry
 		if err := json.Unmarshal(body, &reviews); err != nil {
-			return reviewEntry{}, status, truncateBody(body),
+			return reviewEntry{}, status, header, truncateBody(body),
 				errors.Wrapf(ctx, err, "parse reviews")
 		}
 		if r, ok := findReview(reviews, v.botLogin, req.HeadSHA, req.ExpectedStates); ok {
-			return r, status, truncateBody(body), nil
+			return r, status, header, truncateBody(body), nil
 		}
-		return reviewEntry{}, 200, truncateBody(body), errPhantomPOST
+		return reviewEntry{}, 200, header, truncateBody(body), errPhantomPOST
 	})
 	elapsed := time.Since(start).Milliseconds()
 	if errors.Is(cr.Err, errPhantomPOST) {

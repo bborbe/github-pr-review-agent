@@ -20,6 +20,15 @@ func ShouldVerifyPostForTest(ctx context.Context, md *agentlib.Markdown) (bool, 
 	return s.shouldVerifyPost(ctx, md)
 }
 
+// BuildDiagnosticBlockForTest exposes buildDiagnosticBlock for unit testing.
+func BuildDiagnosticBlockForTest(
+	jobRunTime time.Time,
+	triggerCount int,
+	result PostResult,
+) string {
+	return buildDiagnosticBlock(jobRunTime, triggerCount, result)
+}
+
 // VerdictPayloadForTest re-exports the unexported verdictPayload so
 // review_test.go (in the pkg_test package) can assert on the parsed
 // values without exposing the type to production callers.

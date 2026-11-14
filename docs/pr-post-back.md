@@ -84,6 +84,15 @@ elapsed_ms: 342
 
 `failure_step` names the step where the error occurred (`pr_url_extraction`, `pr_url_parse`, `pr_url_platform`, `bot_identity`, `post`, `verify`). `class` is one of `transient`, `permanent`, `unknown`, `not-a-failure`. `escalate_hint` is true when the poster's retry logic recommends human escalation.
 
+When the failed response carried GitHub rate-limit headers, two optional lines are appended after `elapsed_ms`:
+
+```yaml
+rate_limit_remaining: 0
+rate_limit_reset: 1763000000
+```
+
+Each line is emitted only when its header was present, so an ordinary failure with no rate-limit headers produces exactly the block shown above. `rate_limit_reset` is the raw epoch-seconds value of `X-RateLimit-Reset`.
+
 ## Failure Routing
 
 | Posting outcome | Class | Next phase |

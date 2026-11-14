@@ -1284,8 +1284,8 @@ func buildDiagnosticBlock(jobRunTime time.Time, triggerCount int, result PostRes
 	if respBody == "" {
 		respBody = "<empty>"
 	}
-	return fmt.Sprintf(
-		"```yaml\njob_run: %s\ntrigger_count: %d\noutcome: failed\nfailure_step: %s\nclass: %s\nescalate_hint: %v\nattempt: %d\nhttp_status: %s\nerror_message: %q\nresponse_body: %q\nelapsed_ms: %d\n```\n",
+	block := fmt.Sprintf(
+		"```yaml\njob_run: %s\ntrigger_count: %d\noutcome: failed\nfailure_step: %s\nclass: %s\nescalate_hint: %v\nattempt: %d\nhttp_status: %s\nerror_message: %q\nresponse_body: %q\nelapsed_ms: %d\n",
 		jobRunTime.UTC().Format(time.RFC3339),
 		triggerCount,
 		result.FailureStep,
@@ -1297,6 +1297,15 @@ func buildDiagnosticBlock(jobRunTime time.Time, triggerCount int, result PostRes
 		respBody,
 		result.ElapsedMs,
 	)
+	// Rate-limit headers are emitted only when present so an ordinary failure
+	// produces a byte-identical block to the pre-rate-limit format.
+	if result.RateLimitRemaining != "" {
+		block += fmt.Sprintf("rate_limit_remaining: %s\n", result.RateLimitRemaining)
+	}
+	if result.RateLimitReset != "" {
+		block += fmt.Sprintf("rate_limit_reset: %s\n", result.RateLimitReset)
+	}
+	return block + "```\n"
 }
 
 // extractRequiredFrontmatter pulls the four required frontmatter fields for
