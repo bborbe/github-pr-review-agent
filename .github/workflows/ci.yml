@@ -10,7 +10,7 @@ jobs:
   # Branch protection on master requires a check named "test".
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
