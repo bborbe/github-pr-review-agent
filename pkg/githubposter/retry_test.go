@@ -187,4 +187,57 @@ var _ = Describe("retryCall rate-limit handling", func() {
 		Expect(calls).To(Equal(1))
 		Expect(time.Since(start)).To(BeNumerically("<", 30*time.Second))
 	})
+
+	// GitHub sends X-RateLimit-Reset on ordinary responses too, and the
+	// phantom-POST verify-GET returns a 200 GET's header with its sentinel. The
+	// reset wait must therefore be gated on the failure actually being a rate
+	// limit, or a plain 5xx inherits a wait of tens of minutes.
+	It("keeps the base delay for a non-rate-limit transient failure", func() {
+		header := http.Header{}
+		header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+
+		calls := 0
+		start := time.Now()
+		result := githubposter.RetryCallForTest(
+			context.Background(),
+			func(ctx context.Context) (bool, int, http.Header, string, error) {
+				calls++
+				if calls == 1 {
+					return false, 500, header, "internal server error", errors.New("boom")
+				}
+				return true, 200, http.Header{}, "", nil
+			},
+		)
+
+		Expect(result.Attempts).To(Equal(2))
+		Expect(calls).To(Equal(2))
+		Expect(time.Since(start)).To(BeNumerically("<", 30*time.Second))
+	})
+
+	// A secondary (abuse) limit signals with Retry-After delta-seconds, not
+	// X-RateLimit-Reset. Without it the retry fires inside the still-active
+	// window and burns the one attempt the budget allows.
+	It("honours Retry-After for a secondary rate limit", func() {
+		header := http.Header{}
+		header.Set("Retry-After", "2")
+
+		calls := 0
+		start := time.Now()
+		result := githubposter.RetryCallForTest(
+			context.Background(),
+			func(ctx context.Context) (bool, int, http.Header, string, error) {
+				calls++
+				if calls == 1 {
+					return false, 403, header,
+						"You have exceeded a secondary rate limit", errors.New("secondary rate limit")
+				}
+				return true, 200, http.Header{}, "", nil
+			},
+		)
+		elapsed := time.Since(start)
+
+		Expect(result.Attempts).To(Equal(2))
+		Expect(calls).To(Equal(2))
+		Expect(elapsed).To(BeNumerically(">=", 1900*time.Millisecond))
+	})
 })

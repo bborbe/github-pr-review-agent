@@ -677,7 +677,9 @@ func doRequest(
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, nil, nil, errors.Wrapf(ctx, err, "read response body")
+		// Keep the header: a rate-limited 403 whose body read fails would otherwise
+		// lose both signals (nil header, empty body) and classify permanent.
+		return resp.StatusCode, resp.Header, nil, errors.Wrapf(ctx, err, "read response body")
 	}
 	return resp.StatusCode, resp.Header, bodyBytes, nil
 }

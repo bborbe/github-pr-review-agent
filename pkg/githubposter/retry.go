@@ -91,21 +91,30 @@ func isRateLimited(status int, header http.Header, body string) bool {
 	return strings.Contains(strings.ToLower(body), "rate limit")
 }
 
-// rateLimitResetWait returns the duration until the X-RateLimit-Reset instant.
-// An absent, empty, or unparsable header yields zero so the caller falls back to
-// the fixed base delay. A reset in the past also yields zero.
+// rateLimitResetWait returns the duration until the rate limit lifts, taken from
+// X-RateLimit-Reset (epoch seconds, primary limit) or Retry-After (delta seconds,
+// secondary limit). An absent, empty, or unparsable header yields zero so the
+// caller falls back to the fixed base delay. A reset in the past also yields zero.
+//
+// Only meaningful when the response actually IS a rate limit — GitHub sends
+// X-RateLimit-Reset on ordinary responses too, so the caller gates on isRateLimited.
 func rateLimitResetWait(header http.Header) time.Duration {
-	raw := header.Get("X-RateLimit-Reset")
-	if raw == "" {
-		return 0
+	if raw := header.Get("X-RateLimit-Reset"); raw != "" {
+		if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			// Direct clock read is deliberate: retryCall is a free generic function with
+			// no constructor to inject a clock through (matching pkg/funnel.go).
+			return time.Until(time.Unix(seconds, 0))
+		}
 	}
-	seconds, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0
+	// A secondary (abuse) limit signals with Retry-After delta-seconds instead of
+	// X-RateLimit-Reset. Without this the retry fires inside the still-active
+	// window and burns the one attempt the budget allows.
+	if raw := header.Get("Retry-After"); raw != "" {
+		if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return time.Duration(seconds) * time.Second
+		}
 	}
-	// Direct clock read is deliberate: retryCall is a free generic function with
-	// no constructor to inject a clock through (matching pkg/funnel.go).
-	return time.Until(time.Unix(seconds, 0))
+	return 0
 }
 
 // retryCall executes call at most twice: once immediately, and once after a short
@@ -143,24 +152,30 @@ func retryCall[T any](
 	n := rand.Intn(retryJitterMs + 1) //nolint:gosec
 	jitter := time.Duration(n) * time.Millisecond
 	wait := retryBaseDelay + jitter
-	// Extend the wait to the rate-limit reset when that lies further out, so the
-	// retry does not burn its second attempt inside the exhausted window.
-	if resetWait := rateLimitResetWait(header); resetWait > wait {
-		// Beyond maxRateLimitWait the wait is not taken: the posting path has no
-		// caller deadline, so waiting would park the pod for most of an hour to
-		// make an attempt that still fails. Report transient instead — the record
-		// is re-driven, which is the outcome this classification exists to produce.
-		if resetWait > maxRateLimitWait {
-			return CallResult[T]{
-				HTTPStatus:     status,
-				ResponseHeader: header,
-				ResponseBody:   body,
-				Err:            err,
-				Attempts:       1,
-				Class:          prpkg.ErrorClassTransient,
+	// Extend the wait to the rate limit's reset when that lies further out, so the
+	// retry does not burn its second attempt inside the exhausted window. Gated on
+	// isRateLimited: GitHub sends X-RateLimit-Reset on ordinary responses too, and
+	// the phantom-POST verify-GET returns a 200 GET's header with the sentinel — an
+	// unconditional read would rewrite that retry's backoff (or skip it entirely)
+	// for a failure that is not a rate limit at all.
+	if isRateLimited(status, header, body) {
+		if resetWait := rateLimitResetWait(header); resetWait > wait {
+			// Beyond maxRateLimitWait the wait is not taken: the posting path has no
+			// caller deadline, so waiting would park the pod for most of an hour to
+			// make an attempt that still fails. Report transient instead — the record
+			// is re-driven, which is the outcome this classification exists to produce.
+			if resetWait > maxRateLimitWait {
+				return CallResult[T]{
+					HTTPStatus:     status,
+					ResponseHeader: header,
+					ResponseBody:   body,
+					Err:            err,
+					Attempts:       1,
+					Class:          prpkg.ErrorClassTransient,
+				}
 			}
+			wait = resetWait
 		}
-		wait = resetWait
 	}
 	select {
 	case <-ctx.Done():
