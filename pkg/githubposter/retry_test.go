@@ -164,4 +164,27 @@ var _ = Describe("retryCall rate-limit handling", func() {
 		Expect(result.Attempts).To(Equal(1))
 		Expect(calls).To(Equal(1))
 	})
+
+	// The posting path runs under context.Background(), so no caller deadline
+	// bounds the wait. This pins the cap that stands in for one: a reset an hour
+	// out must report transient rather than park the pod for the hour.
+	It("does not wait for a reset beyond the cap, reporting transient with one attempt", func() {
+		header := http.Header{}
+		header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+
+		calls := 0
+		start := time.Now()
+		result := githubposter.RetryCallForTest(
+			context.Background(),
+			func(ctx context.Context) (bool, int, http.Header, string, error) {
+				calls++
+				return false, 403, header, "rate limit", errors.New("rate limit")
+			},
+		)
+
+		Expect(result.Class).To(Equal(pkg.ErrorClassTransient))
+		Expect(result.Attempts).To(Equal(1))
+		Expect(calls).To(Equal(1))
+		Expect(time.Since(start)).To(BeNumerically("<", 30*time.Second))
+	})
 })

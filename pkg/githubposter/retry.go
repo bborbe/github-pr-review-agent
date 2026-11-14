@@ -28,6 +28,12 @@ var retryBaseDelay = 5 * time.Second
 // retryJitterMs is the maximum random jitter in milliseconds added to the base delay.
 var retryJitterMs = 1000
 
+// maxRateLimitWait bounds how long retryCall will wait for a rate-limit reset.
+// The posting path runs under context.Background(), so no caller deadline bounds
+// it — without this cap a reset an hour out parks the pod for that hour to make
+// an attempt that still lands inside the same exhausted window.
+var maxRateLimitWait = 15 * time.Minute
+
 // CallResult carries the outcome of a single retryCall invocation.
 type CallResult[T any] struct {
 	Value          T
@@ -140,6 +146,20 @@ func retryCall[T any](
 	// Extend the wait to the rate-limit reset when that lies further out, so the
 	// retry does not burn its second attempt inside the exhausted window.
 	if resetWait := rateLimitResetWait(header); resetWait > wait {
+		// Beyond maxRateLimitWait the wait is not taken: the posting path has no
+		// caller deadline, so waiting would park the pod for most of an hour to
+		// make an attempt that still fails. Report transient instead — the record
+		// is re-driven, which is the outcome this classification exists to produce.
+		if resetWait > maxRateLimitWait {
+			return CallResult[T]{
+				HTTPStatus:     status,
+				ResponseHeader: header,
+				ResponseBody:   body,
+				Err:            err,
+				Attempts:       1,
+				Class:          prpkg.ErrorClassTransient,
+			}
+		}
 		wait = resetWait
 	}
 	select {
