@@ -33,15 +33,16 @@ type verdictPayload struct {
 // post persisted on GitHub, parses verdict, and routes the next phase:
 // pass → done, fail (or unparseable) → human_review.
 type reviewStep struct {
-	runner       claudelib.ClaudeRunner
-	poster       PrPoster // nil = skip posting
-	instructions claudelib.Instructions
-	verifier     ReviewVerifier // nil = skip verification
-	ghToken      string
-	botLogin     string
-	maxDuration  libtime.Duration // soft REVIEW_MAX_DURATION budget per claude run
-	prState      PRStateClient
-	pollInterval libtime.Duration // mid-run PR-state poll; <= 0 disables the watch
+	runner          claudelib.ClaudeRunner
+	poster          PrPoster // nil = skip posting
+	instructions    claudelib.Instructions
+	verifier        ReviewVerifier // nil = skip verification
+	ghToken         string
+	botLogin        string
+	maxDuration     libtime.Duration // soft REVIEW_MAX_DURATION budget per claude run
+	prState         PRStateClient
+	pollInterval    libtime.Duration // mid-run PR-state poll; <= 0 disables the watch
+	currentDateTime libtime.CurrentDateTimeGetter
 }
 
 // NewReviewStep constructs the ai_review-phase step. maxDuration is the soft
@@ -51,6 +52,7 @@ type reviewStep struct {
 // human_review (both at step head and after a fail verdict). pollInterval is
 // how often the running claude call re-reads the PR state; a moot PR cancels
 // the call mid-run. A pollInterval <= 0 disables the mid-run watch.
+// currentDateTime stamps the budget-expiry diagnostic.
 func NewReviewStep(
 	runner claudelib.ClaudeRunner,
 	poster PrPoster,
@@ -61,17 +63,19 @@ func NewReviewStep(
 	maxDuration libtime.Duration,
 	prState PRStateClient,
 	pollInterval libtime.Duration,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) agentlib.Step {
 	return &reviewStep{
-		pollInterval: pollInterval,
-		runner:       runner,
-		poster:       poster,
-		instructions: instructions,
-		verifier:     verifier,
-		ghToken:      ghToken,
-		botLogin:     botLogin,
-		maxDuration:  maxDuration,
-		prState:      prState,
+		pollInterval:    pollInterval,
+		runner:          runner,
+		poster:          poster,
+		instructions:    instructions,
+		verifier:        verifier,
+		ghToken:         ghToken,
+		botLogin:        botLogin,
+		maxDuration:     maxDuration,
+		prState:         prState,
+		currentDateTime: currentDateTime,
 	}
 }
 
@@ -147,7 +151,7 @@ func (s *reviewStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentlib.
 			glog.V(2).
 				Infof("ai-review: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
 			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
-			return budgetExpiredResult(md, "ai-review", s.maxDuration), nil
+			return budgetExpiredResult(md, "ai-review", s.maxDuration, s.currentDateTime), nil
 		}
 		return &agentlib.Result{
 			Status:  agentlib.AgentStatusFailed,
