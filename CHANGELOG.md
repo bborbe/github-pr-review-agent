@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **an uppercase `task_identifier` from task frontmatter no longer aborts the run before cloning.** `EnsureWorktree` read the identifier verbatim and rejected anything the lowercase-only UUID regex did not match, so a task whose frontmatter carried `9B4C7E12-…` failed with `invalid task ID` before any git work ran (Sentry NUKE-DEV-GX). The value is now trimmed and lowercased before validation and before the worktree path join, so an uppercase retrigger reuses the same worktree as the lowercase form. The lowercase regex stays in place as the defense-in-depth gate — malformed, empty and path-traversal identifiers are still rejected, and the error still prints the original frontmatter value.
+
 ## v0.18.2
 
 - fix: **the budget-expiry diagnostic is stamped from the injected clock, not the wall clock.** `budgetExpiredResult` passed `time.Now()` to `buildDiagnosticBlock`, so every budget-terminated run stamped its `## Diagnostics` entry from the wall clock — unpinnable in a test and diverging from the `jobRunTime` every sibling call site passes. It now takes a `libtime.CurrentDateTimeGetter`; `checkoutExecutionStep` passes its existing field, and `planningStep` / `reviewStep` gained the field plus constructor and factory wiring. The `time.Now()` at `runWithSoftBudget` stays, deliberately: it feeds only `time.Since` and stamps no record.

@@ -155,6 +155,85 @@ var _ = Describe("RepoManager", func() {
 			})
 		})
 
+		Context("uppercase taskID (Sentry NUKE-DEV-GX)", func() {
+			const uppercaseTaskID = "9B4C7E12-6D3A-4F58-A1C9-3E7B5D2F8A64"
+			const canonicalTaskID = "9b4c7e12-6d3a-4f58-a1c9-3e7b5d2f8a64"
+
+			It("normalizes to lowercase and creates a real worktree at the canonical path", func() {
+				wPath, err := manager.EnsureWorktree(
+					ctx,
+					origin.URL,
+					"feature-branch",
+					uppercaseTaskID,
+				)
+				Expect(err).To(BeNil())
+				Expect(wPath).To(Equal(filepath.Join(workDir, canonicalTaskID)))
+
+				info, statErr := os.Stat(wPath)
+				Expect(statErr).To(BeNil())
+				Expect(info.IsDir()).To(BeTrue())
+
+				out, gitErr := exec.Command("git", "-C", wPath, "rev-parse", "--abbrev-ref", "HEAD").
+					Output()
+				Expect(gitErr).To(BeNil())
+				Expect(strings.TrimSpace(string(out))).To(Equal("feature-branch"))
+			})
+		})
+
+		Context("case-insensitive idempotency", func() {
+			It("reuses the same worktree on a retrigger with different casing", func() {
+				wPath1, err := manager.EnsureWorktree(ctx, origin.URL, "feature-branch", taskID)
+				Expect(err).To(BeNil())
+
+				wPath2, err := manager.EnsureWorktree(
+					ctx,
+					origin.URL,
+					"feature-branch",
+					strings.ToUpper(taskID),
+				)
+				Expect(err).To(BeNil())
+				Expect(wPath2).To(Equal(wPath1))
+			})
+		})
+
+		Context("whitespace around the taskID", func() {
+			It("trims the value and returns the canonical path", func() {
+				wPath, err := manager.EnsureWorktree(
+					ctx,
+					origin.URL,
+					"feature-branch",
+					"  "+taskID+"\n",
+				)
+				Expect(err).To(BeNil())
+				Expect(wPath).To(Equal(filepath.Join(workDir, taskID)))
+			})
+		})
+
+		Context("empty taskID", func() {
+			It("returns error and creates no directory", func() {
+				_, err := manager.EnsureWorktree(ctx, origin.URL, "feature-branch", "")
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("invalid task ID"))
+
+				entries, readErr := os.ReadDir(workDir)
+				Expect(readErr).To(BeNil())
+				Expect(entries).To(BeEmpty())
+			})
+		})
+
+		DescribeTable("malformed taskIDs are rejected",
+			func(invalidTaskID string) {
+				_, err := manager.EnsureWorktree(ctx, origin.URL, "feature-branch", invalidTaskID)
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("invalid task ID"))
+			},
+			Entry("empty", ""),
+			Entry("not a UUID", "NOT-A-UUID"),
+			Entry("path traversal", "../../etc/passwd"),
+			Entry("truncated", "9b4c7e12-6d3a-4f58-a1c9"),
+			Entry("non-hex", "9b4c7e12-6d3a-4f58-a1c9-3e7b5d2f8a6z"),
+		)
+
 		Context("invalid taskID", func() {
 			It("returns error before touching disk", func() {
 				_, err := manager.EnsureWorktree(ctx, origin.URL, "feature-branch", "not-a-uuid")

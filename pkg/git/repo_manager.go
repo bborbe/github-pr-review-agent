@@ -149,8 +149,15 @@ func (r *repoManager) EnsureWorktree(
 		return "", errors.Errorf(ctx, "invalid ref: %s", ref)
 	}
 
+	// Task frontmatter carries the task_identifier verbatim (Sentry NUKE-DEV-GX:
+	// an uppercase UUID), while the worktree layout and taskIDRegexp are
+	// canonical lowercase. Normalize before validating and before the path join;
+	// the regex stays as the defense-in-depth gate for malformed / empty /
+	// traversal input.
+	rawTaskID := taskID
+	taskID = strings.ToLower(strings.TrimSpace(taskID))
 	if !taskIDRegexp.MatchString(taskID) {
-		return "", errors.Errorf(ctx, "invalid task ID (must be UUID): %s", taskID)
+		return "", errors.Errorf(ctx, "invalid task ID (must be UUID): %s", rawTaskID)
 	}
 
 	barePath, err := r.EnsureBareClone(ctx, cloneURL)
