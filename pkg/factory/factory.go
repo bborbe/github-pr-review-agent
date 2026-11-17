@@ -279,6 +279,7 @@ func createPhases(
 			prompts.BuildPlanningInstructions(),
 			maxDuration,
 			prStateClient,
+			currentDateTime,
 		), humanReviewOwner),
 	)
 	executionStep := prpkg.NewHumanReviewOwnerStep(prpkg.NewCheckoutExecutionStep(
@@ -310,6 +311,7 @@ func createPhases(
 		maxDuration,
 		prStateClient,
 		prStatePollInterval,
+		currentDateTime,
 	), humanReviewOwner)
 	return []agentlib.Phase{
 		planningPhase,

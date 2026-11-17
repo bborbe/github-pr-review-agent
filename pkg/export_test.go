@@ -29,6 +29,18 @@ func BuildDiagnosticBlockForTest(
 	return buildDiagnosticBlock(jobRunTime, triggerCount, result)
 }
 
+// BudgetExpiredResultForTest exposes budgetExpiredResult so soft_budget_test.go
+// (in the pkg_test package) can assert that the ## Diagnostics stamp comes from
+// the injected clock rather than the wall clock.
+func BudgetExpiredResultForTest(
+	md *agentlib.Markdown,
+	stepName string,
+	maxDuration libtime.Duration,
+	currentDateTime libtime.CurrentDateTimeGetter,
+) *agentlib.Result {
+	return budgetExpiredResult(md, stepName, maxDuration, currentDateTime)
+}
+
 // VerdictPayloadForTest re-exports the unexported verdictPayload so
 // review_test.go (in the pkg_test package) can assert on the parsed
 // values without exposing the type to production callers.

@@ -36,28 +36,31 @@ const maxPlanningAttempts = 3
 // concerns → post LGTM" shortcut — a shallow planning pass must never
 // rubber-stamp a positive review without the execution review running.
 type planningStep struct {
-	runner       claudelib.ClaudeRunner
-	instructions claudelib.Instructions
-	maxDuration  libtime.Duration
-	prState      PRStateClient
+	runner          claudelib.ClaudeRunner
+	instructions    claudelib.Instructions
+	maxDuration     libtime.Duration
+	prState         PRStateClient
+	currentDateTime libtime.CurrentDateTimeGetter
 }
 
 // NewPlanningStep constructs the planning-phase step. maxDuration is the soft
 // REVIEW_MAX_DURATION budget enforced on each claude run; expiry routes to
 // human_review instead of the controller retry path. prState queries the live
 // GitHub PR state so a merged/closed/superseded PR short-circuits before any
-// planning work.
+// planning work. currentDateTime stamps the budget-expiry diagnostic.
 func NewPlanningStep(
 	runner claudelib.ClaudeRunner,
 	instructions claudelib.Instructions,
 	maxDuration libtime.Duration,
 	prState PRStateClient,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) agentlib.Step {
 	return &planningStep{
-		runner:       runner,
-		instructions: instructions,
-		maxDuration:  maxDuration,
-		prState:      prState,
+		runner:          runner,
+		instructions:    instructions,
+		maxDuration:     maxDuration,
+		prState:         prState,
+		currentDateTime: currentDateTime,
 	}
 }
 
@@ -124,7 +127,7 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 				glog.V(2).
 					Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
 				writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
-				return budgetExpiredResult(md, "planning", s.maxDuration), nil
+				return budgetExpiredResult(md, "planning", s.maxDuration, s.currentDateTime), nil
 			}
 			// Transport error (nil result + err) is NOT retried — controller territory.
 			glog.V(2).Infof("planning: claude failed nextPhase=human_review err=%v", runErr)

@@ -414,6 +414,7 @@ https://github.com/bborbe/maintainer/pull/14
 					libtime.Duration(25*time.Minute),
 					prState,
 					pollInterval,
+					libtime.NewCurrentDateTime(),
 				)
 
 				md := buildMD()
@@ -444,6 +445,7 @@ https://github.com/bborbe/maintainer/pull/14
 				claudelib.Instructions{},
 				libtime.Duration(25*time.Minute),
 				prState,
+				libtime.NewCurrentDateTime(),
 			)
 
 			_, err := step.Run(ctx, buildMD())

@@ -58,10 +58,15 @@ func runWithSoftBudget(
 // indistinguishable from a review awaiting the operator. The diagnostic is what
 // makes the record self-describing. md is nil-tolerant, so a caller without a
 // markdown still routes exactly as before.
+//
+// The diagnostic stamp comes from the injected clock, not the wall clock, so it
+// agrees with the jobRunTime every sibling call site passes and can be pinned
+// in a test. The caller supplies currentDateTime; nothing here creates one.
 func budgetExpiredResult(
 	md *agentlib.Markdown,
 	stepName string,
 	maxDuration libtime.Duration,
+	currentDateTime libtime.CurrentDateTimeGetter,
 ) *agentlib.Result {
 	message := fmt.Sprintf(
 		"%s claude run exceeded the %s soft time budget — routed to human review",
@@ -70,7 +75,7 @@ func budgetExpiredResult(
 	)
 	if md != nil {
 		appendDiagnosticsSection(md, buildDiagnosticBlock(
-			time.Now(),
+			time.Time(currentDateTime.Now()),
 			md.Frontmatter.TriggerCount(),
 			PostResult{
 				Outcome: "failed",
