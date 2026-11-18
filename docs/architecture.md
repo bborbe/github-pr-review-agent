@@ -63,6 +63,8 @@ ai_review's purpose is catching the case where execution rubber-stamped its own 
 
 After Claude writes `## Review`, the execution phase calls `PrPoster.Post` to submit the verdict as a GitHub review. The full posting contract — vault-first invariant, diagnostic block format, failure routing, and `nil`-poster backward-compatibility mode — is documented in [`docs/pr-post-back.md`](pr-post-back.md).
 
+An execution-phase run that ends without a posted verdict — a failed post, a deliberate no-review skip, or an execution-phase soft-budget expiry — posts a best-effort `COMMENT` failure marker naming the run. The marker carries no verdict and never changes routing, phase or status; the full contract lives in [`docs/pr-post-back.md`](pr-post-back.md#failure-marker).
+
 ## Result Delivery
 
 The task file mutates in place across phases. The k8s Job entry (`main.go`) reads `TASK_CONTENT`, runs the appropriate phase based on the `phase:` frontmatter field, mutates the task body, and publishes a status update to Kafka (`master-agent-task-v1-request`). The result-deliverer (`pkg/factory/`) handles the publish.

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - feat: Add `PrPoster.PostFailureMarker` so a run that ends without posting a verdict can leave a bounded, non-verdict `COMMENT` marker on the PR naming its `run_outcome`, run ID and failure reason. The body is capped at 2000 characters, is built only from those three inputs, and reuses the existing `postReview` endpoint without a verify GET; callers follow in a later prompt.
 - feat: post a best-effort failure marker on every execution-phase routing that ends without a posted verdict — a failed post, a deliberate no-review skip, and both chunked and single-run soft-budget expiry. `checkoutExecutionStep.postFailureMarker` resolves the PR itself, skips a nil poster or non-GitHub URL, and discards the result, so a marker failure never changes routing, phase, status or `run_outcome`.
+- docs: describe the PR-visible failure marker in the posting contract, the Definition of Done, the architecture overview and the `noReviewResult` comment, and remove the stale statements that a no-review run posts nothing to the PR.
 
 ## v0.18.2
 

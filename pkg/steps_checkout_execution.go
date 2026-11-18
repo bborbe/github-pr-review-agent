@@ -1133,7 +1133,7 @@ func (s *checkoutExecutionStep) demotionReasonFor(
 }
 
 // noReviewResult reports whether the run produced no review at all and, when it
-// did, returns the terminal result for it: nothing is posted to the PR, an
+// did, returns the terminal result for it: no verdict review is posted, an
 // `outcome: skipped` diagnostic block is appended, and the task routes to
 // human_review.
 //
@@ -1159,10 +1159,11 @@ func (s *checkoutExecutionStep) demotionReasonFor(
 // write and must keep posting. Keying on the wider set would silently stop the
 // agent publishing its real blocking reviews.
 //
-// Nothing is posted rather than a COMMENT — this repo's Definition of Done forbids
-// a new posting path and mapVerdictAndSummary must never emit COMMENT (spec 060).
-// The skip is not silent: the diagnostic block and the human_review routing keep a
-// no-review run visible to the operator.
+// The skip posts no verdict review, but it does post a best-effort failure-marker
+// COMMENT naming the run (see postFailureMarker). The marker carries no verdict and
+// never changes the routing; mapVerdictAndSummary is untouched (spec 060). The skip
+// stays visible in ## Diagnostics and in the run_outcome stamp, and the
+// human_review routing keeps a no-review run visible to the operator.
 // A method rather than a package function, matching its sibling guard
 // resolvePRInfo directly below — both are "decide something about this run, or
 // return an early result from postAndRoute".

@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [011-pr-visible-failure-marker]
+summary: Documented the PR-visible failure marker across the DoD, posting contract, architecture and no-review code comment, removed the stale no-post statements, and added an Unreleased changelog entry.
+execution_id: 2567b9bc-4c6b-5543-b964-1c92c2fa426f-exec-039-spec-011-failure-marker-docs
+dark-factory-version: dev
 created: "2026-11-18T15:00:00Z"
 queued: "2026-11-18T14:53:48Z"
+started: "2026-11-18T15:02:25Z"
+completed: "2026-11-18T15:05:14Z"
 branch: dark-factory/pr-visible-failure-marker
 ---
 
