@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [011-pr-visible-failure-marker]
+summary: Wired checkoutExecutionStep.postFailureMarker into the failed-post, no-review, chunked-budget and single-run-budget execution routings, with recorder-based tests and a CHANGELOG entry.
+execution_id: 2567b9bc-4c6b-5543-b964-1c92c2fa426f-exec-038-spec-011-failure-marker-callsites
+dark-factory-version: dev
 created: "2026-11-18T15:00:00Z"
 queued: "2026-11-18T14:49:52Z"
+started: "2026-11-18T14:57:28Z"
+completed: "2026-11-18T15:02:24Z"
 branch: dark-factory/pr-visible-failure-marker
 ---
 
