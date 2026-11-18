@@ -544,6 +544,13 @@ func (s *checkoutExecutionStep) chunkOutcome(
 		return r.budgetExpired
 	}); i >= 0 {
 		writeSalvage(md, fmt.Sprintf("Chunk %d/%d\n\n%s", i+1, n, results[i].partial))
+		s.postFailureMarker(
+			ctx,
+			md,
+			ExtractPRURL(md),
+			RunOutcomeBudgetExpired,
+			"soft_budget_expired:execution",
+		)
 		return budgetExpiredResult(md, "execution", s.maxDuration, s.currentDateTime), true, nil
 	}
 	// The genuine failure that triggered the cancel wins over a sibling it
@@ -870,6 +877,13 @@ func (s *checkoutExecutionStep) runClaude(
 			glog.V(2).
 				Infof("execution: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
 			writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
+			s.postFailureMarker(
+				ctx,
+				md,
+				prURLStr,
+				RunOutcomeBudgetExpired,
+				"soft_budget_expired:execution",
+			)
 			return budgetExpiredResult(md, "execution", s.maxDuration, s.currentDateTime), nil
 		}
 		return &agentlib.Result{
@@ -1003,6 +1017,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 	// No-review gate — see noReviewResult for why this is keyed on
 	// IsNoReviewReason and not the wider isFailClosedReason set.
 	if skipResult, skip := s.noReviewResult(md, verdict, reviewBody, jobRunTime); skip {
+		s.postFailureMarker(ctx, md, prURLStr, RunOutcomeNoReview, "no_review_produced")
 		return skipResult, nil
 	}
 
@@ -1041,6 +1056,7 @@ func (s *checkoutExecutionStep) postAndRoute(
 	// a blocked PR does need a human — but without this stamp the record is
 	// indistinguishable from a review awaiting the operator.
 	stampRunOutcome(md, RunOutcomePostFailed, postFailureReason(result))
+	s.postFailureMarker(ctx, md, prURLStr, RunOutcomePostFailed, postFailureReason(result))
 	return &agentlib.Result{
 		Status:    agentlib.AgentStatusDone,
 		NextPhase: "human_review",
@@ -1117,7 +1133,7 @@ func (s *checkoutExecutionStep) demotionReasonFor(
 }
 
 // noReviewResult reports whether the run produced no review at all and, when it
-// did, returns the terminal result for it: nothing is posted to the PR, an
+// did, returns the terminal result for it: no verdict review is posted, an
 // `outcome: skipped` diagnostic block is appended, and the task routes to
 // human_review.
 //
@@ -1143,10 +1159,11 @@ func (s *checkoutExecutionStep) demotionReasonFor(
 // write and must keep posting. Keying on the wider set would silently stop the
 // agent publishing its real blocking reviews.
 //
-// Nothing is posted rather than a COMMENT — this repo's Definition of Done forbids
-// a new posting path and mapVerdictAndSummary must never emit COMMENT (spec 060).
-// The skip is not silent: the diagnostic block and the human_review routing keep a
-// no-review run visible to the operator.
+// The skip posts no verdict review, but it does post a best-effort failure-marker
+// COMMENT naming the run (see postFailureMarker). The marker carries no verdict and
+// never changes the routing; mapVerdictAndSummary is untouched (spec 060). The skip
+// stays visible in ## Diagnostics and in the run_outcome stamp, and the
+// human_review routing keeps a no-review run visible to the operator.
 // A method rather than a package function, matching its sibling guard
 // resolvePRInfo directly below — both are "decide something about this run, or
 // return an early result from postAndRoute".
@@ -1184,6 +1201,45 @@ func (s *checkoutExecutionStep) noReviewResult(
 		NextPhase: "human_review",
 		Message:   "no review produced — post skipped",
 	}, true
+}
+
+// postFailureMarker posts a best-effort COMMENT naming a run that ended without
+// posting a verdict. It is the only place in this step that resolves PR info for
+// the marker and calls the poster.
+//
+// Every failure mode is swallowed: a nil poster, an unparseable or non-GitHub
+// URL, and a failed marker POST all leave the caller's routing untouched. The
+// returned PostResult is discarded and no ## Diagnostics entry is appended, so a
+// marker can never change the run's Status, NextPhase, Message or run_outcome.
+// resolvePRInfo is deliberately NOT used here: it appends failure diagnostics and
+// returns an early result, and propagating either would change the routing.
+func (s *checkoutExecutionStep) postFailureMarker(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	prURLStr, outcome, reason string,
+) {
+	if s.prPoster == nil {
+		return
+	}
+	prInfo, err := prurl.ParsePRURL(ctx, prURLStr)
+	if err != nil {
+		glog.V(2).Infof("failure marker skipped: cannot parse PR URL %q: %v", prURLStr, err)
+		return
+	}
+	if prInfo.Platform != prurl.PlatformGitHub {
+		return
+	}
+	ref, _ := md.Frontmatter.String("ref")
+	runID, _ := md.Frontmatter.String("task_identifier")
+	result := s.prPoster.PostFailureMarker(ctx, *prInfo, ref, outcome, reason, runID)
+	if result.Outcome != "success" {
+		glog.V(2).Infof(
+			"failure marker post unsuccessful outcome=%s step=%s http_status=%d",
+			result.Outcome,
+			result.FailureStep,
+			result.HTTPStatus,
+		)
+	}
 }
 
 // resolvePRInfo validates and parses the PR URL, writes diagnostics on failure,

@@ -17,7 +17,7 @@ After completing your implementation, review your own changes against each crite
 - The `pr-override` path (`PostOverrideApprove`) is the one deliberate exception and posts unconditionally for exactly two producers: the trusted-author label (no `override_reason`) and `override_reason: trivial-bot-bump`. An unknown `override_reason` must post nothing. Do not add a further reason without an operator decision — the `trivial-bot-bump` producer was added by operator decision 2026-10-23
 - Clones are throwaway scratch dirs at the PR head, cleaned up after the run; no writes back to the cloned repo
 - `REPO_ALLOWLIST` is honored — a PR outside the allowlist is refused, never reviewed
-- No new code path posts to a PR other than the single structured review (+ the override approve)
+- A `COMMENT` review carrying no verdict is permitted only for the existing comment-only paths — `postHallucinationComment` (the comment-after-dismiss path) and the deprecated `PostLGTM` — plus the failure marker. The failure marker is a best-effort `COMMENT` naming an execution-phase run that ended without a posted verdict; it never carries a verdict, never changes routing, phase or status, and is **not** a demotion of the verdict path — it does not touch `mapVerdictAndSummary`. Every verdict-bearing post keeps the `APPROVE` / `REQUEST_CHANGES` contract above.
 
 ## Testing
 

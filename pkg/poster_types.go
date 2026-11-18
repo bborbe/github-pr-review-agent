@@ -41,6 +41,19 @@ type PrPoster interface {
 	// bot's own prior CHANGES_REQUESTED for reviewDecision, so a trusted author
 	// who applied the override label can merge without admin.
 	PostOverrideApprove(ctx context.Context, pr prurl.PRInfo, headSHA, body string) PostResult
+	// PostFailureMarker posts a best-effort COMMENT review naming a run that
+	// ended without posting a verdict. It carries no verdict, never changes
+	// routing, phase or status, and its result is discarded by the caller.
+	// outcome is one of RunOutcomePostFailed / RunOutcomeNoReview /
+	// RunOutcomeBudgetExpired. reason is a bounded string naming the failing
+	// step (and its HTTP status where applicable). runID is the run's task
+	// identifier, which the poster cannot otherwise know. event is always
+	// "COMMENT".
+	PostFailureMarker(
+		ctx context.Context,
+		pr prurl.PRInfo,
+		headSHA, outcome, reason, runID string,
+	) PostResult
 	// DismissCurrentReview dismisses the bot's APPROVED or CHANGES_REQUESTED
 	// review at the current head SHA, then posts a follow-up COMMENT review
 	// citing each hallucination. A no-matching-review case is a non-error

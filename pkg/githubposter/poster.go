@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	errors "github.com/bborbe/errors"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
@@ -116,6 +117,35 @@ func (p *prPoster) PostOverrideApprove(
 	result.PostedEvent = event
 	result.ElapsedMs = time.Since(start).Milliseconds()
 	return result
+}
+
+// PostFailureMarker posts a best-effort COMMENT review naming a run that ended
+// without posting a verdict. It carries no verdict, never changes routing,
+// phase or status, and its result is discarded by the caller. See
+// prpkg.PrPoster.PostFailureMarker for the parameter contract.
+//
+// Unlike the verdict paths it deliberately skips verifyAfterPost: the marker is
+// best-effort, so a verify GET would only add latency and a failure mode for a
+// comment nobody routes on.
+func (p *prPoster) PostFailureMarker(
+	ctx context.Context,
+	pr prurl.PRInfo,
+	headSHA, outcome, reason, runID string,
+) prpkg.PostResult {
+	start := time.Time(p.currentDateTime.Now())
+	const event = "COMMENT"
+	body := buildFailureMarkerBody(outcome, reason, runID)
+
+	reviewID, result, proceed := p.postReview(ctx, pr, headSHA, event, body)
+	if !proceed {
+		return result
+	}
+	return prpkg.PostResult{
+		Outcome:     "success",
+		ReviewID:    reviewID,
+		PostedEvent: event,
+		ElapsedMs:   time.Since(start).Milliseconds(),
+	}
 }
 
 func (p *prPoster) Post(ctx context.Context, req prpkg.PostRequest) prpkg.PostResult {
@@ -352,6 +382,43 @@ func (p *prPoster) listBotReviewsAtHead(
 var dismissPayload = []byte(
 	`{"message":"hallucinated review — see follow-up COMMENT for evidence"}`,
 )
+
+// maxFailureMarkerBody hard-caps the failure-marker comment body. The marker
+// is a short, bounded signal — never a place to spill a response body or a
+// diagnostic block — so the cap is deliberately far below GitHub's 65 KiB limit.
+const maxFailureMarkerBody = 2000
+
+// buildFailureMarkerBody composes the COMMENT review body naming a run that
+// ended without posting a verdict. Its only inputs are the outcome, the bounded
+// reason and the run identifier; it never embeds a response body, a raw error
+// string or ## Diagnostics content.
+//
+// The run_outcome and run lines are emitted before the reason so truncation
+// drops the reason/tail and preserves the two machine-readable keys.
+func buildFailureMarkerBody(outcome, reason, runID string) string {
+	var sb strings.Builder
+	sb.WriteString("Automated review run ended without posting a verdict.\n\n")
+	fmt.Fprintf(&sb, "run_outcome: %s\n", outcome)
+	fmt.Fprintf(&sb, "run: %s\n", runID)
+	fmt.Fprintf(&sb, "failure_reason: %s\n", reason)
+	sb.WriteString(
+		"\nThis is a failure marker: it carries no verdict and does not change the merge gate.",
+	)
+	return truncateFailureMarkerBody(sb.String())
+}
+
+// truncateFailureMarkerBody hard-caps body at maxFailureMarkerBody bytes,
+// backing off to a UTF-8 boundary so a multibyte reason is never split.
+func truncateFailureMarkerBody(body string) string {
+	if len(body) <= maxFailureMarkerBody {
+		return body
+	}
+	b := []byte(body[:maxFailureMarkerBody])
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
+}
 
 // buildHallucinationCommentBody builds the COMMENT review body for the
 // follow-up comment after dismissing a hallucinated review. The opening

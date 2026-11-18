@@ -10,6 +10,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,6 +27,7 @@ import (
 	"github.com/bborbe/github-pr-review-agent/mocks"
 	pkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/factory"
+	"github.com/bborbe/github-pr-review-agent/pkg/githubposter"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo/v2"
@@ -3076,5 +3080,404 @@ https://github.com/bborbe/maintainer/pull/14
 		Expect(fakeRunner.RunCallCount()).To(Equal(3))
 		Expect(atomic.LoadInt32(&entered)).To(Equal(int32(3)))
 		Expect(atomic.LoadInt32(&exited)).To(Equal(int32(3)))
+	})
+})
+
+// markerRedirectingClient proxies requests to api.github.com to a test server,
+// mirroring the redirectingHTTPClient pattern in pkg/githubposter/poster_test.go.
+type markerRedirectingClient struct {
+	base    *http.Transport
+	testURL *url.URL
+}
+
+func (c *markerRedirectingClient) Do(req *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(req.URL.Host, "api.github.com") {
+		newReq := *req
+		newReq.URL = &url.URL{
+			Scheme: c.testURL.Scheme,
+			Host:   c.testURL.Host,
+			Path:   req.URL.Path,
+		}
+		newReq.Host = newReq.URL.Host
+		return c.base.RoundTrip(&newReq)
+	}
+	return c.base.RoundTrip(req)
+}
+
+// markerRecorder records every POST body that reaches the fake reviews endpoint.
+type markerRecorder struct {
+	mu     sync.Mutex
+	bodies []string
+}
+
+func (r *markerRecorder) record(body []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bodies = append(r.bodies, string(body))
+}
+
+// only asserts exactly one POST reached the endpoint and returns its body.
+func (r *markerRecorder) only() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	Expect(r.bodies).To(HaveLen(1), "expected exactly one marker POST")
+	return r.bodies[0]
+}
+
+// newMarkerRecordingPoster starts a fake GitHub reviews endpoint and returns a
+// real poster that posts to it, plus the recorder and a cleanup function. The
+// handler answers a POST to /reviews with 201 {"id":1} and records the body.
+func newMarkerRecordingPoster() (pkg.PrPoster, *markerRecorder, func()) {
+	recorder := &markerRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/reviews") {
+			body, _ := io.ReadAll(req.Body)
+			recorder.record(body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+			return
+		}
+		http.NotFound(w, req)
+	}))
+	testURL, err := url.Parse(server.URL)
+	Expect(err).NotTo(HaveOccurred())
+	client := &markerRedirectingClient{base: &http.Transport{}, testURL: testURL}
+	poster := githubposter.NewPrPoster(
+		client,
+		"test-token",
+		"bot",
+		libtime.NewCurrentDateTime(),
+	)
+	return poster, recorder, server.Close
+}
+
+// markerRecordingPoster delegates PostFailureMarker to the embedded real poster
+// while forcing the verdict Post to a canned result, so the failed-post routing
+// can be driven without a live GitHub.
+type markerRecordingPoster struct {
+	pkg.PrPoster
+	postResult pkg.PostResult
+}
+
+func (p *markerRecordingPoster) Post(context.Context, pkg.PostRequest) pkg.PostResult {
+	return p.postResult
+}
+
+const (
+	markerTaskID = "00000000-0000-0000-0000-000000000001"
+	markerPRURL  = "https://github.com/bborbe/maintainer/pull/14"
+	markerBody   = "LGTM. All checks pass.\n\n{\"verdict\":\"approve\",\"reason\":\"LGTM\"}"
+)
+
+// expectMarkerBody asserts the recorded POST body is a COMMENT carrying no
+// verdict and names the run, plus the supplied present/absent substrings.
+func expectMarkerBody(body string, present, absent []string) {
+	Expect(body).To(ContainSubstring(`"event":"COMMENT"`))
+	Expect(body).NotTo(ContainSubstring("APPROVE"))
+	Expect(body).NotTo(ContainSubstring("REQUEST_CHANGES"))
+	Expect(body).To(ContainSubstring("run: " + markerTaskID))
+	for _, want := range present {
+		Expect(body).To(ContainSubstring(want))
+	}
+	for _, unwanted := range absent {
+		Expect(body).NotTo(ContainSubstring(unwanted))
+	}
+}
+
+var _ = Describe("execution failure marker", func() {
+	var (
+		ctx         context.Context
+		tmpDir      string
+		repoManager *mocks.RepoManager
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		repoManager = &mocks.RepoManager{}
+		repoManager.EnsureWorktreeReturns("/work/test", nil)
+
+		var err error
+		tmpDir, err = os.MkdirTemp("", "exec-marker-*")
+		Expect(err).NotTo(HaveOccurred())
+		cmdDir := filepath.Join(tmpDir, "plugins", "marketplaces", "coding", "commands")
+		Expect(os.MkdirAll(cmdDir, 0750)).To(Succeed())
+		Expect(os.WriteFile(
+			filepath.Join(cmdDir, "pr-review.md"),
+			[]byte(
+				"---\ndescription: Test plugin\nallowed-tools: Task\n---\n# PR Review\n\nProcedure body.\n",
+			),
+			0600,
+		)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	// markerMarkdown builds a task carrying a GitHub PR URL and the run's task
+	// identifier, with an optional ## Review body.
+	markerMarkdown := func(reviewSection string) *agentlib.Markdown {
+		md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+base_ref: main
+task_identifier: `+markerTaskID+`
+---
+# PR Review
+
+`+markerPRURL+`
+`)
+		Expect(err).NotTo(HaveOccurred())
+		if reviewSection != "" {
+			md.ReplaceSection(agentlib.Section{Heading: "## Review", Body: reviewSection})
+		}
+		return md
+	}
+
+	newStep := func(
+		runner claudelib.ClaudeRunner,
+		poster pkg.PrPoster,
+		funnel pkg.FunnelRunner,
+		budget libtime.Duration,
+	) agentlib.Step {
+		return pkg.NewCheckoutExecutionStep(
+			repoManager,
+			claudelib.ClaudeConfigDir(tmpDir),
+			"agent",
+			"sonnet",
+			map[string]string{},
+			claudelib.AllowedTools{"Read"},
+			"standard",
+			nil,
+			poster,
+			funnel,
+			libtime.NewCurrentDateTime(),
+			runner,
+			budget,
+			nil,
+			pkg.DefaultReviewChunkConfig(),
+			libtime.Duration(0),
+			nil,
+		)
+	}
+
+	fixedTime := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+
+	// twoChunkFunnel partitions into exactly two chunks under the default config.
+	twoChunkFunnel := func() pkg.FunnelResult {
+		return pkg.FunnelResult{
+			Ran: true,
+			FindingsJSON: `{"stats":{"yamls_run":1,"findings_count":1,"elapsed_ms":1},` +
+				`"findings_by_owner":{"go-error-assistant":[{"rule_id":"r1","file":"a.go","line":3}]},` +
+				`"errors":[]}`,
+			ChangedFiles: []pkg.ChangedFile{
+				{Path: "a.go", Additions: 301},
+				{Path: "b.go", Additions: 300},
+			},
+		}
+	}
+
+	It("posts a marker naming the failing step on a failed post (AC 1)", func() {
+		realPoster, recorder, closeServer := newMarkerRecordingPoster()
+		defer closeServer()
+		poster := &markerRecordingPoster{
+			PrPoster: realPoster,
+			postResult: pkg.PostResult{
+				Outcome:     "failed",
+				FailureStep: "post",
+				HTTPStatus:  500,
+				Class:       pkg.ErrorClassTransient,
+			},
+		}
+
+		result, err := pkg.PostAndRouteForTest(
+			ctx, poster, markerMarkdown(markerBody), markerPRURL, "", fixedTime, true,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+
+		expectMarkerBody(
+			recorder.only(),
+			[]string{"run_outcome: post_failed", "post (HTTP 500)", markerTaskID},
+			[]string{"no_review", "budget_expired"},
+		)
+	})
+
+	It("posts a marker on a deliberate no-review skip (AC 2)", func() {
+		realPoster, recorder, closeServer := newMarkerRecordingPoster()
+		defer closeServer()
+
+		result, err := pkg.PostAndRouteForTest(
+			ctx,
+			realPoster,
+			markerMarkdown("(tool 'WebFetch' unavailable)"),
+			markerPRURL,
+			"",
+			fixedTime,
+			true,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+
+		expectMarkerBody(
+			recorder.only(),
+			[]string{"run_outcome: no_review", "no_review_produced", markerTaskID},
+			[]string{"post_failed", "budget_expired"},
+		)
+	})
+
+	It("posts a marker on chunked budget expiry (AC 3)", func() {
+		realPoster, recorder, closeServer := newMarkerRecordingPoster()
+		defer closeServer()
+
+		// Chunk 1 always expires on its own deadline; chunk 2 waits for chunk 1
+		// so the expired chunk is deterministic.
+		chunk1Expired := make(chan struct{})
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(
+			runCtx context.Context,
+			prompt string,
+		) (*claudelib.ClaudeResult, error) {
+			if chunkIndexFromPrompt(prompt) == 2 {
+				<-chunk1Expired
+				return &claudelib.ClaudeResult{Partial: "partial chunk output"}, runCtx.Err()
+			}
+			<-runCtx.Done()
+			close(chunk1Expired)
+			return &claudelib.ClaudeResult{Partial: "partial chunk output"}, runCtx.Err()
+		}
+		funnelRunner := &mocks.FunnelRunner{}
+		funnelRunner.RunReturns(twoChunkFunnel(), nil)
+
+		step := newStep(
+			fakeRunner,
+			realPoster,
+			funnelRunner,
+			libtime.Duration(100*time.Millisecond),
+		)
+		result, err := step.Run(ctx, markerMarkdown(""))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+
+		expectMarkerBody(
+			recorder.only(),
+			[]string{"run_outcome: budget_expired", "soft_budget_expired:execution", markerTaskID},
+			[]string{"post_failed", "no_review"},
+		)
+	})
+
+	It("posts a marker on single-run budget expiry (AC 3)", func() {
+		realPoster, recorder, closeServer := newMarkerRecordingPoster()
+		defer closeServer()
+
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(
+			runCtx context.Context,
+			_ string,
+		) (*claudelib.ClaudeResult, error) {
+			<-runCtx.Done() // block until the soft budget deadline fires
+			return &claudelib.ClaudeResult{Partial: "partial output"}, runCtx.Err()
+		}
+
+		step := newStep(
+			fakeRunner,
+			realPoster,
+			nil,
+			libtime.Duration(20*time.Millisecond),
+		)
+		result, err := step.Run(ctx, markerMarkdown(""))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
+
+		expectMarkerBody(
+			recorder.only(),
+			[]string{"run_outcome: budget_expired", "soft_budget_expired:execution", markerTaskID},
+			[]string{"post_failed", "no_review"},
+		)
+	})
+
+	It("leaves no marker on a successful verdict post (AC 4)", func() {
+		fakePoster := &mocks.PrPoster{}
+		fakePoster.PostReturns(pkg.PostResult{Outcome: "success", ReviewID: 42})
+
+		result, err := pkg.PostAndRouteForTest(
+			ctx, fakePoster, markerMarkdown(markerBody), markerPRURL, "", fixedTime, true,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.NextPhase).To(Equal("ai_review"))
+		Expect(fakePoster.PostCallCount()).To(Equal(1))
+		Expect(fakePoster.PostFailureMarkerCallCount()).To(Equal(0))
+	})
+
+	It("a failed marker changes nothing about the routing (AC 6)", func() {
+		failedPost := pkg.PostResult{
+			Outcome:      "failed",
+			FailureStep:  "post",
+			HTTPStatus:   500,
+			Class:        pkg.ErrorClassTransient,
+			ErrorMessage: "boom",
+		}
+
+		// Test run: the marker POST fails. Control run: it succeeds.
+		testPoster := &mocks.PrPoster{}
+		testPoster.PostReturns(failedPost)
+		testPoster.PostFailureMarkerReturns(pkg.PostResult{
+			Outcome:     "failed",
+			FailureStep: "POST /pulls/N/reviews",
+			HTTPStatus:  500,
+		})
+		controlPoster := &mocks.PrPoster{}
+		controlPoster.PostReturns(failedPost)
+		controlPoster.PostFailureMarkerReturns(pkg.PostResult{Outcome: "success", ReviewID: 1})
+
+		testMD := markerMarkdown(markerBody)
+		controlMD := markerMarkdown(markerBody)
+		testResult, err := pkg.PostAndRouteForTest(
+			ctx, testPoster, testMD, markerPRURL, "", fixedTime, true,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		controlResult, err := pkg.PostAndRouteForTest(
+			ctx, controlPoster, controlMD, markerPRURL, "", fixedTime, true,
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(testResult.Status).To(Equal(controlResult.Status))
+		Expect(testResult.NextPhase).To(Equal(controlResult.NextPhase))
+		Expect(testResult.Message).To(Equal(controlResult.Message))
+		Expect(testMD.Frontmatter["run_outcome"]).To(Equal("post_failed"))
+		Expect(controlMD.Frontmatter["run_outcome"]).To(Equal("post_failed"))
+	})
+
+	It("is safe with a nil poster on the no-review path (AC 8)", func() {
+		// A nil poster short-circuits postAndRoute before the no-review gate, so
+		// the routing is the unchanged nil-poster routing (done/ai_review).
+		result, err := pkg.PostAndRouteForTest(
+			ctx, nil, markerMarkdown("(tool 'WebFetch' unavailable)"),
+			markerPRURL, "", fixedTime, true,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("ai_review"))
+	})
+
+	It("is safe with a nil poster on the single-run budget path (AC 8)", func() {
+		fakeRunner := &mocks.ClaudeRunnerMock{}
+		fakeRunner.RunStub = func(
+			runCtx context.Context,
+			_ string,
+		) (*claudelib.ClaudeResult, error) {
+			<-runCtx.Done()
+			return nil, runCtx.Err()
+		}
+
+		step := newStep(fakeRunner, nil, nil, libtime.Duration(20*time.Millisecond))
+		result, err := step.Run(ctx, markerMarkdown(""))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+		Expect(result.NextPhase).To(Equal("human_review"))
 	})
 })

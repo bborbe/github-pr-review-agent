@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: Add `PrPoster.PostFailureMarker` so a run that ends without posting a verdict can leave a bounded, non-verdict `COMMENT` marker on the PR naming its `run_outcome`, run ID and failure reason. The body is capped at 2000 characters, is built only from those three inputs, and reuses the existing `postReview` endpoint without a verify GET; callers follow in a later prompt.
+- feat: post a best-effort failure marker on every execution-phase routing that ends without a posted verdict — a failed post, a deliberate no-review skip, and both chunked and single-run soft-budget expiry. `checkoutExecutionStep.postFailureMarker` resolves the PR itself, skips a nil poster or non-GitHub URL, and discards the result, so a marker failure never changes routing, phase, status or `run_outcome`.
+- docs: describe the PR-visible failure marker in the posting contract, the Definition of Done, the architecture overview and the `noReviewResult` comment, and remove the stale statements that a no-review run posts nothing to the PR.
+
 ## v0.18.2
 
 - fix: **the budget-expiry diagnostic is stamped from the injected clock, not the wall clock.** `budgetExpiredResult` passed `time.Now()` to `buildDiagnosticBlock`, so every budget-terminated run stamped its `## Diagnostics` entry from the wall clock — unpinnable in a test and diverging from the `jobRunTime` every sibling call site passes. It now takes a `libtime.CurrentDateTimeGetter`; `checkoutExecutionStep` passes its existing field, and `planningStep` / `reviewStep` gained the field plus constructor and factory wiring. The `time.Now()` at `runWithSoftBudget` stays, deliberately: it feeds only `time.Since` and stamps no record.

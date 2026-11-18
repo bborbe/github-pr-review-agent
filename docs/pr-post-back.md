@@ -112,6 +112,26 @@ The `not-a-failure` class covers expected non-error states: 422 Unprocessable En
 
 **What the stamp does not cover.** The guard keys on `NextPhase`, so it does not fire for a `needs_input` result (`AgentStatusNeedsInput` with an empty `NextPhase`) — the preflight steps and several in-step paths return that shape, and whether the controller maps it onto the `human_review` phase is not visible from this repo. Those records are out of this change's scope: the stamp exists so a record that *lands in* `human_review` has an owner, and the controller's chokepoint only acts on that phase.
 
+## Failure Marker
+
+An execution-phase run that ends without posting a verdict leaves a best-effort `COMMENT` failure marker on the PR so the block is visible to the operator instead of being invisible on GitHub. The marker carries no verdict and never changes the run's routing.
+
+**Triggers — all execution-phase terminal routings:**
+
+- `run_outcome: post_failed` — the verdict review was attempted and the POST failed.
+- `run_outcome: no_review` — the run produced no review content, so the verdict post was deliberately skipped.
+- `run_outcome: budget_expired` — the execution-phase soft budget expired, on both the chunked path (`runChunkedReview`) and the single-run path (`runClaude`).
+
+**Delivery.** `PrPoster.PostFailureMarker` calls the existing `postReview(ctx, pr, headSHA, "COMMENT", body)`, i.e. `POST /repos/{owner}/{repo}/pulls/{n}/reviews` with `event: COMMENT`. It reuses the App's existing `pull_requests:write` permission. It is a PR review, not an issue comment — the Issues API is never touched, so no `issues:write` permission is needed.
+
+**Body.** The body is composed only from `run_outcome`, a bounded `failure_reason`, and the run's task identifier. It is hard-capped at 2000 characters, well below GitHub's 65 KiB limit, and truncation backs off to a UTF-8 boundary. It never embeds a response body, a raw error string, or `## Diagnostics` content — the marker is a short, bounded signal, not a diagnostics channel.
+
+**Semantics.** Posting is best-effort: the returned `PostResult` is discarded, no `## Diagnostics` entry is added, and routing, phase, status and `run_outcome` are unchanged. A `nil` poster (local `--skip-post` mode) skips the marker entirely.
+
+**Merge-gate effect.** A `COMMENTED` review does not satisfy branch protection, so the PR stays at `REVIEW_REQUIRED`. The marker makes the block visible without clearing it.
+
+**Out of scope.** Planning-phase and review-phase budget expiries are not covered — the marker documents execution-phase terminal routings only.
+
 ## Always-Post Review Invariant
 
 After spec 034, every PR that reaches the planning phase produces at least one visible artifact on the GitHub PR — there is no silent-skip path.
@@ -124,7 +144,7 @@ After spec 034, every PR that reaches the planning phase produces at least one v
 
 **Known gap — the chunked path.** `runChunkedReview` hands `postAndRoute` a body from `MergeChunkReviews`, which always appends a synthesized verdict block (`pkg/chunk.go`). A chunk whose output is empty or a bare tool-error marker therefore merges to `{"verdict":"request-changes",…}` with an empty chunk section, `ParseVerdict` finds that block, and the review posts — so the false-`CHANGES_REQUESTED` symptom persists for any run that engages chunking. Unchanged by this carve-out and tracked as a follow-up.
 
-This is not the silent skip the invariant forbids: the skip is recorded in `## Diagnostics` as `outcome: skipped` / `failure_step: no_review_produced`, and the task lands in `human_review` so the operator sees it. Nothing is posted to the PR — deliberately, since the repo's own Definition of Done forbids a new posting path and `mapVerdictAndSummary` must never emit `COMMENT` (spec 060).
+This is not the silent skip the invariant forbids: the skip is recorded in `## Diagnostics` as `outcome: skipped` / `failure_reason: no_review_produced`, and the task lands in `human_review` so the operator sees it. The no-review skip posts no verdict review, but it does post a best-effort failure-marker `COMMENT` naming the run (see [§ Failure Marker](#failure-marker)), so the block is also visible on the PR itself. The marker carries no verdict and does not touch `mapVerdictAndSummary` (spec 060).
 
 **Empty-concerns path (LGTM):** When the planning phase's `## Plan` JSON has `concerns: []` (no concerns flagged), the agent POSTs a `COMMENT` review with body `Reviewed by <BotLogin> — no concerns flagged.` via `PrPoster.PostLGTM`. The `## Verdict` section is written to the vault after the POST succeeds, naming the review id and `COMMENT` event. The task advances to `phase: done`.
 
