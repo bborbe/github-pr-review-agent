@@ -1,8 +1,10 @@
 ---
-status: prompted
+status: completed
 approved: "2026-11-18T14:02:49Z"
 generating: "2026-11-18T14:24:12Z"
 prompted: "2026-11-18T14:37:44Z"
+verifying: "2026-11-18T15:05:14Z"
+completed: "2026-11-18T15:05:20Z"
 branch: dark-factory/pr-visible-failure-marker
 ---
 
