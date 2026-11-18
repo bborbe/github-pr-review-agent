@@ -39,6 +39,22 @@ type PrPoster struct {
 	postReturnsOnCall map[int]struct {
 		result1 pkg.PostResult
 	}
+	PostFailureMarkerStub        func(context.Context, prurl.PRInfo, string, string, string, string) pkg.PostResult
+	postFailureMarkerMutex       sync.RWMutex
+	postFailureMarkerArgsForCall []struct {
+		arg1 context.Context
+		arg2 prurl.PRInfo
+		arg3 string
+		arg4 string
+		arg5 string
+		arg6 string
+	}
+	postFailureMarkerReturns struct {
+		result1 pkg.PostResult
+	}
+	postFailureMarkerReturnsOnCall map[int]struct {
+		result1 pkg.PostResult
+	}
 	PostLGTMStub        func(context.Context, prurl.PRInfo, string, string, string) pkg.PostResult
 	postLGTMMutex       sync.RWMutex
 	postLGTMArgsForCall []struct {
@@ -199,6 +215,72 @@ func (fake *PrPoster) PostReturnsOnCall(i int, result1 pkg.PostResult) {
 		})
 	}
 	fake.postReturnsOnCall[i] = struct {
+		result1 pkg.PostResult
+	}{result1}
+}
+
+func (fake *PrPoster) PostFailureMarker(arg1 context.Context, arg2 prurl.PRInfo, arg3 string, arg4 string, arg5 string, arg6 string) pkg.PostResult {
+	fake.postFailureMarkerMutex.Lock()
+	ret, specificReturn := fake.postFailureMarkerReturnsOnCall[len(fake.postFailureMarkerArgsForCall)]
+	fake.postFailureMarkerArgsForCall = append(fake.postFailureMarkerArgsForCall, struct {
+		arg1 context.Context
+		arg2 prurl.PRInfo
+		arg3 string
+		arg4 string
+		arg5 string
+		arg6 string
+	}{arg1, arg2, arg3, arg4, arg5, arg6})
+	stub := fake.PostFailureMarkerStub
+	fakeReturns := fake.postFailureMarkerReturns
+	fake.recordInvocation("PostFailureMarker", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6})
+	fake.postFailureMarkerMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *PrPoster) PostFailureMarkerCallCount() int {
+	fake.postFailureMarkerMutex.RLock()
+	defer fake.postFailureMarkerMutex.RUnlock()
+	return len(fake.postFailureMarkerArgsForCall)
+}
+
+func (fake *PrPoster) PostFailureMarkerCalls(stub func(context.Context, prurl.PRInfo, string, string, string, string) pkg.PostResult) {
+	fake.postFailureMarkerMutex.Lock()
+	defer fake.postFailureMarkerMutex.Unlock()
+	fake.PostFailureMarkerStub = stub
+}
+
+func (fake *PrPoster) PostFailureMarkerArgsForCall(i int) (context.Context, prurl.PRInfo, string, string, string, string) {
+	fake.postFailureMarkerMutex.RLock()
+	defer fake.postFailureMarkerMutex.RUnlock()
+	argsForCall := fake.postFailureMarkerArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6
+}
+
+func (fake *PrPoster) PostFailureMarkerReturns(result1 pkg.PostResult) {
+	fake.postFailureMarkerMutex.Lock()
+	defer fake.postFailureMarkerMutex.Unlock()
+	fake.PostFailureMarkerStub = nil
+	fake.postFailureMarkerReturns = struct {
+		result1 pkg.PostResult
+	}{result1}
+}
+
+func (fake *PrPoster) PostFailureMarkerReturnsOnCall(i int, result1 pkg.PostResult) {
+	fake.postFailureMarkerMutex.Lock()
+	defer fake.postFailureMarkerMutex.Unlock()
+	fake.PostFailureMarkerStub = nil
+	if fake.postFailureMarkerReturnsOnCall == nil {
+		fake.postFailureMarkerReturnsOnCall = make(map[int]struct {
+			result1 pkg.PostResult
+		})
+	}
+	fake.postFailureMarkerReturnsOnCall[i] = struct {
 		result1 pkg.PostResult
 	}{result1}
 }

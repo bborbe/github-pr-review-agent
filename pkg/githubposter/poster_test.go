@@ -187,6 +187,128 @@ var _ = Describe("PrPoster", func() {
 		})
 	})
 
+	Describe("PostFailureMarker", func() {
+		// capturePostBody reads the POST payload inside the stub — doRequest
+		// consumes req.Body before the test could inspect invocations.
+		capturePostBody := func(captured *[]byte) {
+			fakeClient.DoStub = func(req *http.Request) (*http.Response, error) {
+				if req.Body != nil {
+					b, _ := io.ReadAll(req.Body)
+					*captured = b
+				}
+				return makeHTTPResp(201, postRespJSON(42)), nil
+			}
+		}
+
+		type postPayload struct {
+			Event    string `json:"event"`
+			CommitID string `json:"commit_id"`
+			Body     string `json:"body"`
+		}
+
+		decode := func(raw []byte) postPayload {
+			var payload postPayload
+			Expect(json.Unmarshal(raw, &payload)).To(Succeed())
+			return payload
+		}
+
+		DescribeTable(
+			"posts a COMMENT body naming the run outcome",
+			func(outcome, reason, runID string, wantPresent, wantAbsent []string) {
+				var captured []byte
+				capturePostBody(&captured)
+				result := poster.PostFailureMarker(ctx, pr, testHeadSHA, outcome, reason, runID)
+				Expect(result.Outcome).To(Equal("success"))
+
+				payload := decode(captured)
+				Expect(payload.Event).To(Equal("COMMENT"))
+				Expect(payload.CommitID).To(Equal(testHeadSHA))
+				for _, want := range wantPresent {
+					Expect(payload.Body).To(ContainSubstring(want))
+				}
+				for _, unwanted := range wantAbsent {
+					Expect(payload.Body).NotTo(ContainSubstring(unwanted))
+				}
+			},
+			Entry("post_failed", pkg.RunOutcomePostFailed, "post (HTTP 500)", "task-123",
+				[]string{"run_outcome: post_failed", "post (HTTP 500)", "task-123"},
+				[]string{"no_review", "budget_expired"}),
+			Entry("no_review", pkg.RunOutcomeNoReview, "no_review_produced", "task-123",
+				[]string{"run_outcome: no_review", "no_review_produced", "task-123"},
+				[]string{"post_failed", "budget_expired"}),
+			Entry(
+				"budget_expired",
+				pkg.RunOutcomeBudgetExpired,
+				"soft_budget_expired:execution",
+				"task-123",
+				[]string{
+					"run_outcome: budget_expired",
+					"soft_budget_expired:execution",
+					"task-123",
+				},
+				[]string{"post_failed", "no_review"},
+			),
+		)
+
+		It("never carries a verdict", func() {
+			var captured []byte
+			capturePostBody(&captured)
+			result := poster.PostFailureMarker(
+				ctx, pr, testHeadSHA, pkg.RunOutcomePostFailed, "post (HTTP 500)", "task-123",
+			)
+			payload := decode(captured)
+			Expect(payload.Event).To(Equal("COMMENT"))
+			Expect(payload.Body).NotTo(ContainSubstring("APPROVE"))
+			Expect(payload.Body).NotTo(ContainSubstring("REQUEST_CHANGES"))
+			Expect(result.PostedEvent).To(Equal("COMMENT"))
+			Expect(result.PostedEvent).NotTo(Equal("APPROVE"))
+			Expect(result.PostedEvent).NotTo(Equal("REQUEST_CHANGES"))
+		})
+
+		It("hard-caps the body and carries no diagnostics", func() {
+			var captured []byte
+			capturePostBody(&captured)
+			longReason := strings.Repeat("x", 10000)
+			result := poster.PostFailureMarker(
+				ctx, pr, testHeadSHA, pkg.RunOutcomePostFailed, longReason, "task-123",
+			)
+			Expect(result.Outcome).To(Equal("success"))
+
+			body := decode(captured).Body
+			Expect(len(body)).To(BeNumerically("<=", 2000))
+			Expect(body).NotTo(ContainSubstring("## Diagnostics"))
+			Expect(body).NotTo(ContainSubstring("response_body:"))
+			Expect(body).NotTo(ContainSubstring("error_message:"))
+			// The machine-readable keys survive truncation; the reason is what gets cut.
+			Expect(body).To(ContainSubstring("run_outcome: post_failed"))
+			Expect(body).To(ContainSubstring("run: task-123"))
+		})
+
+		It("returns success with a COMMENT event and exactly one POST", func() {
+			fakeClient.DoStub = seqStub([]callSpec{
+				{201, postRespJSON(42), nil},
+			})
+			result := poster.PostFailureMarker(
+				ctx, pr, testHeadSHA, pkg.RunOutcomePostFailed, "post (HTTP 500)", "task-123",
+			)
+			Expect(result.Outcome).To(Equal("success"))
+			Expect(result.PostedEvent).To(Equal("COMMENT"))
+			Expect(result.ReviewID).To(Equal(int64(42)))
+			Expect(fakeClient.DoCallCount()).To(Equal(1))
+		})
+
+		It("returns failed on a permanent 403 without retrying", func() {
+			fakeClient.DoStub = seqStub([]callSpec{
+				{403, `{"message":"Forbidden"}`, nil},
+			})
+			result := poster.PostFailureMarker(
+				ctx, pr, testHeadSHA, pkg.RunOutcomePostFailed, "post (HTTP 403)", "task-123",
+			)
+			Expect(result.Outcome).To(Equal("failed"))
+			Expect(fakeClient.DoCallCount()).To(Equal(1))
+		})
+	})
+
 	DescribeTable("ErrorClass string values",
 		func(class pkg.ErrorClass, want string) {
 			Expect(string(class)).To(Equal(want))
