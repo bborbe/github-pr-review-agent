@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: leave a best-effort `COMMENT` notice on a PR whose head moved past the commit a review was running against. The notice names the reviewed ref and the replacing head, is capped at 2000 characters, and posts no verdict, so branch protection is unaffected. A failed notice is recorded on `## Resolution` as `notified: false` with a bounded `notify_error` and never blocks the closure.
+
 ## v0.19.1
 
 - fix: **bound the post-run Prometheus push so a successful review cannot be killed at the Job deadline.** The push is the last thing the pod does and it ran on the run's own context, so a hanging pushgateway kept the pod alive after its verdict until the Job's 30-minute `ActiveDeadlineSeconds` killed it — and the executor records that kill as `deadline_exceeded` on a review that had already posted. Measured 2026-11-10/11: `bborbe/recurring-task-creator#56` and `bborbe/git-ai-sync#35` each carry `## Diagnostics` `job_run: … outcome: success review_id: <id>` and a `## Failure` `deadline_exceeded` 18–25 minutes later. The push now runs under a 10-second timeout, so it can cost a run at most ten seconds after its verdict.

@@ -187,6 +187,17 @@ func PRStateCheckForTest(
 	return prStateCheck(ctx, md, client)
 }
 
+// PRStateCheckCancelledForTest exposes prStateCheckCancelled so the
+// mid-run-cancellation row can drive the superseded-notice trigger.
+func PRStateCheckCancelledForTest(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+	cancelledDuring string,
+) (*agentlib.Result, error) {
+	return prStateCheckCancelled(ctx, md, client, cancelledDuring)
+}
+
 // LineRangeForTest re-exports the unexported lineRange so funnel_test.go (in
 // the pkg_test package) can assert parsed hunk ranges.
 type LineRangeForTest = lineRange

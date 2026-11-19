@@ -6,6 +6,7 @@ package pkg_test
 
 import (
 	"context"
+	"errors"
 
 	agentlib "github.com/bborbe/agent"
 	"github.com/bborbe/github-pr-review-agent/mocks"
@@ -173,6 +174,113 @@ var _ = Describe("PRStateCheck", func() {
 			Expect(resolution.Body).To(ContainSubstring(`"verdict": "superseded"`))
 			Expect(resolution.Body).To(ContainSubstring(`"pr_state": "OPEN"`))
 			Expect(resolution.Body).To(ContainSubstring(`"head_ref_oid": "` + testHeadOid + `"`))
+		})
+	})
+
+	Context("superseded notice", func() {
+		const runID = "00000000-0000-0000-0000-000000000042"
+
+		buildMDWith := func(extra string) *agentlib.Markdown {
+			md, err := agentlib.ParseMarkdown(
+				ctx,
+				"---\nref: "+testRef+"\n"+extra+"---\n"+testPRURL+"\n\nsome content",
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return md
+		}
+
+		It("notifies once when the review ran (job_started_at set)", func() {
+			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
+			md := buildMDWith(
+				"job_started_at: \"2026-06-08T12:00:00Z\"\ntask_identifier: " + runID + "\n",
+			)
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(1))
+
+			_, url, ref, head, gotRunID := fake.NotifySupersededArgsForCall(0)
+			Expect(url).To(Equal(testPRURL))
+			Expect(ref).To(Equal(testRef))
+			Expect(head).To(Equal(testHeadOid))
+			Expect(gotRunID).To(Equal(runID))
+
+			resolution, ok := md.FindSection("## Resolution")
+			Expect(ok).To(BeTrue())
+			Expect(resolution.Body).To(ContainSubstring(`"notified": true`))
+		})
+
+		It("does not notify when the review never ran, but still writes ## Resolution", func() {
+			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
+			md := buildMD()
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(0))
+
+			resolution, ok := md.FindSection("## Resolution")
+			Expect(ok).To(BeTrue())
+			Expect(resolution.Body).To(ContainSubstring(`"verdict": "superseded"`))
+			Expect(resolution.Body).NotTo(ContainSubstring(`"notified"`))
+		})
+
+		It("notifies when cancelled mid-run (cancelled_during set)", func() {
+			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
+			md := buildMD()
+			result, err := pkg.PRStateCheckCancelledForTest(
+				ctx, md, fake, "ai_review",
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(1))
+		})
+
+		It("does not notify for a merged PR", func() {
+			fake.PRStateReturns("MERGED", "2026-06-08T12:00:00Z", testHeadOid, nil)
+			md := buildMDWith("job_started_at: \"2026-06-08T12:00:00Z\"\n")
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(0))
+		})
+
+		It("does not notify for a closed-unmerged PR", func() {
+			fake.PRStateReturns("CLOSED", "", testHeadOid, nil)
+			md := buildMDWith("job_started_at: \"2026-06-08T12:00:00Z\"\n")
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(0))
+		})
+
+		It("does not notify a record that already carries ## Resolution", func() {
+			md := buildMDWith("job_started_at: \"2026-06-08T12:00:00Z\"\n")
+			md.ReplaceSection(agentlib.Section{
+				Heading: "## Resolution",
+				Body:    "```json\n{\"verdict\":\"superseded\"}\n```",
+			})
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(0))
+		})
+
+		It("still closes when the notice fails and records notified=false", func() {
+			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
+			fake.NotifySupersededReturns(errors.New("gh exploded"))
+			md := buildMDWith("job_started_at: \"2026-06-08T12:00:00Z\"\n")
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("done"))
+			Expect(md.Frontmatter["status"]).To(Equal("aborted"))
+			Expect(md.Frontmatter["phase"]).To(Equal("done"))
+
+			resolution, ok := md.FindSection("## Resolution")
+			Expect(ok).To(BeTrue())
+			Expect(resolution.Body).To(ContainSubstring(`"notified": false`))
+			Expect(resolution.Body).To(ContainSubstring(`"notify_error": "gh exploded"`))
 		})
 	})
 

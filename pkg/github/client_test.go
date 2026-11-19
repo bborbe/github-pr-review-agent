@@ -6,6 +6,7 @@ package github_test
 
 import (
 	"context"
+	"strings"
 
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
 	"github.com/bborbe/github-pr-review-agent/pkg/github"
@@ -109,6 +110,71 @@ var _ = Describe("Client", func() {
 		// - GH_TOKEN environment variable handling
 		// - Body text passing
 		// We would need to refactor ghClient to accept an injectable command executor.
+	})
+
+	Context("NotifySuperseded", func() {
+		It("respects context cancellation", func() {
+			client := github.NewGHClient("")
+			cancelCtx, cancel := context.WithCancel(ctx)
+			cancel() // Cancel immediately
+			err := client.NotifySuperseded(
+				cancelCtx,
+				"https://github.com/nonexistent-owner/nonexistent-repo/pull/1",
+				"abc123",
+				"def456",
+				"run-1",
+			)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("fails for an unreachable PR URL", func() {
+			client := github.NewGHClient("")
+			err := client.NotifySuperseded(
+				ctx,
+				"https://github.com/nonexistent-owner/nonexistent-repo/pull/1",
+				"abc123",
+				"def456",
+				"run-1",
+			)
+			Expect(err).To(HaveOccurred())
+		})
+
+		// NOTE: The success-path argv (`gh pr review <url> --comment --body ...`)
+		// is not exercised without executor injection. The concrete client's
+		// contract here is the shell-out + error surface; the body composition is
+		// covered by the buildSupersededNoticeBody table below.
+	})
+
+	Context("buildSupersededNoticeBody", func() {
+		It("opens with the required sentence and ends with machine-readable keys", func() {
+			body := github.BuildSupersededNoticeBodyForTest("abc123", "def456", "run-1")
+			Expect(body).To(HavePrefix("Automated review superseded — no review was posted."))
+			Expect(body).To(ContainSubstring("run: run-1"))
+			Expect(body).To(ContainSubstring("reviewed_ref: abc123"))
+			Expect(body).To(ContainSubstring("current_head: def456"))
+			Expect(body).To(HaveSuffix("run: run-1\nreviewed_ref: abc123\ncurrent_head: def456\n"))
+		})
+
+		It("tolerates empty inputs without inventing values", func() {
+			var body string
+			Expect(func() {
+				body = github.BuildSupersededNoticeBodyForTest("", "", "")
+			}).NotTo(Panic())
+			Expect(body).To(HavePrefix("Automated review superseded — no review was posted."))
+			Expect(body).To(ContainSubstring("run: \n"))
+			Expect(body).To(ContainSubstring("reviewed_ref: \n"))
+			Expect(body).To(ContainSubstring("current_head: \n"))
+			Expect(body).NotTo(ContainSubstring("unknown"))
+		})
+
+		It("caps an over-long runID at 2000 characters", func() {
+			body := github.BuildSupersededNoticeBodyForTest(
+				"abc123",
+				"def456",
+				strings.Repeat("x", 3000),
+			)
+			Expect(len(body)).To(BeNumerically("<=", 2000))
+		})
 	})
 
 	Context("PRState", func() {
