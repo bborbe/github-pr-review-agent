@@ -132,6 +132,20 @@ An execution-phase run that ends without posting a verdict leaves a best-effort 
 
 **Out of scope.** Planning-phase and review-phase budget expiries are not covered — the marker documents execution-phase terminal routings only.
 
+## Superseded Notice
+
+A review that is abandoned because the pull request's head moved past the commit it was running against leaves a best-effort `COMMENT` review on the PR naming the commit it ran against and the head that replaced it. Without it the author sees an unreviewed PR with no explanation.
+
+**Trigger.** The PR is `OPEN` but the task's `ref` differs from the live `headRefOid`, **and** the review actually ran — `job_started_at` is set, or the run was cancelled mid-flight (`cancelled_during` set). A queued record closed before any pod existed posts nothing.
+
+**Delivery.** `pkg/github.Client.NotifySuperseded` runs `gh pr review <url> --comment --body <body>`, i.e. `POST /repos/{owner}/{repo}/pulls/{n}/reviews` with `event: COMMENT` — never the Issues API (`gh pr comment`), so it needs only the App's existing `pull_requests:write` permission. It fires from both the in-pod path and the periodic moot-sweep, because both funnel through the same `closeMoot` closure routing.
+
+**Body.** Bounded at 2000 characters (truncated on a UTF-8 boundary), opening with `Automated review superseded — no review was posted.` and ending with the machine-readable keys `run: <runID>`, `reviewed_ref: <ref>`, `current_head: <headRefOid>`. It never embeds a response body, a raw error or `## Diagnostics` content.
+
+**Semantics.** Best-effort: a failed notice is recorded on `## Resolution` as `notified: false` plus a bounded `notify_error`, and is logged at `Warning` level. It never blocks the closure — routing, phase and status are unchanged. A record that already carries `## Resolution` is never re-notified.
+
+**Merge-gate effect.** The notice carries no verdict, so it cannot satisfy or block branch protection; the PR's merge gate is unaffected.
+
 ## Always-Post Review Invariant
 
 After spec 034, every PR that reaches the planning phase produces at least one visible artifact on the GitHub PR — there is no silent-skip path.

@@ -12,6 +12,21 @@ import (
 )
 
 type PRStateClient struct {
+	NotifySupersededStub        func(context.Context, string, string, string, string) error
+	notifySupersededMutex       sync.RWMutex
+	notifySupersededArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+		arg5 string
+	}
+	notifySupersededReturns struct {
+		result1 error
+	}
+	notifySupersededReturnsOnCall map[int]struct {
+		result1 error
+	}
 	PRDiffStub        func(context.Context, string) (string, error)
 	pRDiffMutex       sync.RWMutex
 	pRDiffArgsForCall []struct {
@@ -46,6 +61,71 @@ type PRStateClient struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *PRStateClient) NotifySuperseded(arg1 context.Context, arg2 string, arg3 string, arg4 string, arg5 string) error {
+	fake.notifySupersededMutex.Lock()
+	ret, specificReturn := fake.notifySupersededReturnsOnCall[len(fake.notifySupersededArgsForCall)]
+	fake.notifySupersededArgsForCall = append(fake.notifySupersededArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+		arg5 string
+	}{arg1, arg2, arg3, arg4, arg5})
+	stub := fake.NotifySupersededStub
+	fakeReturns := fake.notifySupersededReturns
+	fake.recordInvocation("NotifySuperseded", []interface{}{arg1, arg2, arg3, arg4, arg5})
+	fake.notifySupersededMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *PRStateClient) NotifySupersededCallCount() int {
+	fake.notifySupersededMutex.RLock()
+	defer fake.notifySupersededMutex.RUnlock()
+	return len(fake.notifySupersededArgsForCall)
+}
+
+func (fake *PRStateClient) NotifySupersededCalls(stub func(context.Context, string, string, string, string) error) {
+	fake.notifySupersededMutex.Lock()
+	defer fake.notifySupersededMutex.Unlock()
+	fake.NotifySupersededStub = stub
+}
+
+func (fake *PRStateClient) NotifySupersededArgsForCall(i int) (context.Context, string, string, string, string) {
+	fake.notifySupersededMutex.RLock()
+	defer fake.notifySupersededMutex.RUnlock()
+	argsForCall := fake.notifySupersededArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5
+}
+
+func (fake *PRStateClient) NotifySupersededReturns(result1 error) {
+	fake.notifySupersededMutex.Lock()
+	defer fake.notifySupersededMutex.Unlock()
+	fake.NotifySupersededStub = nil
+	fake.notifySupersededReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *PRStateClient) NotifySupersededReturnsOnCall(i int, result1 error) {
+	fake.notifySupersededMutex.Lock()
+	defer fake.notifySupersededMutex.Unlock()
+	fake.NotifySupersededStub = nil
+	if fake.notifySupersededReturnsOnCall == nil {
+		fake.notifySupersededReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.notifySupersededReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *PRStateClient) PRDiff(arg1 context.Context, arg2 string) (string, error) {

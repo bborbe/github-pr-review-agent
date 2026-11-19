@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bborbe/errors"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
@@ -45,6 +46,10 @@ type Client interface {
 	// PRDiff fetches the raw unified diff of a pull request via the gh CLI.
 	// Same auth path as PRState.
 	PRDiff(ctx context.Context, prURL string) (string, error)
+	// NotifySuperseded posts a best-effort COMMENT review naming the ref the
+	// review ran against and the head that replaced it. It posts no verdict, so
+	// it cannot satisfy or block branch protection.
+	NotifySuperseded(ctx context.Context, prURL, ref, headRefOid, runID string) error
 }
 
 // NewGHClient creates a Client that uses the gh CLI.
@@ -230,6 +235,76 @@ func (c *ghClient) PRDiff(
 	}
 
 	return stdout.String(), nil
+}
+
+// maxSupersededNoticeBody hard-caps the superseded-notice body. The notice is a
+// short, bounded signal — never a place to spill a response body or a
+// diagnostic block — so the cap is deliberately far below GitHub's 65 KiB limit.
+const maxSupersededNoticeBody = 2000
+
+// buildSupersededNoticeBody composes the COMMENT review body naming the ref a
+// superseded review ran against and the head that replaced it. Its only inputs
+// are the ref, the current head and the run identifier; it never embeds a
+// response body, a raw error string or ## Diagnostics content. Empty inputs are
+// rendered as-is — the builder never invents values.
+func buildSupersededNoticeBody(ref, headRefOid, runID string) string {
+	var sb strings.Builder
+	sb.WriteString("Automated review superseded — no review was posted.\n\n")
+	fmt.Fprintf(
+		&sb,
+		"The review ran against %s and the PR head moved to %s before it finished.\n",
+		ref,
+		headRefOid,
+	)
+	sb.WriteString(
+		"The current head needs a fresh review; it will be reviewed again if it is re-queued.\n\n",
+	)
+	fmt.Fprintf(&sb, "run: %s\n", runID)
+	fmt.Fprintf(&sb, "reviewed_ref: %s\n", ref)
+	fmt.Fprintf(&sb, "current_head: %s\n", headRefOid)
+	return truncateSupersededNoticeBody(sb.String())
+}
+
+// truncateSupersededNoticeBody hard-caps body at maxSupersededNoticeBody bytes,
+// backing off to a UTF-8 boundary so a multibyte value is never split.
+func truncateSupersededNoticeBody(body string) string {
+	if len(body) <= maxSupersededNoticeBody {
+		return body
+	}
+	b := []byte(body[:maxSupersededNoticeBody])
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
+}
+
+// NotifySuperseded posts a best-effort COMMENT review naming the ref the review
+// ran against and the head that replaced it. It uses the reviews API
+// (`gh pr review --comment`, i.e. event: COMMENT), never the Issues API, so it
+// needs only the App's existing pull_requests:write permission. It carries no
+// verdict and therefore cannot satisfy or block branch protection.
+func (c *ghClient) NotifySuperseded(
+	ctx context.Context,
+	prURL, ref, headRefOid, runID string,
+) error {
+	body := buildSupersededNoticeBody(ref, headRefOid, runID)
+
+	// #nosec G204 -- args are validated by caller, prURL from URL parsing
+	cmd := exec.CommandContext(ctx, "gh", "pr", "review", prURL, "--comment", "--body", body)
+
+	// Set GH_TOKEN if configured
+	if c.token != "" {
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+c.token)
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return errors.Wrapf(ctx, err, "gh pr review failed: %s", strings.TrimSpace(stderr.String()))
+	}
+
+	return nil
 }
 
 // SubmitReview submits a structured review (approve or request-changes) on a pull request.

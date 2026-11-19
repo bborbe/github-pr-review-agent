@@ -6,6 +6,7 @@ package pkg
 
 import (
 	"context"
+	"unicode/utf8"
 
 	agentlib "github.com/bborbe/agent"
 	"github.com/golang/glog"
@@ -23,6 +24,12 @@ type PRStateClient interface {
 	// PRDiff fetches the raw unified diff of a pull request via the gh CLI.
 	// Satisfied by pkg/github.Client (the gh CLI wrapper), same auth path as PRState.
 	PRDiff(ctx context.Context, prURL string) (string, error)
+	// NotifySuperseded posts a best-effort COMMENT review naming the ref the
+	// review ran against and the head that replaced it. It posts no verdict, so
+	// it cannot satisfy or block branch protection. A failure is recorded on
+	// ## Resolution (notified: false + notify_error) and never blocks the
+	// closure.
+	NotifySuperseded(ctx context.Context, prURL, ref, headRefOid, runID string) error
 }
 
 // ResolutionOutput is the typed contract for the `## Resolution` JSON
@@ -43,6 +50,13 @@ type ResolutionOutput struct {
 	// watch cancelled (CancelledDuringExecution / CancelledDuringAIReview).
 	// Empty for a resolution written by a pre- or post-flight check.
 	CancelledDuring string `json:"cancelled_during,omitempty"`
+	// Notified records whether a superseded notice was delivered to the PR.
+	// Nil means no notice was attempted (merged/closed, or a review that never
+	// ran); false means an attempt was made and failed.
+	Notified *bool `json:"notified,omitempty"`
+	// NotifyError is the bounded failure string when Notified is false. It is
+	// capped so a multi-KB stderr cannot bloat ## Resolution.
+	NotifyError string `json:"notify_error,omitempty"`
 }
 
 // Verdict values for ResolutionOutput.Verdict. Exhaustive: every
@@ -133,6 +147,8 @@ func prStateCheckCancelled(
 		return closeMoot(
 			ctx,
 			md,
+			client,
+			prURL,
 			ResolutionVerdictMerged,
 			"completed",
 			state,
@@ -144,6 +160,8 @@ func prStateCheckCancelled(
 		return closeMoot(
 			ctx,
 			md,
+			client,
+			prURL,
 			ResolutionVerdictClosedUnmerged,
 			"completed",
 			state,
@@ -155,6 +173,8 @@ func prStateCheckCancelled(
 		return closeMoot(
 			ctx,
 			md,
+			client,
+			prURL,
 			ResolutionVerdictSuperseded,
 			"aborted",
 			state,
@@ -179,6 +199,8 @@ func prStateCheckCancelled(
 func closeMoot(
 	ctx context.Context,
 	md *agentlib.Markdown,
+	client PRStateClient,
+	prURL string,
 	verdict string,
 	status string,
 	prState string,
@@ -186,6 +208,10 @@ func closeMoot(
 	headRefOid string,
 	cancelledDuring string,
 ) (*agentlib.Result, error) {
+	notified, notifyError := notifySuperseded(
+		ctx, md, client, prURL, verdict, headRefOid, cancelledDuring,
+	)
+
 	section, marshalErr := agentlib.MarshalSectionTyped(
 		ctx,
 		"## Resolution",
@@ -195,6 +221,8 @@ func closeMoot(
 			MergedAt:        mergedAt,
 			HeadRefOid:      headRefOid,
 			CancelledDuring: cancelledDuring,
+			Notified:        notified,
+			NotifyError:     notifyError,
 		},
 	)
 	if marshalErr != nil {
@@ -220,4 +248,68 @@ func closeMoot(
 		Status:    agentlib.AgentStatusDone,
 		NextPhase: "done",
 	}, nil
+}
+
+// maxNotifyErrorBytes caps the failure string recorded on ## Resolution so a
+// multi-KB gh stderr cannot bloat the section.
+const maxNotifyErrorBytes = 500
+
+// notifySuperseded posts the superseded notice when — and only when — the
+// verdict is superseded and the review actually ran. A nil client means no
+// notice. The returned *bool is nil when no notice was attempted.
+func notifySuperseded(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+	prURL, verdict, headRefOid, cancelledDuring string,
+) (*bool, string) {
+	if verdict != ResolutionVerdictSuperseded || client == nil {
+		return nil, ""
+	}
+	if !frontmatterNonEmpty(md, "job_started_at") && cancelledDuring == "" {
+		// The review never ran — there is nothing to explain to the author.
+		return nil, ""
+	}
+	ref, _ := md.Frontmatter.String("ref")
+	runID, _ := md.Frontmatter.String("task_identifier")
+
+	notified := true
+	if err := client.NotifySuperseded(ctx, prURL, ref, headRefOid, runID); err != nil {
+		notified = false
+		glog.Warningf(
+			"pr-state-check: superseded notice failed pr=%s ref=%s head=%s err=%v",
+			prURL, ref, headRefOid, err,
+		)
+		return &notified, capNotifyError(err.Error())
+	}
+	return &notified, ""
+}
+
+// frontmatterNonEmpty reports whether key holds a non-empty value, whatever
+// its decoded type. TaskFrontmatter.String accepts only a string, and an
+// unquoted RFC3339 timestamp decodes to time.Time — reading it through String
+// would report "absent" and silently suppress the notice for exactly the
+// records the notice exists for.
+func frontmatterNonEmpty(md *agentlib.Markdown, key string) bool {
+	v, ok := md.Frontmatter[key]
+	if !ok || v == nil {
+		return false
+	}
+	if s, isString := v.(string); isString {
+		return s != ""
+	}
+	return true
+}
+
+// capNotifyError bounds msg at maxNotifyErrorBytes, backing off to a UTF-8
+// boundary so a multibyte error is never split.
+func capNotifyError(msg string) string {
+	if len(msg) <= maxNotifyErrorBytes {
+		return msg
+	}
+	b := []byte(msg[:maxNotifyErrorBytes])
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
 }
