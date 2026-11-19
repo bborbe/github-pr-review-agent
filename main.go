@@ -38,6 +38,12 @@ import (
 
 const agentName = "pr-reviewer-agent"
 
+// pushTimeout bounds the post-run metrics push. The push is the last thing the
+// pod does, so an unbounded pushgateway call keeps the pod alive after its
+// verdict and the K8s Job's ActiveDeadlineSeconds kills it, which the executor
+// records as deadline_exceeded on a review that actually posted.
+const pushTimeout = 10 * time.Second
+
 func main() {
 	app := &application{}
 	os.Exit(service.Main(context.Background(), app, &app.SentryDSN, &app.SentryProxy))
@@ -145,7 +151,15 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		Grouping("task_type", a.TaskType).
 		Collector(registry)
 	defer func() {
-		if err := pusher.PushContext(ctx); err != nil {
+		// The push is the last thing the pod does, so an unbounded pushgateway
+		// call is a pod that outlives its own work: measured 2026-11-10/11, two
+		// runs posted their review successfully (a review_id in ## Diagnostics)
+		// and were then killed at the 30-minute Job deadline, which the executor
+		// records as deadline_exceeded. Bounded here, the push can cost the run
+		// at most pushTimeout after its verdict.
+		pushCtx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+		defer cancel()
+		if err := pusher.PushContext(pushCtx); err != nil {
 			glog.Warningf("prometheus push failed: %v", err)
 			return
 		}

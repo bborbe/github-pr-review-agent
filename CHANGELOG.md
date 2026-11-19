@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **bound the post-run Prometheus push so a successful review cannot be killed at the Job deadline.** The push is the last thing the pod does and it ran on the run's own context, so a hanging pushgateway kept the pod alive after its verdict until the Job's 30-minute `ActiveDeadlineSeconds` killed it — and the executor records that kill as `deadline_exceeded` on a review that had already posted. Measured 2026-11-10/11: `bborbe/recurring-task-creator#56` and `bborbe/git-ai-sync#35` each carry `## Diagnostics` `job_run: … outcome: success review_id: <id>` and a `## Failure` `deadline_exceeded` 18–25 minutes later. The push now runs under a 10-second timeout, so it can cost a run at most ten seconds after its verdict.
+
 ## v0.19.0
 
 - feat: Add `PrPoster.PostFailureMarker` so a run that ends without posting a verdict can leave a bounded, non-verdict `COMMENT` marker on the PR naming its `run_outcome`, run ID and failure reason. The body is capped at 2000 characters, is built only from those three inputs, and reuses the existing `postReview` endpoint without a verify GET; callers follow in a later prompt.
