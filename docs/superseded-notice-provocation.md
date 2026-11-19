@@ -11,3 +11,5 @@ Second commit: moves the PR head while the first review run is in flight, so
 that run routes to `superseded` instead of posting a verdict at a stale head.
 
 Third head: starts the review run that the next push will supersede.
+
+Fourth head: supersedes the run started at the third head.
