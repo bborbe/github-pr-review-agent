@@ -96,7 +96,18 @@ func prStateCheck(
 	md *agentlib.Markdown,
 	client PRStateClient,
 ) (*agentlib.Result, error) {
-	return prStateCheckCancelled(ctx, md, client, "")
+	return prStateCheckRoute(ctx, md, client, true, "")
+}
+
+// prStateCheckFromSweep runs the same routing for the periodic moot sweep. The
+// sweep reads the LIVE record, so reviewRan=false keeps the job_started_at gate
+// meaningful: a record closed before any pod existed posts no notice.
+func prStateCheckFromSweep(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+) (*agentlib.Result, error) {
+	return prStateCheckRoute(ctx, md, client, false, "")
 }
 
 // prStateCheckCancelled is prStateCheck for a claude call the mid-run watch
@@ -107,6 +118,19 @@ func prStateCheckCancelled(
 	ctx context.Context,
 	md *agentlib.Markdown,
 	client PRStateClient,
+	cancelledDuring string,
+) (*agentlib.Result, error) {
+	return prStateCheckRoute(ctx, md, client, true, cancelledDuring)
+}
+
+// prStateCheckRoute is the shared routing body. reviewRan is true for every
+// in-pod caller and false for the moot sweep; see notifySuperseded for why the
+// distinction decides whether the superseded notice may fire.
+func prStateCheckRoute(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+	reviewRan bool,
 	cancelledDuring string,
 ) (*agentlib.Result, error) {
 	// 0. Nil client = check disabled (tests without PR-state concern).
@@ -142,46 +166,14 @@ func prStateCheckCancelled(
 
 	// 4. Route by state.
 	ref, _ := md.Frontmatter.String("ref")
+	var verdict, status string
 	switch {
 	case state == "MERGED":
-		return closeMoot(
-			ctx,
-			md,
-			client,
-			prURL,
-			ResolutionVerdictMerged,
-			"completed",
-			state,
-			mergedAt,
-			headRefOid,
-			cancelledDuring,
-		)
+		verdict, status = ResolutionVerdictMerged, "completed"
 	case state == "CLOSED":
-		return closeMoot(
-			ctx,
-			md,
-			client,
-			prURL,
-			ResolutionVerdictClosedUnmerged,
-			"completed",
-			state,
-			mergedAt,
-			headRefOid,
-			cancelledDuring,
-		)
+		verdict, status = ResolutionVerdictClosedUnmerged, "completed"
 	case state == "OPEN" && ref != headRefOid:
-		return closeMoot(
-			ctx,
-			md,
-			client,
-			prURL,
-			ResolutionVerdictSuperseded,
-			"aborted",
-			state,
-			mergedAt,
-			headRefOid,
-			cancelledDuring,
-		)
+		verdict, status = ResolutionVerdictSuperseded, "aborted"
 	default:
 		// OPEN at the reviewed ref — the review may still matter.
 		glog.V(2).Infof(
@@ -190,6 +182,10 @@ func prStateCheckCancelled(
 		)
 		return nil, nil
 	}
+	return closeMoot(
+		ctx, md, client, prURL, verdict, status, state, mergedAt, headRefOid,
+		reviewRan, cancelledDuring,
+	)
 }
 
 // closeMoot appends the ## Resolution section, rewrites the frontmatter
@@ -206,10 +202,11 @@ func closeMoot(
 	prState string,
 	mergedAt string,
 	headRefOid string,
+	reviewRan bool,
 	cancelledDuring string,
 ) (*agentlib.Result, error) {
 	notified, notifyError := notifySuperseded(
-		ctx, md, client, prURL, verdict, headRefOid, cancelledDuring,
+		ctx, md, client, prURL, verdict, headRefOid, reviewRan, cancelledDuring,
 	)
 
 	section, marshalErr := agentlib.MarshalSectionTyped(
@@ -255,19 +252,36 @@ func closeMoot(
 const maxNotifyErrorBytes = 500
 
 // notifySuperseded posts the superseded notice when — and only when — the
-// verdict is superseded and the review actually ran. A nil client means no
-// notice. The returned *bool is nil when no notice was attempted.
+// verdict is superseded and the run is allowed to speak for itself. A nil
+// client means no notice. The returned *bool is nil when no notice was
+// attempted.
+//
+// reviewRan is the in-pod signal: the check runs inside the review pod, so a
+// running pod IS the proof the run started. The in-pod copy of the task can
+// never carry job_started_at — the executor stamps it through an async
+// UpdateFrontmatterCommand (PublishSpawnNotification) that lands in the vault
+// AFTER the Job spec, and therefore its TaskContent, was rendered. Measured
+// 2026-11-19 on bborbe/github-pr-review-agent#89: verdict superseded, zero
+// reviews posted, ## Resolution without a notified field, and a TaskContent
+// carrying ten frontmatter keys and no job_started_at. Gating the in-pod path
+// on that field suppressed the notice on every in-pod superseded route.
+//
+// The moot sweep passes reviewRan=false: it reads the LIVE record, so
+// job_started_at is meaningful there, and it is the path that must stay quiet
+// about a queued record closed before any pod existed.
 func notifySuperseded(
 	ctx context.Context,
 	md *agentlib.Markdown,
 	client PRStateClient,
-	prURL, verdict, headRefOid, cancelledDuring string,
+	prURL, verdict, headRefOid string,
+	reviewRan bool,
+	cancelledDuring string,
 ) (*bool, string) {
 	if verdict != ResolutionVerdictSuperseded || client == nil {
 		return nil, ""
 	}
-	if !frontmatterNonEmpty(md, "job_started_at") && cancelledDuring == "" {
-		// The review never ran — there is nothing to explain to the author.
+	if !reviewRan && !frontmatterNonEmpty(md, "job_started_at") && cancelledDuring == "" {
+		// No pod ever existed — there is nothing to explain to the author.
 		return nil, ""
 	}
 	ref, _ := md.Frontmatter.String("ref")
@@ -289,7 +303,8 @@ func notifySuperseded(
 // its decoded type. TaskFrontmatter.String accepts only a string, and an
 // unquoted RFC3339 timestamp decodes to time.Time — reading it through String
 // would report "absent" and silently suppress the notice for exactly the
-// records the notice exists for.
+// records the notice exists for. Only the sweep path reads this field; the
+// in-pod path uses reviewRan instead.
 func frontmatterNonEmpty(md *agentlib.Markdown, key string) bool {
 	v, ok := md.Frontmatter[key]
 	if !ok || v == nil {

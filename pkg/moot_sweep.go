@@ -94,7 +94,7 @@ func (s *mootSweep) SweepTask(ctx context.Context, task agentlib.Task) (bool, er
 	if !ok {
 		return false, nil
 	}
-	result, err := prStateCheck(ctx, md, s.prState)
+	result, err := prStateCheckFromSweep(ctx, md, s.prState)
 	if err != nil {
 		return false, err
 	}
