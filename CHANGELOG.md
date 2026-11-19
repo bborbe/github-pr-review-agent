@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.21.0
 
 - feat: **planning- and review-phase budget expiries now leave the PR-visible failure marker.** The marker covered only the three routes reachable from `checkoutExecutionStep`, because `planningStep` and `reviewStep` carried no poster; a run that expired its soft budget in planning or ai_review left the PR silently gated. Both steps now post the same best-effort `COMMENT` marker (`run_outcome: budget_expired`, `soft_budget_expired:planning` / `soft_budget_expired:review`). The ai_review phase's `## Diagnostics` label is now `soft_budget_expired:review` (was `soft_budget_expired:ai-review`), matching the phase name the criterion reads.
 
