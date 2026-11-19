@@ -6,3 +6,6 @@ which is the only way to observe the v0.20.0 `NotifySuperseded` notice end to
 end. Branch and PR are deleted after the observation.
 
 Nothing here is intended to land.
+
+Second commit: moves the PR head while the first review run is in flight, so
+that run routes to `superseded` instead of posting a verdict at a stale head.
