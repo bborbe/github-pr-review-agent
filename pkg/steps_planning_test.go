@@ -32,6 +32,7 @@ var _ = Describe("planningStep", func() {
 		runner = &mocks.ClaudeRunnerMock{}
 		step = pkg.NewPlanningStep(
 			runner,
+			nil,
 			claudelib.Instructions{},
 			libtime.Duration(25*time.Minute),
 			nil,
@@ -529,6 +530,7 @@ https://github.com/bborbe/maintainer/pull/14
 			}
 			budgetStep := pkg.NewPlanningStep(
 				runner,
+				nil,
 				claudelib.Instructions{},
 				libtime.Duration(20*time.Millisecond),
 				nil,
@@ -563,6 +565,7 @@ https://github.com/bborbe/maintainer/pull/14
 			}
 			budgetStep := pkg.NewPlanningStep(
 				runner,
+				nil,
 				claudelib.Instructions{},
 				libtime.Duration(20*time.Millisecond),
 				nil,
@@ -582,6 +585,51 @@ https://github.com/bborbe/maintainer/pull/14
 			Expect(runner.RunCallCount()).To(Equal(1))
 		})
 
+		It("posts a PR-visible failure marker naming the planning phase", func() {
+			realPoster, recorder, closeServer := newMarkerRecordingPoster()
+			defer closeServer()
+			runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return &claudelib.ClaudeResult{Partial: "partial planning output"}, runCtx.Err()
+			}
+			budgetStep := pkg.NewPlanningStep(
+				runner,
+				realPoster,
+				claudelib.Instructions{},
+				libtime.Duration(20*time.Millisecond),
+				nil,
+				libtime.NewCurrentDateTime(),
+			)
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+task_identifier: `+markerTaskID+`
+---
+# PR Review
+
+`+markerPRURL+`
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+
+			expectMarkerBody(
+				recorder.only(),
+				[]string{
+					"run_outcome: budget_expired",
+					"soft_budget_expired:planning",
+					markerTaskID,
+				},
+				[]string{"post_failed", "no_review"},
+			)
+			diag, exists := md.FindSection("## Diagnostics")
+			Expect(exists).To(BeTrue())
+			Expect(diag.Body).To(ContainSubstring("failure_step: soft_budget_expired:planning"))
+		})
+
 		Context("salvage", func() {
 			// AC 5: a budget-terminated run with a captured streamed partial
 			// persists it under the distinct ## Salvage heading (never ## Plan),
@@ -599,6 +647,7 @@ https://github.com/bborbe/maintainer/pull/14
 					}
 					budgetStep := pkg.NewPlanningStep(
 						runner,
+						nil,
 						claudelib.Instructions{},
 						libtime.Duration(20*time.Millisecond),
 						nil,
@@ -638,6 +687,7 @@ https://github.com/bborbe/maintainer/pull/14
 				}
 				budgetStep := pkg.NewPlanningStep(
 					runner,
+					nil,
 					claudelib.Instructions{},
 					libtime.Duration(20*time.Millisecond),
 					nil,

@@ -114,13 +114,13 @@ The `not-a-failure` class covers expected non-error states: 422 Unprocessable En
 
 ## Failure Marker
 
-An execution-phase run that ends without posting a verdict leaves a best-effort `COMMENT` failure marker on the PR so the block is visible to the operator instead of being invisible on GitHub. The marker carries no verdict and never changes the run's routing.
+A run that ends without posting a verdict leaves a best-effort `COMMENT` failure marker on the PR so the block is visible to the operator instead of being invisible on GitHub. The marker carries no verdict and never changes the run's routing.
 
-**Triggers — all execution-phase terminal routings:**
+**Triggers — every phase's terminal routings that end without a posted verdict:**
 
-- `run_outcome: post_failed` — the verdict review was attempted and the POST failed.
-- `run_outcome: no_review` — the run produced no review content, so the verdict post was deliberately skipped.
-- `run_outcome: budget_expired` — the execution-phase soft budget expired, on both the chunked path (`runChunkedReview`) and the single-run path (`runClaude`).
+- `run_outcome: post_failed` — the verdict review was attempted and the POST failed (execution phase).
+- `run_outcome: no_review` — the run produced no review content, so the verdict post was deliberately skipped (execution phase).
+- `run_outcome: budget_expired` — the soft budget expired in **any** phase: the execution phase on both the chunked path (`runChunkedReview`) and the single-run path (`runClaude`), and the planning (`soft_budget_expired:planning`) and ai_review (`soft_budget_expired:review`) phases.
 
 **Delivery.** `PrPoster.PostFailureMarker` calls the existing `postReview(ctx, pr, headSHA, "COMMENT", body)`, i.e. `POST /repos/{owner}/{repo}/pulls/{n}/reviews` with `event: COMMENT`. It reuses the App's existing `pull_requests:write` permission. It is a PR review, not an issue comment — the Issues API is never touched, so no `issues:write` permission is needed.
 
@@ -129,8 +129,6 @@ An execution-phase run that ends without posting a verdict leaves a best-effort 
 **Semantics.** Posting is best-effort: the returned `PostResult` is discarded, no `## Diagnostics` entry is added, and routing, phase, status and `run_outcome` are unchanged. A `nil` poster (local `--skip-post` mode) skips the marker entirely.
 
 **Merge-gate effect.** A `COMMENTED` review does not satisfy branch protection, so the PR stays at `REVIEW_REQUIRED`. The marker makes the block visible without clearing it.
-
-**Out of scope.** Planning-phase and review-phase budget expiries are not covered — the marker documents execution-phase terminal routings only.
 
 ## Superseded Notice
 

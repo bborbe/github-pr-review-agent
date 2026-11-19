@@ -442,6 +442,7 @@ https://github.com/bborbe/maintainer/pull/14
 			}
 			step := pkg.NewPlanningStep(
 				runner,
+				nil,
 				claudelib.Instructions{},
 				libtime.Duration(25*time.Minute),
 				prState,

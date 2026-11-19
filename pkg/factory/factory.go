@@ -276,6 +276,7 @@ func createPhases(
 		prURLCheck,
 		prpkg.NewHumanReviewOwnerStep(prpkg.NewPlanningStep(
 			CreateClaudeRunner(claudeConfigDir, agentDir, model, env, planningTools, usage),
+			prPoster,
 			prompts.BuildPlanningInstructions(),
 			maxDuration,
 			prStateClient,

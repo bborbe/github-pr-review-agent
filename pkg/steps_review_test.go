@@ -445,6 +445,51 @@ prior verdict body
 			Expect(poster.PostCallCount()).To(Equal(0))
 		})
 
+		It("posts a PR-visible failure marker naming the review phase", func() {
+			realPoster, recorder, closeServer := newMarkerRecordingPoster()
+			defer closeServer()
+			runner.RunStub = func(runCtx context.Context, prompt string) (*claudelib.ClaudeResult, error) {
+				<-runCtx.Done() // block until the soft budget deadline fires
+				return &claudelib.ClaudeResult{Partial: "partial review output"}, runCtx.Err()
+			}
+			budgetStep := pkg.NewReviewStep(
+				runner,
+				realPoster,
+				instructions,
+				nil,
+				"",
+				"",
+				libtime.Duration(20*time.Millisecond),
+				nil,
+				libtime.Duration(0),
+				libtime.NewCurrentDateTime(),
+			)
+			md, err := agentlib.ParseMarkdown(ctx, `---
+clone_url: https://github.com/bborbe/maintainer.git
+ref: abc123
+task_identifier: `+markerTaskID+`
+---
+# PR Review
+
+`+markerPRURL+`
+`)
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := budgetStep.Run(ctx, md)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal(agentlib.AgentStatusDone))
+			Expect(result.NextPhase).To(Equal("human_review"))
+
+			expectMarkerBody(
+				recorder.only(),
+				[]string{"run_outcome: budget_expired", "soft_budget_expired:review", markerTaskID},
+				[]string{"post_failed", "no_review"},
+			)
+			diag, exists := md.FindSection("## Diagnostics")
+			Expect(exists).To(BeTrue())
+			Expect(diag.Body).To(ContainSubstring("failure_step: soft_budget_expired:review"))
+		})
+
 		Context("salvage", func() {
 			// AC 5: a budget-terminated ai_review run with a captured streamed
 			// partial persists it under the distinct ## Salvage heading (never
