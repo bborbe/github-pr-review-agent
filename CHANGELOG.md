@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.20.1
 
 - fix: the superseded notice now fires from the in-pod path. That path gated on `job_started_at`, which the pod's `TaskContent` can never carry — the executor stamps it asynchronously after the Job spec is rendered — so `NotifySuperseded` was unreachable in production. In-pod callers now pass `reviewRan=true`; the moot sweep keeps the `job_started_at` gate, where it is meaningful because the sweep reads the live record.
 
