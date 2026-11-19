@@ -266,8 +266,7 @@ func notifySuperseded(
 	if verdict != ResolutionVerdictSuperseded || client == nil {
 		return nil, ""
 	}
-	startedAt, _ := md.Frontmatter.String("job_started_at")
-	if startedAt == "" && cancelledDuring == "" {
+	if !frontmatterNonEmpty(md, "job_started_at") && cancelledDuring == "" {
 		// The review never ran — there is nothing to explain to the author.
 		return nil, ""
 	}
@@ -284,6 +283,22 @@ func notifySuperseded(
 		return &notified, capNotifyError(err.Error())
 	}
 	return &notified, ""
+}
+
+// frontmatterNonEmpty reports whether key holds a non-empty value, whatever
+// its decoded type. TaskFrontmatter.String accepts only a string, and an
+// unquoted RFC3339 timestamp decodes to time.Time — reading it through String
+// would report "absent" and silently suppress the notice for exactly the
+// records the notice exists for.
+func frontmatterNonEmpty(md *agentlib.Markdown, key string) bool {
+	v, ok := md.Frontmatter[key]
+	if !ok || v == nil {
+		return false
+	}
+	if s, isString := v.(string); isString {
+		return s != ""
+	}
+	return true
 }
 
 // capNotifyError bounds msg at maxNotifyErrorBytes, backing off to a UTF-8

@@ -7,6 +7,7 @@ package pkg_test
 import (
 	"context"
 	"errors"
+	"time"
 
 	agentlib "github.com/bborbe/agent"
 	"github.com/bborbe/github-pr-review-agent/mocks"
@@ -208,6 +209,19 @@ var _ = Describe("PRStateCheck", func() {
 			resolution, ok := md.FindSection("## Resolution")
 			Expect(ok).To(BeTrue())
 			Expect(resolution.Body).To(ContainSubstring(`"notified": true`))
+		})
+
+		It("notifies when job_started_at holds a non-string value", func() {
+			// An unquoted RFC3339 in frontmatter decodes to a non-string, and
+			// TaskFrontmatter.String reports that as absent. The notice must
+			// still fire: the review did run.
+			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
+			md := buildMD()
+			md.Frontmatter["job_started_at"] = time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(1))
 		})
 
 		It("does not notify when the review never ran, but still writes ## Resolution", func() {
