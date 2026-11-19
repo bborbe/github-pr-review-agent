@@ -136,7 +136,7 @@ An execution-phase run that ends without posting a verdict leaves a best-effort 
 
 A review that is abandoned because the pull request's head moved past the commit it was running against leaves a best-effort `COMMENT` review on the PR naming the commit it ran against and the head that replaced it. Without it the author sees an unreviewed PR with no explanation.
 
-**Trigger.** The PR is `OPEN` but the task's `ref` differs from the live `headRefOid`, **and** the review actually ran — `job_started_at` is set, or the run was cancelled mid-flight (`cancelled_during` set). A queued record closed before any pod existed posts nothing.
+**Trigger.** The PR is `OPEN` but the task's `ref` differs from the live `headRefOid`. From the in-pod path it always fires: a running pod is itself the proof the run started, and the pod's `TaskContent` cannot carry `job_started_at` (the executor stamps it asynchronously after the Job spec is rendered). From the periodic moot-sweep it fires only when the live record shows the review ran — `job_started_at` set, or the run was cancelled mid-flight (`cancelled_during` set). A queued record the sweep closes before any pod existed posts nothing.
 
 **Delivery.** `pkg/github.Client.NotifySuperseded` runs `gh pr review <url> --comment --body <body>`, i.e. `POST /repos/{owner}/{repo}/pulls/{n}/reviews` with `event: COMMENT` — never the Issues API (`gh pr comment`), so it needs only the App's existing `pull_requests:write` permission. It fires from both the in-pod path and the periodic moot-sweep, because both funnel through the same `closeMoot` closure routing.
 

@@ -7,7 +7,6 @@ package pkg_test
 import (
 	"context"
 	"errors"
-	"time"
 
 	agentlib "github.com/bborbe/agent"
 	"github.com/bborbe/github-pr-review-agent/mocks"
@@ -190,11 +189,13 @@ var _ = Describe("PRStateCheck", func() {
 			return md
 		}
 
-		It("notifies once when the review ran (job_started_at set)", func() {
+		It("notifies once for a superseded verdict, even without job_started_at", func() {
+			// The in-pod TaskContent never carries job_started_at: the executor
+			// stamps it through an async UpdateFrontmatterCommand after the Job
+			// spec was rendered. A running pod is itself the proof the run
+			// started, so the notice must fire on exactly this shape.
 			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
-			md := buildMDWith(
-				"job_started_at: \"2026-06-08T12:00:00Z\"\ntask_identifier: " + runID + "\n",
-			)
+			md := buildMDWith("task_identifier: " + runID + "\n")
 			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
@@ -211,23 +212,12 @@ var _ = Describe("PRStateCheck", func() {
 			Expect(resolution.Body).To(ContainSubstring(`"notified": true`))
 		})
 
-		It("notifies when job_started_at holds a non-string value", func() {
-			// An unquoted RFC3339 in frontmatter decodes to a non-string, and
-			// TaskFrontmatter.String reports that as absent. The notice must
-			// still fire: the review did run.
+		It("does not notify from the sweep when no pod ever existed", func() {
+			// The sweep reads the LIVE record, so job_started_at is meaningful
+			// there: a queued record closed before any pod existed stays quiet.
 			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
-			md := buildMD()
-			md.Frontmatter["job_started_at"] = time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).NotTo(BeNil())
-			Expect(fake.NotifySupersededCallCount()).To(Equal(1))
-		})
-
-		It("does not notify when the review never ran, but still writes ## Resolution", func() {
-			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
-			md := buildMD()
-			result, err := pkg.PRStateCheckForTest(ctx, md, fake)
+			md := buildMDWith("task_identifier: " + runID + "\n")
+			result, err := pkg.PRStateCheckFromSweepForTest(ctx, md, fake)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(fake.NotifySupersededCallCount()).To(Equal(0))
@@ -236,6 +226,17 @@ var _ = Describe("PRStateCheck", func() {
 			Expect(ok).To(BeTrue())
 			Expect(resolution.Body).To(ContainSubstring(`"verdict": "superseded"`))
 			Expect(resolution.Body).NotTo(ContainSubstring(`"notified"`))
+		})
+
+		It("notifies from the sweep when job_started_at is set", func() {
+			fake.PRStateReturns("OPEN", "", testHeadOid, nil)
+			md := buildMDWith(
+				"job_started_at: \"2026-06-08T12:00:00Z\"\ntask_identifier: " + runID + "\n",
+			)
+			result, err := pkg.PRStateCheckFromSweepForTest(ctx, md, fake)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(fake.NotifySupersededCallCount()).To(Equal(1))
 		})
 
 		It("notifies when cancelled mid-run (cancelled_during set)", func() {

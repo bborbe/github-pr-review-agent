@@ -198,6 +198,16 @@ func PRStateCheckCancelledForTest(
 	return prStateCheckCancelled(ctx, md, client, cancelledDuring)
 }
 
+// PRStateCheckFromSweepForTest exposes the moot-sweep entry so the
+// no-pod-ever-existed row can assert the notice stays quiet there.
+func PRStateCheckFromSweepForTest(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	client PRStateClient,
+) (*agentlib.Result, error) {
+	return prStateCheckFromSweep(ctx, md, client)
+}
+
 // LineRangeForTest re-exports the unexported lineRange so funnel_test.go (in
 // the pkg_test package) can assert parsed hunk ranges.
 type LineRangeForTest = lineRange
