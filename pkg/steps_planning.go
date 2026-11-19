@@ -37,6 +37,7 @@ const maxPlanningAttempts = 3
 // rubber-stamp a positive review without the execution review running.
 type planningStep struct {
 	runner          claudelib.ClaudeRunner
+	poster          PrPoster // nil = skip posting the budget-expiry marker
 	instructions    claudelib.Instructions
 	maxDuration     libtime.Duration
 	prState         PRStateClient
@@ -45,11 +46,13 @@ type planningStep struct {
 
 // NewPlanningStep constructs the planning-phase step. maxDuration is the soft
 // REVIEW_MAX_DURATION budget enforced on each claude run; expiry routes to
-// human_review instead of the controller retry path. prState queries the live
-// GitHub PR state so a merged/closed/superseded PR short-circuits before any
-// planning work. currentDateTime stamps the budget-expiry diagnostic.
+// human_review instead of the controller retry path and posts a PR-visible
+// failure marker through poster. prState queries the live GitHub PR state so a
+// merged/closed/superseded PR short-circuits before any planning work.
+// currentDateTime stamps the budget-expiry diagnostic.
 func NewPlanningStep(
 	runner claudelib.ClaudeRunner,
+	poster PrPoster,
 	instructions claudelib.Instructions,
 	maxDuration libtime.Duration,
 	prState PRStateClient,
@@ -57,6 +60,7 @@ func NewPlanningStep(
 ) agentlib.Step {
 	return &planningStep{
 		runner:          runner,
+		poster:          poster,
 		instructions:    instructions,
 		maxDuration:     maxDuration,
 		prState:         prState,
@@ -124,10 +128,7 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 			// Budget expiry (a FIRED run-context deadline) routes to human_review,
 			// never retried or written to ## Plan; a streamed partial is salvaged.
 			if budgetExpired {
-				glog.V(2).
-					Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
-				writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
-				return budgetExpiredResult(md, "planning", s.maxDuration, s.currentDateTime), nil
+				return s.budgetExpired(ctx, md, runResult, runErr), nil
 			}
 			// Transport error (nil result + err) is NOT retried — controller territory.
 			glog.V(2).Infof("planning: claude failed nextPhase=human_review err=%v", runErr)
@@ -177,6 +178,29 @@ func (s *planningStep) Run(ctx context.Context, md *agentlib.Markdown) (*agentli
 			lastParseErr,
 		),
 	}, nil
+}
+
+// budgetExpired handles a planning run that exhausted its soft budget: salvage
+// the streamed partial under ## Salvage, post the PR-visible failure marker and
+// route to human_review. Extracted from Run to keep it within the funlen cap.
+func (s *planningStep) budgetExpired(
+	ctx context.Context,
+	md *agentlib.Markdown,
+	runResult *claudelib.ClaudeResult,
+	runErr error,
+) *agentlib.Result {
+	glog.V(2).
+		Infof("planning: soft time budget %s exceeded nextPhase=human_review", s.maxDuration)
+	writeSalvage(md, ExtractBudgetPartial(runResult, runErr))
+	postFailureMarker(
+		ctx,
+		s.poster,
+		md,
+		ExtractPRURL(md),
+		RunOutcomeBudgetExpired,
+		"soft_budget_expired:planning",
+	)
+	return budgetExpiredResult(md, "planning", s.maxDuration, s.currentDateTime)
 }
 
 // routeFromPlan parses concerns from a ## Plan body (freshly produced by
