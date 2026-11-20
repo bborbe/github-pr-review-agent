@@ -20,6 +20,27 @@ import (
 //go:embed execution_output-format.md
 var executionOutputFormat string
 
+// prefilledArgsHeaderTemplate opens every execution prompt. It carries the two
+// arguments the slash command would otherwise have been given, plus the two
+// statements that measurably cut the review's wall clock.
+//
+// The environment block exists because the host, not the model, prepares the
+// checkout: the procedure's Step 0a-pre `ALREADY_AT_HEAD` check is re-run by the
+// model on every review and, when it does not short-circuit cleanly, costs a
+// further burst of `rev-parse`/`status`/`branch`/`remote` calls. Measured on the
+// sun capture 2026-11-20 (n=80 post-window reviews): the run reaches its first
+// substantive tool call after a median of 6 such calls, 10.1 s of the 211 s
+// review phase. The host's checkout step already guarantees the answer, so it is
+// stated once instead of re-derived per run.
+//
+// The round-trip block exists because wall clock is round-trip bound, not token
+// bound. Measured on the same capture: tool execution is 1 s per review (0.5 %
+// of the phase), generation is 0.2-0.35 s per round trip, and the wait for the
+// first token is 1.25 s at best and 20 s in the tail — 99.5 % of the phase is
+// model time and 51 % of it sits in the 13 % of round trips that take longer
+// than 8 s. Only 1.51 calls are issued per round trip (63 % of trips issue
+// exactly one), so batching independent calls is the one lever that acts on the
+// dominant term.
 const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 	"The procedure below describes a `/coding:pr-review` slash command that takes\n" +
 	"`<target-branch>` and a mode argument. Those arguments have already been\n" +
@@ -28,6 +49,29 @@ const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 	"- **mode**: %s\n" +
 	"- **Working directory**: your cwd is already the cloned worktree at the PR head — " +
 	"run plain `git` from it, never `git -C <path>`; `git -C` is not needed.\n\n" +
+	"## Environment — already verified, do not re-check\n\n" +
+	"The host created this checkout for this review: your working directory is the\n" +
+	"clone it prepared at the PR head, and TARGET_BRANCH is already fetched. Step\n" +
+	"0a-pre's `ALREADY_AT_HEAD` check is therefore satisfied by construction for\n" +
+	"this run:\n\n" +
+	"- do NOT re-run it — no `git fetch`, `git rev-parse`, `git status`,\n" +
+	"  `git branch`, `git remote`, `git worktree list`, `ls` or `pwd` to confirm\n" +
+	"  the checkout; those answer a question the host already answered;\n" +
+	"- do NOT create, remove or switch a worktree — `REVIEW_DIR` is your cwd;\n" +
+	"- start at Step 0c and generate the diff against TARGET_BRANCH directly. If a\n" +
+	"  later command fails because a ref is missing, report that failure in the\n" +
+	"  review — do not go hunting for the cause.\n\n" +
+	"## Round trips are the budget\n\n" +
+	"Each tool call costs one model round trip, and every round trip waits for the\n" +
+	"model before its first token arrives — seconds per trip whatever the call\n" +
+	"does. A review that issues its calls one at a time spends most of its wall\n" +
+	"clock waiting rather than reviewing.\n\n" +
+	"When you need several independent facts — several files to read, several\n" +
+	"greps, several `git diff` / `git show` / `git log` queries — issue them as\n" +
+	"MULTIPLE tool calls in the SAME message so they share one round trip. Batch\n" +
+	"only calls that do not depend on each other's output; a call whose arguments\n" +
+	"come from a previous result still waits for it, and a wrong call costs more\n" +
+	"than the wait it saved.\n\n" +
 	"Now follow the procedure below as if the slash command had been invoked with\n" +
 	"those arguments. The procedure references sub-agents via the `Task` tool;\n" +
 	"dispatch them as written.\n\n" +
