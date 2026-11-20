@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: **the execution prompt now tells the model the checkout is already verified and that round trips are the budget.** The review phase is round-trip bound, not token bound: measured on the sun capture 2026-11-20 (n=80), tool execution is 1 s of a 211 s review while 99.5 % is model wait, the wait for a first token is 1.25 s at best and 20 s in the tail, and 63 % of round trips issue exactly one tool call. The pre-filled header now states that the host prepared the checkout (Step 0a-pre's `ALREADY_AT_HEAD` has passed, so no `git fetch`/`rev-parse`/`status`/`branch`/`remote`/`worktree`/`ls` re-check) and instructs the model to issue independent tool calls in the same message. Both statements sit before the inlined procedure and apply to the chunked path too.
+
 ## v0.21.0
 
 - feat: **planning- and review-phase budget expiries now leave the PR-visible failure marker.** The marker covered only the three routes reachable from `checkoutExecutionStep`, because `planningStep` and `reviewStep` carried no poster; a run that expired its soft budget in planning or ai_review left the PR silently gated. Both steps now post the same best-effort `COMMENT` marker (`run_outcome: budget_expired`, `soft_budget_expired:planning` / `soft_budget_expired:review`). The ai_review phase's `## Diagnostics` label is now `soft_budget_expired:review` (was `soft_budget_expired:ai-review`), matching the phase name the criterion reads.

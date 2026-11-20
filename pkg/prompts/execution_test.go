@@ -107,6 +107,57 @@ var _ = Describe("BuildExecutionInstructions", func() {
 		)
 	})
 
+	// The review phase is round-trip bound: measured on the sun capture
+	// 2026-11-20, tool execution is 1 s of a 211 s review while 99.5 % is model
+	// wait, and 63 % of round trips issue exactly one call. Both statements the
+	// header carries to cut that are pinned here so a later refactor cannot drop
+	// them silently.
+	Describe("round-trip budget", func() {
+		build := func() string {
+			writePlugin(fakePlugin)
+			instructions, err := prompts.BuildExecutionInstructions(
+				ctx,
+				claudelib.ClaudeConfigDir(tmpDir),
+				"short",
+				"main",
+				true,
+				sampleFindings,
+				"",
+				libtime.Duration(25*time.Minute),
+			)
+			Expect(err).NotTo(HaveOccurred())
+			return instructions[0].Content
+		}
+
+		It("states the checkout is already verified and forbids re-checking it", func() {
+			workflow := build()
+			Expect(workflow).To(ContainSubstring("Environment — already verified, do not re-check"))
+			Expect(workflow).To(ContainSubstring("ALREADY_AT_HEAD"))
+			Expect(workflow).To(ContainSubstring("do NOT create, remove or switch a worktree"))
+			Expect(workflow).To(ContainSubstring("start at Step 0c"))
+		})
+
+		It("tells the model to batch independent tool calls into one message", func() {
+			workflow := build()
+			Expect(workflow).To(ContainSubstring("Round trips are the budget"))
+			Expect(workflow).To(ContainSubstring("MULTIPLE tool calls in the SAME message"))
+			// Batching must never be offered for dependent calls: a wrong call
+			// costs more than the wait it saves.
+			Expect(workflow).To(ContainSubstring("do not depend on each other's output"))
+		})
+
+		It("places both statements before the inlined procedure body", func() {
+			workflow := build()
+			procedure := strings.Index(workflow, "Procedure body line 1.")
+			Expect(
+				strings.Index(workflow, "Environment — already verified"),
+			).To(BeNumerically("<", procedure))
+			Expect(
+				strings.Index(workflow, "Round trips are the budget"),
+			).To(BeNumerically("<", procedure))
+		})
+	})
+
 	Describe("funnel injected (agent ran the funnel)", func() {
 		It("injects the findings JSON and forbids re-running the runner", func() {
 			writePlugin(fakePlugin)
@@ -447,6 +498,10 @@ var _ = Describe("BuildChunkExecutionInstructions", func() {
 		Expect(workflow).To(ContainSubstring("Procedure body line 1."))
 		Expect(workflow).To(ContainSubstring("TARGET_BRANCH"))
 		Expect(workflow).To(ContainSubstring("## Final step — emit verdict JSON"))
+		// The chunked path shares the header, so the round-trip budget statements
+		// reach it too — a chunk review pays the same per-trip wait.
+		Expect(workflow).To(ContainSubstring("Environment — already verified, do not re-check"))
+		Expect(workflow).To(ContainSubstring("Round trips are the budget"))
 	})
 
 	It("rejects an empty base_ref like the unscoped builder", func() {
@@ -534,10 +589,13 @@ var _ = Describe("BuildChunkExecutionInstructions", func() {
 
 		workflow := instructions[0].Content
 		Expect(workflow).To(ContainSubstring("24m"))
+		// The notice is identified by its heading and its own sentence, not by the
+		// bare command names: the shared pre-filled header also names `git fetch`
+		// and `git branch` — as commands the model must NOT run to re-verify a
+		// checkout the host already prepared — so a token-level assertion would
+		// fire on the header and stop testing the notice at all.
 		Expect(workflow).NotTo(ContainSubstring("## Shared worktree"))
-		Expect(workflow).NotTo(ContainSubstring("`git fetch`"))
-		Expect(workflow).NotTo(ContainSubstring("`git worktree`"))
-		Expect(workflow).NotTo(ContainSubstring("`git branch`"))
+		Expect(workflow).NotTo(ContainSubstring("This worktree is shared with other chunk reviews"))
 		Expect(workflow).NotTo(ContainSubstring("`rm -rf`"))
 	})
 })
