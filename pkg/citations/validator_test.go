@@ -33,7 +33,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("keeps a rule finding whose rule_id resolves", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -46,7 +46,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("drops a rule finding whose rule_id does not resolve, and counts it", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -61,7 +61,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("treats a finding with no kind as a rule finding", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -73,7 +73,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("keeps a toolchain finding without any id", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -86,7 +86,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("drops an invariant finding when no security model is supplied", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -100,7 +100,7 @@ var _ = Describe("Validator", func() {
 
 	It("keeps an invariant finding when the model carries its id", func() {
 		model := writeFile(`{"invariants":[{"id":"inv-1"}]}`)
-		validator, err := citations.NewValidatorWithModel(ruleIndex(), model)
+		validator, err := citations.NewValidatorWithModel(ctx, ruleIndex(), model)
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -112,7 +112,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("drops a finding of an unknown kind", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -124,7 +124,7 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("preserves the grouped findings_by_owner shape and names the owner", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		result, err := validator.Validate(ctx, []byte(
@@ -144,12 +144,12 @@ var _ = Describe("Validator", func() {
 	})
 
 	It("fails when the rule index is missing", func() {
-		_, err := citations.NewValidator(filepath.Join(GinkgoT().TempDir(), "absent.json"))
+		_, err := citations.NewValidator(ctx, filepath.Join(GinkgoT().TempDir(), "absent.json"))
 		Expect(err).NotTo(BeNil())
 	})
 
 	It("fails when the findings document is not JSON", func() {
-		validator, err := citations.NewValidator(ruleIndex())
+		validator, err := citations.NewValidator(ctx, ruleIndex())
 		Expect(err).To(BeNil())
 
 		_, err = validator.Validate(ctx, []byte("not json"))

@@ -61,8 +61,8 @@ type Validator interface {
 
 // NewValidator loads the rule index at indexPath. A missing or unparseable index
 // is an error: the caller must not proceed as though validation had passed.
-func NewValidator(indexPath string) (Validator, error) {
-	ids, err := loadRuleIDs(indexPath)
+func NewValidator(ctx context.Context, indexPath string) (Validator, error) {
+	ids, err := loadRuleIDs(ctx, indexPath)
 	if err != nil {
 		return nil, err
 	}
@@ -72,8 +72,8 @@ func NewValidator(indexPath string) (Validator, error) {
 // NewValidatorWithModel additionally loads a security model so invariant-kind
 // findings can resolve. A model that cannot be read leaves the invariant set
 // empty, which drops those findings — the script's fail-closed behaviour.
-func NewValidatorWithModel(indexPath, modelPath string) (Validator, error) {
-	ids, err := loadRuleIDs(indexPath)
+func NewValidatorWithModel(ctx context.Context, indexPath, modelPath string) (Validator, error) {
+	ids, err := loadRuleIDs(ctx, indexPath)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ type lazyValidator struct {
 
 func (l *lazyValidator) Validate(ctx context.Context, findings []byte) (Result, error) {
 	l.once.Do(func() {
-		l.inner, l.err = NewValidator(l.indexPath)
+		l.inner, l.err = NewValidator(ctx, l.indexPath)
 	})
 	if l.err != nil {
 		return Result{}, l.err
@@ -219,16 +219,16 @@ func isFinding(item map[string]interface{}) bool {
 	return true
 }
 
-func loadRuleIDs(path string) (map[string]struct{}, error) {
+func loadRuleIDs(ctx context.Context, path string) (map[string]struct{}, error) {
 	content, err := os.ReadFile(path) // #nosec G304 -- path is the plugin's own rules index
 	if err != nil {
-		return nil, errors.Wrapf(context.Background(), err, "read rule index path=%s", path)
+		return nil, errors.Wrapf(ctx, err, "read rule index path=%s", path)
 	}
 	var entries []struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(content, &entries); err != nil {
-		return nil, errors.Wrapf(context.Background(), err, "parse rule index path=%s", path)
+		return nil, errors.Wrapf(ctx, err, "parse rule index path=%s", path)
 	}
 	ids := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
