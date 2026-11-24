@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: **the security pass's dependency scan now runs in Go over the OSV API.** `/coding:pr-review --security` Step 7 needs a dependency scan, and neither route the plugin names can work here: the runtime image carries no Go toolchain (the Dockerfile copies only `/main` out of the `golang` build stage), so `govulncheck` cannot run at any mode, and a model-invoked scanner is exactly the allowlist-invocation fragility `pkg/funnel.go` was written to remove. `pkg/security` parses `go.mod`, queries `api.osv.dev` (batch + per-vuln detail) and returns `kind: toolchain` findings for the execution prompt to consume. A repo with no `go.mod` reports `not-applicable` explicitly rather than skipping silently; a scan that cannot run reports `failed`, which the prompt injection turns into a blocking toolchain finding — Step 7 stays fail-closed.
+
 ## v0.22.1
 
 - chore: remove stale vulnerability ignore IDs that no longer apply
