@@ -6,6 +6,7 @@ package pkg
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -16,8 +17,10 @@ import (
 	claudelib "github.com/bborbe/agent/claude"
 	libmetrics "github.com/bborbe/agent/metrics"
 	"github.com/bborbe/errors"
+	"github.com/bborbe/github-pr-review-agent/pkg/citations"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
 	"github.com/bborbe/github-pr-review-agent/pkg/prompts"
+	"github.com/bborbe/github-pr-review-agent/pkg/security"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 
@@ -41,11 +44,17 @@ type checkoutExecutionStep struct {
 	repoAllowlist   []string
 	prPoster        PrPoster // nil = skip posting
 	funnelRunner    FunnelRunner
-	currentDateTime libtime.CurrentDateTimeGetter
-	runner          claudelib.ClaudeRunner // nil = build a fresh runner in runClaude (production)
-	maxDuration     libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
-	prState         PRStateClient
-	chunkConfig     ReviewChunkConfig // thresholds deciding whether the review is chunked
+	// securityScanner runs the security pass's Step 7 dependency scan in Go.
+	// nil disables the security section entirely (the pre-security behaviour).
+	securityScanner security.Scanner
+	// citationValidator drops findings whose provenance does not resolve. nil
+	// leaves the funnel findings unvalidated.
+	citationValidator citations.Validator
+	currentDateTime   libtime.CurrentDateTimeGetter
+	runner            claudelib.ClaudeRunner // nil = build a fresh runner in runClaude (production)
+	maxDuration       libtime.Duration       // soft REVIEW_MAX_DURATION budget per claude run
+	prState           PRStateClient
+	chunkConfig       ReviewChunkConfig // thresholds deciding whether the review is chunked
 	// checkBeforeChunkFn is the pre-chunk seam body. nil in production — the
 	// per-call prStateWatch is the production mid-run check, so nothing fills
 	// this; tests install a spy through SetCheckBeforeChunkForTest.
@@ -85,8 +94,9 @@ func NewCheckoutExecutionStep(
 	chunkConfig ReviewChunkConfig,
 	pollInterval libtime.Duration,
 	usage libmetrics.JobMetrics,
+	options ...CheckoutExecutionOption,
 ) agentlib.Step {
-	return &checkoutExecutionStep{
+	step := &checkoutExecutionStep{
 		pollInterval:    pollInterval,
 		repoManager:     repoManager,
 		claudeConfigDir: claudeConfigDir,
@@ -104,6 +114,24 @@ func NewCheckoutExecutionStep(
 		prState:         prState,
 		chunkConfig:     chunkConfig,
 		usage:           usage,
+	}
+	for _, option := range options {
+		option(step)
+	}
+	return step
+}
+
+// CheckoutExecutionOption configures optional collaborators on the execution
+// step without changing the constructor's positional signature.
+type CheckoutExecutionOption func(*checkoutExecutionStep)
+
+// WithSecurity enables the security pass: the Step 7 dependency scan and the
+// citation validator, both run in Go. A nil scanner leaves the security section
+// off entirely; a nil validator leaves the funnel findings unvalidated.
+func WithSecurity(scanner security.Scanner, validator citations.Validator) CheckoutExecutionOption {
+	return func(step *checkoutExecutionStep) {
+		step.securityScanner = scanner
+		step.citationValidator = validator
 	}
 }
 
@@ -260,7 +288,46 @@ func (s *checkoutExecutionStep) Run(
 		}
 	}
 
-	return s.runReview(ctx, md, worktreePath, baseRef, funnel)
+	sec := s.buildSecurityInput(ctx, worktreePath, &funnel)
+	return s.runReview(ctx, md, worktreePath, baseRef, funnel, sec)
+}
+
+// buildSecurityInput runs the security pass's Step 7 dependency scan and the
+// citation validator, both in Go: the review's fixed tool allowlist can express
+// neither invocation, and the runtime image has no Go toolchain. A nil scanner
+// leaves the security section off entirely, which is the pre-security behaviour.
+// The funnel's findings are replaced by the validated subset so a finding with a
+// drifted rule_id never reaches the model — and its removal is counted, so a
+// zero-findings line can distinguish "clean" from "suppressed".
+func (s *checkoutExecutionStep) buildSecurityInput(
+	ctx context.Context,
+	worktreePath string,
+	funnel *FunnelResult,
+) prompts.SecurityInput {
+	var input prompts.SecurityInput
+	if s.citationValidator != nil && funnel.Ran && funnel.FindingsJSON != "" {
+		validated, err := s.citationValidator.Validate(ctx, []byte(funnel.FindingsJSON))
+		if err != nil {
+			glog.Warningf("citation validation skipped: %v", err)
+		} else {
+			funnel.FindingsJSON = string(validated.Findings)
+			input.DroppedCount = validated.DroppedCount
+		}
+	}
+	if s.securityScanner == nil {
+		return input
+	}
+	result := s.securityScanner.Scan(ctx, worktreePath)
+	input.Status = result.Status
+	input.Detail = result.Detail
+	input.Modules = result.Modules
+	encoded, err := json.Marshal(result.Findings)
+	if err != nil {
+		glog.Warningf("marshal security findings failed: %v", err)
+		return input
+	}
+	input.FindingsJSON = string(encoded)
+	return input
 }
 
 // runReview decides how the review runs. When the added-line counts could not
@@ -275,18 +342,19 @@ func (s *checkoutExecutionStep) runReview(
 	worktreePath string,
 	baseRef string,
 	funnel FunnelResult,
+	sec prompts.SecurityInput,
 ) (*agentlib.Result, error) {
 	if funnel.InventoryDetail != "" {
 		glog.Warningf("review chunking skipped: %s", funnel.InventoryDetail)
-		return s.runUnscopedReview(ctx, md, worktreePath, baseRef, funnel)
+		return s.runUnscopedReview(ctx, md, worktreePath, baseRef, funnel, sec)
 	}
 	chunks := PartitionReviewChunks(funnel.ChangedFiles, s.chunkConfig)
 	if len(chunks) == 1 {
 		glog.V(2).
 			Infof("review chunk 1/1 files=%d additions=%d", len(chunks[0].Files), chunks[0].Additions)
-		return s.runUnscopedReview(ctx, md, worktreePath, baseRef, funnel)
+		return s.runUnscopedReview(ctx, md, worktreePath, baseRef, funnel, sec)
 	}
-	return s.runChunkedReview(ctx, md, worktreePath, baseRef, funnel, chunks)
+	return s.runChunkedReview(ctx, md, worktreePath, baseRef, funnel, chunks, sec)
 }
 
 // runUnscopedReview is the single-run path: one execution prompt covering the
@@ -298,6 +366,7 @@ func (s *checkoutExecutionStep) runUnscopedReview(
 	worktreePath string,
 	baseRef string,
 	funnel FunnelResult,
+	sec prompts.SecurityInput,
 ) (*agentlib.Result, error) {
 	instructions, err := prompts.BuildExecutionInstructions(
 		ctx,
@@ -308,6 +377,7 @@ func (s *checkoutExecutionStep) runUnscopedReview(
 		funnel.FindingsJSON,
 		funnel.FailDetail,
 		s.maxDuration,
+		sec,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(
@@ -434,6 +504,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 	baseRef string,
 	funnel FunnelResult,
 	chunks []ReviewChunk,
+	sec prompts.SecurityInput,
 ) (*agentlib.Result, error) {
 	// Cache PR URL BEFORE any md mutations to avoid matching URLs that Claude
 	// writes inside the ## Review section body.
@@ -470,6 +541,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 		outerDeadline,
 		concurrency,
 		watch,
+		sec,
 	)
 
 	// A pre-chunk check's terminal result wins regardless of what the in-flight
@@ -587,6 +659,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 	outerDeadline time.Time,
 	concurrency int,
 	watch *prStateWatch,
+	sec prompts.SecurityInput,
 ) ([]*chunkRunResult, *agentlib.Result, error) {
 	n := len(chunks)
 	chunkCtx, cancel := context.WithCancel(ctx)
@@ -646,6 +719,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 				chunkDuration,
 				concurrency,
 				watch,
+				sec,
 			)
 			mu.Lock()
 			results[i] = &result
@@ -679,6 +753,7 @@ func (s *checkoutExecutionStep) runOneChunk(
 	chunkDuration libtime.Duration,
 	concurrency int,
 	watch *prStateWatch,
+	sec prompts.SecurityInput,
 ) chunkRunResult {
 	glog.V(2).
 		Infof("review chunk %d/%d files=%d additions=%d", index+1, count, len(chunk.Files), chunk.Additions)
@@ -704,6 +779,7 @@ func (s *checkoutExecutionStep) runOneChunk(
 		chunkFindings,
 		chunkDuration,
 		concurrency,
+		sec,
 	)
 	if err != nil {
 		return chunkRunResult{index: index, stepErr: errors.Wrapf(

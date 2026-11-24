@@ -10,6 +10,7 @@ package factory
 
 import (
 	"net/http"
+	"path/filepath"
 	"time"
 
 	agentlib "github.com/bborbe/agent"
@@ -19,16 +20,46 @@ import (
 	libmetrics "github.com/bborbe/agent/metrics"
 	"github.com/bborbe/cqrs/base"
 	prpkg "github.com/bborbe/github-pr-review-agent/pkg"
+	"github.com/bborbe/github-pr-review-agent/pkg/citations"
 	"github.com/bborbe/github-pr-review-agent/pkg/git"
 	"github.com/bborbe/github-pr-review-agent/pkg/github"
 	"github.com/bborbe/github-pr-review-agent/pkg/githubposter"
 	"github.com/bborbe/github-pr-review-agent/pkg/prompts"
+	"github.com/bborbe/github-pr-review-agent/pkg/security"
 	libkafka "github.com/bborbe/kafka"
 	libtime "github.com/bborbe/time"
 	domain "github.com/bborbe/vault-cli/pkg/domain"
 )
 
 const serviceName = "maintainer-agent-pr-reviewer"
+
+// securityScanTimeout bounds one OSV HTTP round trip. The review Job reaches
+// api.osv.dev through the injected egress proxy, whose allowlist carries
+// .osv.dev; a slow proxy must not eat the review's budget.
+const securityScanTimeout = 30 * time.Second
+
+// NewSecurityScanner constructs the Step 7 dependency scanner. It queries OSV
+// rather than running govulncheck because the runtime image carries no Go
+// toolchain — see pkg/security.
+func NewSecurityScanner() security.Scanner {
+	return security.NewScanner(securityScanTimeout)
+}
+
+// NewCitationValidator constructs the citation validator over the coding
+// plugin's rule index. Loading is deferred to the first Validate so this stays a
+// pure composition with no I/O.
+func NewCitationValidator(claudeConfigDir claudelib.ClaudeConfigDir) citations.Validator {
+	return citations.NewLazyValidator(
+		filepath.Join(
+			string(claudeConfigDir),
+			"plugins",
+			"marketplaces",
+			"coding",
+			"rules",
+			"index.json",
+		),
+	)
+}
 
 // Per-phase tool scopes. Principle: each phase gets the smallest set that
 // lets it do its job. Planning + Review are read-only inspection. Execution
@@ -301,6 +332,7 @@ func createPhases(
 		chunkConfig,
 		prStatePollInterval,
 		usage,
+		prpkg.WithSecurity(NewSecurityScanner(), NewCitationValidator(claudeConfigDir)),
 	), humanReviewOwner)
 	reviewStep := prpkg.NewHumanReviewOwnerStep(prpkg.NewReviewStep(
 		CreateClaudeRunner(claudeConfigDir, agentDir, model, env, reviewTools, usage),

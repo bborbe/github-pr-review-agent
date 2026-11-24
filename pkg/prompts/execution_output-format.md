@@ -11,7 +11,12 @@ Final response MUST be a single JSON object with this schema:
       "severity": "critical | major | minor | nit",
       "blocking": true | false,
       "blocking_reason": "required when blocking is true; empty string otherwise",
-      "message": "..."
+      "message": "...",
+      "kind": "rule | invariant | toolchain",
+      "rule_id": "required when kind is rule; omit otherwise",
+      "invariant_id": "required when kind is invariant; omit otherwise",
+      "tool": "required when kind is toolchain; omit otherwise",
+      "advisory": "required when kind is toolchain; omit otherwise"
     }
   ],
   "concerns_addressed": [
@@ -45,6 +50,18 @@ Field rules:
   defect that justifies blocking; an empty value never un-blocks
 - `severity` orders and labels comments only — it never decides the verdict.
   The verdict is decided by `blocking` alone
+- `kind` and its id field carry a security finding's provenance. Emit them ONLY
+  for findings from the security pass; a code-quality finding omits all five.
+  - `kind: "rule"` requires `rule_id` — the id from the rule block the finding
+    cites, exactly as it appears in `rules/index.json`
+  - `kind: "invariant"` requires `invariant_id` — the id from the security
+    model's `invariants[]`
+  - `kind: "toolchain"` requires `tool` and `advisory` — e.g. `osv` and the OSV
+    id (`GO-2024-1234`), plus `package` and `version` in `message` so the reader
+    can locate the dependency
+  - A security finding whose provenance you cannot state MUST NOT be emitted.
+    An unprovenanced security finding is dropped by citation validation, and a
+    report that silently lost findings is worse than one that says so
 - `concerns_addressed`: required, one object per concern from `## Plan`. Each
   object has:
   - `concern` (required): the concern text from `## Plan`

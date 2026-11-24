@@ -14,6 +14,7 @@ import (
 
 	claudelib "github.com/bborbe/agent/claude"
 	"github.com/bborbe/errors"
+	"github.com/bborbe/github-pr-review-agent/pkg/security"
 	libtime "github.com/bborbe/time"
 )
 
@@ -47,6 +48,7 @@ const prefilledArgsHeaderTemplate = "## Pre-filled arguments\n\n" +
 	"resolved for this run — do NOT prompt for them, do NOT re-derive them:\n\n" +
 	"- **TARGET_BRANCH**: %s\n" +
 	"- **mode**: %s\n" +
+	"- **security**: %s\n" +
 	"- **Working directory**: your cwd is already the cloned worktree at the PR head — " +
 	"run plain `git` from it, never `git -C <path>`; `git -C` is not needed.\n\n" +
 	"## Environment — already verified, do not re-check\n\n" +
@@ -133,6 +135,85 @@ const funnelFailedSteerTemplate = "## Mechanical funnel status + tool paths (non
 	"`%[1]s/docs/selector-mode-guide.md` directly.\n\n" +
 	"---\n\n"
 
+// SecurityInput carries the outcome of the security pass's Step 7 dependency
+// scan and of the citation validator, both computed in Go because the review's
+// tool allowlist cannot express either invocation (see pkg/security and
+// pkg/citations).
+//
+// Status is one of security.StatusScanned / StatusNotApplicable / StatusFailed.
+// DroppedCount is how many findings the citation validator removed for want of
+// resolvable provenance — the number that keeps a zero-findings line honest.
+type SecurityInput struct {
+	Status       string
+	FindingsJSON string
+	Detail       string
+	Modules      int
+	DroppedCount int
+}
+
+// securitySteerTemplate opens the injected dependency-scan section. The
+// procedure's Step 7 is fail-closed, so the wording must make an unavailable
+// scan a blocking finding rather than a silent pass. %s = the status body.
+const securitySteerTemplate = "## Dependency scan (security Step 7) — already run\n\n" +
+	"This review runs headless under a fixed tool allowlist and the runtime image " +
+	"carries no Go toolchain, so `govulncheck`, `osv-scanner` and `trivy` are " +
+	"unavailable and must NOT be invoked. The agent ran the dependency scan itself " +
+	"and its outcome is below. Do not re-run it.\n\n%s\n\n"
+
+// securityCleanBody is the scanned-with-no-findings outcome.
+const securityCleanBody = "The scan ran over the reviewed module's Go dependencies and found **no " +
+	"vulnerable dependencies**. Step 7's result is CLEAN: state that plainly in the " +
+	"report and do NOT emit a toolchain finding for it."
+
+// securityNotApplicableBody is the no-go.mod outcome: visible, never blocking.
+const securityNotApplicableBody = "The reviewed worktree has **no `go.mod`**, so the dependency scan does " +
+	"not apply. State exactly `dependency scan: not applicable (no go.mod)` in the " +
+	"report. This is NOT a blocking finding — it must not be reported as one — but it " +
+	"must be visible: an unstated skip is indistinguishable from a clean pass."
+
+// securityFailedBody is the fail-closed outcome. %s = failure detail.
+const securityFailedBody = "The scan **COULD NOT RUN**: %s.\n\n" +
+	"Step 7 is fail-closed. Emit a blocking `kind: toolchain` finding naming this " +
+	"failure, with `blocking: true` and a `blocking_reason` that quotes the failure. " +
+	"Do NOT approve as though the scan had passed."
+
+// securityFindingsBody introduces the findings JSON. %d = module count.
+const securityFindingsBody = "The scan found vulnerable dependencies in %d Go module(s). Report " +
+	"**each** one as a `kind: toolchain` finding carrying its `package`, `version`, " +
+	"`advisory` and `message`. Mark a finding `blocking: true` only when the advisory " +
+	"is reachable from code this PR changed (the usual blocking conditions still " +
+	"apply); otherwise report it with `blocking: false`. Findings JSON:\n\n"
+
+// citationDroppedBody reports suppressed findings. %d = count.
+const citationDroppedBody = "Citation validation dropped **%d** finding(s) whose provenance did not " +
+	"resolve against the rule set (see the drop list below). Do not report them. If " +
+	"your report ends up with no security findings, it must say these were suppressed " +
+	"rather than claiming the review was clean.\n\n"
+
+// renderSecuritySteer renders the injected dependency-scan section.
+func renderSecuritySteer(input SecurityInput) string {
+	var body string
+	switch input.Status {
+	case security.StatusNotApplicable:
+		body = securityNotApplicableBody
+	case security.StatusFailed:
+		body = fmt.Sprintf(securityFailedBody, input.Detail)
+	case security.StatusScanned:
+		if len(input.FindingsJSON) == 0 || input.FindingsJSON == "[]" {
+			body = securityCleanBody
+		} else {
+			body = fmt.Sprintf(securityFindingsBody, input.Modules) +
+				"```json\n" + input.FindingsJSON + "\n```"
+		}
+	default:
+		body = securityNotApplicableBody
+	}
+	if input.DroppedCount > 0 {
+		body += "\n\n" + fmt.Sprintf(citationDroppedBody, input.DroppedCount)
+	}
+	return fmt.Sprintf(securitySteerTemplate, body)
+}
+
 const verdictTranslationFooter = "---\n\n" +
 	"## Final step — emit verdict JSON\n\n" +
 	"After Step 7 (Manual Review) completes and the consolidated report is\n" +
@@ -212,6 +293,7 @@ func BuildExecutionInstructions(
 	funnelFindings string,
 	funnelFailDetail string,
 	maxDuration libtime.Duration,
+	securityInput ...SecurityInput,
 ) (claudelib.Instructions, error) {
 	var steer string
 	if funnelRan {
@@ -227,6 +309,7 @@ func BuildExecutionInstructions(
 			funnelFailDetail,
 		)
 	}
+	securitySteer, securityOn := renderOptionalSecurity(securityInput)
 	return assembleExecutionInstructions(
 		ctx,
 		claudeConfigDir,
@@ -235,6 +318,8 @@ func BuildExecutionInstructions(
 		"",
 		steer,
 		maxDuration,
+		securityOn,
+		securitySteer,
 	)
 }
 
@@ -266,6 +351,7 @@ func BuildChunkExecutionInstructions(
 	chunkFindings string,
 	chunkBudget libtime.Duration,
 	concurrency int,
+	securityInput ...SecurityInput,
 ) (claudelib.Instructions, error) {
 	steer := fmt.Sprintf(
 		funnelInjectSteerTemplate,
@@ -276,6 +362,7 @@ func BuildChunkExecutionInstructions(
 	if concurrency > 1 {
 		scope += renderSharedWorktreeNotice(concurrency)
 	}
+	securitySteer, securityOn := renderOptionalSecurity(securityInput)
 	return assembleExecutionInstructions(
 		ctx,
 		claudeConfigDir,
@@ -284,7 +371,19 @@ func BuildChunkExecutionInstructions(
 		scope,
 		steer,
 		chunkBudget,
+		securityOn,
+		securitySteer,
 	)
+}
+
+// renderOptionalSecurity returns the rendered security section and whether the
+// security pass is active. The variadic caller form keeps every existing call
+// site — including the chunked path's tests — compiling unchanged.
+func renderOptionalSecurity(inputs []SecurityInput) (string, bool) {
+	if len(inputs) == 0 {
+		return "", false
+	}
+	return renderSecuritySteer(inputs[0]), true
 }
 
 // pluginRootDir returns the coding plugin's root directory beneath the trusted
@@ -340,6 +439,8 @@ func assembleExecutionInstructions(
 	claudeConfigDir claudelib.ClaudeConfigDir,
 	reviewMode, baseRef, scopePreamble, steer string,
 	maxDuration libtime.Duration,
+	securityOn bool,
+	securitySteer string,
 ) (claudelib.Instructions, error) {
 	if baseRef == "" {
 		return nil, errors.New(ctx, "base_ref is empty")
@@ -361,8 +462,12 @@ func assembleExecutionInstructions(
 		return nil, errors.Wrapf(ctx, err, "read plugin command file path=%s", pluginPath)
 	}
 
-	header := fmt.Sprintf(prefilledArgsHeaderTemplate, baseRef, reviewMode)
-	assembled := header + scopePreamble + steer + stripFrontmatter(string(raw)) +
+	securityLabel := "off — do NOT run the Security mode subsection"
+	if securityOn {
+		securityLabel = "ON — `SECURITY_REVIEW` is set: run the Security mode subsection"
+	}
+	header := fmt.Sprintf(prefilledArgsHeaderTemplate, baseRef, reviewMode, securityLabel)
+	assembled := header + scopePreamble + steer + securitySteer + stripFrontmatter(string(raw)) +
 		verdictTranslationFooter + fmt.Sprintf(timeBudgetFooter, maxDuration)
 	return claudelib.Instructions{
 		{Name: "workflow", Content: assembled},
