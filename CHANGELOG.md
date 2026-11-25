@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a review of a repo with no `go.mod` now states a security verdict instead of only a skip note.** The not-applicable path injected the `dependency scan: not applicable (no go.mod)` sentence and nothing else, so the mandated `0 security findings — rule set <version>` line was never written for a non-Go repo — and `bborbe/nuke`, where most bborbe PRs land, has no `go.mod`. Measured 2026-11-25 on `bborbe/nuke#1639`, reviewed by the prod agent on v0.23.2: the whole security content of the review was the skip sentence, while `bborbe/attention-controller#346` (a Go repo) carried the verdict line from the same image. The not-applicable body now also requires the verdict line with the rule-set version, keeping the skip visible and explicitly non-blocking.
+
 ## v0.23.2
 
 - fix: **a new head is no longer treated as already reviewed when the previous bot review was an approval.** GitHub rewrites a review's `commit_id` to the PR's *current* head once that head moves, so the poster's "already at head" test compared a floating field: any PR whose last bot verdict was `APPROVED` was suppressed forever, and every later push silently got no review. Measured 2026-11-25 on `bborbe/pr-review-fixtures#31` — a review submitted at 13:06Z reported `commit_id` as the 15:40Z head — where three re-review attempts on the new image all ended `poster.go: skip-existing-at-head` with nothing posted. The poster now decides from the commit the review itself names in its `Reviewed commit:` line, falling back to `commit_id` only when the body carries no such line. A regression spec covers the approval case.

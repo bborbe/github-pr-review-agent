@@ -182,11 +182,18 @@ const securityProvenanceBody = "**Provenance is mandatory for every security fin
 	"provenance to must NOT be emitted — report it as a note instead. The rule-set version " +
 	"consulted is **%s**.\n\n"
 
-// securityNotApplicableBody is the no-go.mod outcome: visible, never blocking.
+// securityNotApplicableBody is the no-go.mod outcome: visible, never blocking —
+// and still obliged to carry the verdict line, so that a review of a non-Go repo
+// states a security verdict like every other review. %s = rule-set version.
 const securityNotApplicableBody = "The reviewed worktree has **no `go.mod`**, so the dependency scan does " +
 	"not apply. State exactly `dependency scan: not applicable (no go.mod)` in the " +
 	"report. This is NOT a blocking finding — it must not be reported as one — but it " +
-	"must be visible: an unstated skip is indistinguishable from a clean pass."
+	"must be visible: an unstated skip is indistinguishable from a clean pass.\n\n" +
+	"**You must still state the security verdict line**, so that every review carries a " +
+	"verdict even when no scan could run. With no vulnerable-dependency finding to " +
+	"report, write exactly `0 security findings — rule set %s`. A bare " +
+	"\"0 security findings\" without the version does not count: it cannot be told apart " +
+	"from a review where the security pass never ran."
 
 // securityFailedBody is the fail-closed outcome. %s = failure detail.
 const securityFailedBody = "The scan **COULD NOT RUN**: %s.\n\n" +
@@ -216,7 +223,7 @@ func renderSecuritySteer(input SecurityInput) string {
 	var body string
 	switch input.Status {
 	case security.StatusNotApplicable:
-		body = securityNotApplicableBody
+		body = fmt.Sprintf(securityNotApplicableBody, version)
 	case security.StatusFailed:
 		body = fmt.Sprintf(securityFailedBody, input.Detail)
 	case security.StatusScanned:

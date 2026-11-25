@@ -79,13 +79,28 @@ var _ = Describe("BuildExecutionInstructions security section", func() {
 
 	It("reports a non-Go repo as not applicable and explicitly not blocking", func() {
 		workflow := build(prompts.SecurityInput{
-			Status: security.StatusNotApplicable,
-			Detail: "dependency scan: not applicable (no go.mod)",
+			Status:         security.StatusNotApplicable,
+			Detail:         "dependency scan: not applicable (no go.mod)",
+			RuleSetVersion: "0.65.7",
 		})
 
 		Expect(workflow).To(ContainSubstring("no `go.mod`"))
 		Expect(workflow).To(ContainSubstring("dependency scan: not applicable (no go.mod)"))
 		Expect(workflow).To(ContainSubstring("NOT a blocking finding"))
+	})
+
+	// A review of a repo with no go.mod must still carry a security verdict:
+	// otherwise most bborbe PRs (nuke is YAML-only) ship with no verdict at all,
+	// which is what SC1 measures.
+	It("requires the verdict line even when the scan does not apply", func() {
+		workflow := build(prompts.SecurityInput{
+			Status:         security.StatusNotApplicable,
+			Detail:         "dependency scan: not applicable (no go.mod)",
+			RuleSetVersion: "0.65.7",
+		})
+
+		Expect(workflow).To(ContainSubstring("0 security findings — rule set 0.65.7"))
+		Expect(workflow).To(ContainSubstring("every review carries a verdict"))
 	})
 
 	It("keeps a failed scan fail-closed and blocking", func() {
