@@ -53,6 +53,40 @@ type reviewEntry struct {
 	} `json:"user"`
 	CommitID string `json:"commit_id"`
 	State    string `json:"state"`
+	Body     string `json:"body"`
+}
+
+// reviewedCommitMarker is the line the review footer writes into every body.
+const reviewedCommitMarker = "Reviewed commit:"
+
+// reviewCoversHead reports whether r actually reviewed headSHA.
+//
+// CommitID alone cannot answer that: once a PR's head moves, GitHub reports the
+// earlier review's commit_id as the NEW head. Measured 2026-11-25 on
+// bborbe/pr-review-fixtures#31 — a review submitted at 13:06Z returned
+// commit_id = the 15:40Z head — so an old approval looked like it covered every
+// later commit and the poster skipped re-reviewing that PR forever. The body is
+// what the review wrote at submission time, so when it names a commit that wins.
+func reviewCoversHead(r reviewEntry, headSHA string) bool {
+	reviewed := reviewedCommitFromBody(r.Body)
+	if reviewed == "" {
+		return r.CommitID == headSHA
+	}
+	return strings.HasPrefix(headSHA, reviewed) || strings.HasPrefix(reviewed, headSHA)
+}
+
+// reviewedCommitFromBody extracts the SHA after "Reviewed commit:" from a review
+// body, or "" when the body carries no such line.
+func reviewedCommitFromBody(body string) string {
+	idx := strings.Index(body, reviewedCommitMarker)
+	if idx < 0 {
+		return ""
+	}
+	fields := strings.Fields(body[idx+len(reviewedCommitMarker):])
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.TrimRight(fields[0], ".,;:)")
 }
 
 type postReviewReq struct {
@@ -261,7 +295,8 @@ func (p *prPoster) listBotReviews(
 		var list botReviewList
 		for i, r := range all {
 			if list.atHead == nil && r.User.Login == p.botLogin && r.CommitID == headSHA &&
-				(r.State == "APPROVED" || r.State == "CHANGES_REQUESTED") {
+				(r.State == "APPROVED" || r.State == "CHANGES_REQUESTED") &&
+				reviewCoversHead(r, headSHA) {
 				list.atHead = &all[i]
 			}
 			// Skip COMMENTED reviews: GitHub's API rejects dismissal of comment-state
