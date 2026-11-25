@@ -294,8 +294,13 @@ func (s *checkoutExecutionStep) Run(
 
 // buildSecurityInput runs the security pass's Step 7 dependency scan and the
 // citation validator, both in Go: the review's fixed tool allowlist can express
-// neither invocation, and the runtime image has no Go toolchain. A nil scanner
-// leaves the security section off entirely, which is the pre-security behaviour.
+// neither invocation, and the runtime image has no Go toolchain.
+//
+// It returns NO input when no scanner is configured, so the prompt builders omit
+// the security section entirely. Returning a zero-value input instead would claim
+// SECURITY_REVIEW is ON and render the "no go.mod" body on a step that never
+// opted in — the documented nil-disables contract would never fire.
+//
 // The funnel's findings are replaced by the validated subset so a finding with a
 // drifted rule_id never reaches the model — and its removal is counted, so a
 // zero-findings line can distinguish "clean" from "suppressed".
@@ -303,7 +308,7 @@ func (s *checkoutExecutionStep) buildSecurityInput(
 	ctx context.Context,
 	worktreePath string,
 	funnel *FunnelResult,
-) prompts.SecurityInput {
+) []prompts.SecurityInput {
 	var input prompts.SecurityInput
 	if s.citationValidator != nil && funnel.Ran && funnel.FindingsJSON != "" {
 		validated, err := s.citationValidator.Validate(ctx, []byte(funnel.FindingsJSON))
@@ -315,7 +320,7 @@ func (s *checkoutExecutionStep) buildSecurityInput(
 		}
 	}
 	if s.securityScanner == nil {
-		return input
+		return nil
 	}
 	result := s.securityScanner.Scan(ctx, worktreePath)
 	input.Status = result.Status
@@ -324,10 +329,10 @@ func (s *checkoutExecutionStep) buildSecurityInput(
 	encoded, err := json.Marshal(result.Findings)
 	if err != nil {
 		glog.Warningf("marshal security findings failed: %v", err)
-		return input
+		return nil
 	}
 	input.FindingsJSON = string(encoded)
-	return input
+	return []prompts.SecurityInput{input}
 }
 
 // runReview decides how the review runs. When the added-line counts could not
@@ -342,7 +347,7 @@ func (s *checkoutExecutionStep) runReview(
 	worktreePath string,
 	baseRef string,
 	funnel FunnelResult,
-	sec prompts.SecurityInput,
+	sec []prompts.SecurityInput,
 ) (*agentlib.Result, error) {
 	if funnel.InventoryDetail != "" {
 		glog.Warningf("review chunking skipped: %s", funnel.InventoryDetail)
@@ -366,7 +371,7 @@ func (s *checkoutExecutionStep) runUnscopedReview(
 	worktreePath string,
 	baseRef string,
 	funnel FunnelResult,
-	sec prompts.SecurityInput,
+	sec []prompts.SecurityInput,
 ) (*agentlib.Result, error) {
 	instructions, err := prompts.BuildExecutionInstructions(
 		ctx,
@@ -377,7 +382,7 @@ func (s *checkoutExecutionStep) runUnscopedReview(
 		funnel.FindingsJSON,
 		funnel.FailDetail,
 		s.maxDuration,
-		sec,
+		sec...,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(
@@ -504,7 +509,7 @@ func (s *checkoutExecutionStep) runChunkedReview(
 	baseRef string,
 	funnel FunnelResult,
 	chunks []ReviewChunk,
-	sec prompts.SecurityInput,
+	sec []prompts.SecurityInput,
 ) (*agentlib.Result, error) {
 	// Cache PR URL BEFORE any md mutations to avoid matching URLs that Claude
 	// writes inside the ## Review section body.
@@ -659,7 +664,7 @@ func (s *checkoutExecutionStep) dispatchChunks(
 	outerDeadline time.Time,
 	concurrency int,
 	watch *prStateWatch,
-	sec prompts.SecurityInput,
+	sec []prompts.SecurityInput,
 ) ([]*chunkRunResult, *agentlib.Result, error) {
 	n := len(chunks)
 	chunkCtx, cancel := context.WithCancel(ctx)
@@ -753,7 +758,7 @@ func (s *checkoutExecutionStep) runOneChunk(
 	chunkDuration libtime.Duration,
 	concurrency int,
 	watch *prStateWatch,
-	sec prompts.SecurityInput,
+	sec []prompts.SecurityInput,
 ) chunkRunResult {
 	glog.V(2).
 		Infof("review chunk %d/%d files=%d additions=%d", index+1, count, len(chunk.Files), chunk.Additions)
@@ -779,7 +784,7 @@ func (s *checkoutExecutionStep) runOneChunk(
 		chunkFindings,
 		chunkDuration,
 		concurrency,
-		sec,
+		sec...,
 	)
 	if err != nil {
 		return chunkRunResult{index: index, stepErr: errors.Wrapf(

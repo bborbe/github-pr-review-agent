@@ -206,7 +206,10 @@ func renderSecuritySteer(input SecurityInput) string {
 				"~~~json\n" + neutralizeFences(input.FindingsJSON) + "\n~~~"
 		}
 	default:
-		body = securityNotApplicableBody
+		// An unknown status must not read as "not applicable": that is the
+		// non-blocking body, and claiming it for a state we do not recognise
+		// would quietly downgrade a scan we failed to describe.
+		body = fmt.Sprintf(securityFailedBody, "unrecognised scan status")
 	}
 	if input.DroppedCount > 0 {
 		body += "\n\n" + fmt.Sprintf(citationDroppedBody, input.DroppedCount)
