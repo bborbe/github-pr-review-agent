@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.23.3
 
 - fix: **a review of a repo with no `go.mod` now states a security verdict instead of only a skip note.** The not-applicable path injected the `dependency scan: not applicable (no go.mod)` sentence and nothing else, so the mandated `0 security findings — rule set <version>` line was never written for a non-Go repo — and `bborbe/nuke`, where most bborbe PRs land, has no `go.mod`. Measured 2026-11-25 on `bborbe/nuke#1639`, reviewed by the prod agent on v0.23.2: the whole security content of the review was the skip sentence, while `bborbe/attention-controller#346` (a Go repo) carried the verdict line from the same image. The not-applicable body now also requires the verdict line with the rule-set version, keeping the skip visible and explicitly non-blocking.
 
