@@ -112,6 +112,31 @@ var _ = Describe("BuildExecutionInstructions security section", func() {
 		Expect(workflow).To(ContainSubstring("kind: toolchain"))
 	})
 
+	It("requires the rule-set version on the zero-findings line", func() {
+		workflow := build(prompts.SecurityInput{
+			Status:         security.StatusScanned,
+			FindingsJSON:   "[]",
+			RuleSetVersion: "0.65.7",
+		})
+
+		Expect(workflow).To(ContainSubstring("0 security findings — rule set 0.65.7"))
+		Expect(workflow).To(ContainSubstring("without the version does not count"))
+	})
+
+	It("requires provenance on every security finding", func() {
+		workflow := build(prompts.SecurityInput{
+			Status:         security.StatusScanned,
+			FindingsJSON:   "[]",
+			RuleSetVersion: "0.65.7",
+		})
+
+		Expect(workflow).To(ContainSubstring("Provenance is mandatory"))
+		Expect(workflow).To(ContainSubstring("kind: rule"))
+		Expect(workflow).To(ContainSubstring("rule_id"))
+		Expect(workflow).To(ContainSubstring("invariant_id"))
+		Expect(workflow).To(ContainSubstring("must NOT be emitted"))
+	})
+
 	It("treats a null findings payload as a clean scan, not as vulnerable dependencies", func() {
 		workflow := build(prompts.SecurityInput{
 			Status:       security.StatusScanned,

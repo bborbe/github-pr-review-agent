@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **the security verdict must now carry its provenance and its rule-set version.** The seeded dev test showed the pass running correctly but failing its own evidence contract: a `tls.Config{InsecureSkipVerify: true}` fixture was caught yet reported without a `rule_id`, and the clean control's zero-findings line never named the rule-set version, so it could not be told apart from a review where the security pass never ran. The injected security section now states the provenance contract explicitly — every security finding carries `kind: rule` plus its `rule_id`, `kind: invariant` plus its `invariant_id`, or `kind: toolchain` plus `tool` and `advisory`, and a finding with no provenance must not be emitted — and the clean line must read `0 security findings — rule set <version>`. The version is read at runtime from the coding plugin's own `.claude-plugin/plugin.json`, which is the rule set the review consulted.
+
 ## v0.23.0
 
 - feat: **the execution prompt now runs the security pass, and the verdict carries security provenance.** The pre-filled header states whether `SECURITY_REVIEW` is set, and the agent injects the Step 7 dependency-scan outcome ahead of the inlined procedure: clean, vulnerable-dependencies (as `kind: toolchain` findings), not-applicable (a visible, explicitly non-blocking `dependency scan: not applicable (no go.mod)` line for a non-Go repo), or failed (a blocking toolchain finding, so Step 7 stays fail-closed). The output format gained `kind` / `rule_id` / `invariant_id` / `tool` / `advisory` on a comment, with the rule that an unprovenanced security finding must not be emitted. `pkg/citations` ports the plugin's `validate-citations.sh` — the plugin runs it through a `simple-bash-runner` invocation the tool allowlist refuses — and its drop count is injected so a zero-findings line can distinguish "clean" from "suppressed".

@@ -7,6 +7,7 @@ package prompts
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,6 +150,10 @@ type SecurityInput struct {
 	Detail       string
 	Modules      int
 	DroppedCount int
+	// RuleSetVersion is the coding plugin version whose rule set this review
+	// consulted. The zero-findings line must state it: a bare "0 security
+	// findings" cannot be told apart from a pass that never ran.
+	RuleSetVersion string
 }
 
 // securitySteerTemplate opens the injected dependency-scan section. The
@@ -160,10 +165,22 @@ const securitySteerTemplate = "## Dependency scan (security Step 7) — already 
 	"unavailable and must NOT be invoked. The agent ran the dependency scan itself " +
 	"and its outcome is below. Do not re-run it.\n\n%s\n\n"
 
-// securityCleanBody is the scanned-with-no-findings outcome.
+// securityCleanBody is the scanned-with-no-findings outcome. %s = rule-set version.
 const securityCleanBody = "The scan ran over the reviewed module's Go dependencies and found **no " +
-	"vulnerable dependencies**. Step 7's result is CLEAN: state that plainly in the " +
-	"report and do NOT emit a toolchain finding for it."
+	"vulnerable dependencies**. Step 7's result is CLEAN: do NOT emit a toolchain finding " +
+	"for it, and state the clean result as an explicit line that also names the rule-set " +
+	"version consulted — write exactly `0 security findings — rule set %s`. A bare " +
+	"\"0 security findings\" without the version does not count: it cannot be told apart " +
+	"from a review where the security pass never ran."
+
+// securityProvenanceBody states the provenance contract for every security
+// finding and names the rule set consulted. %s = rule-set version.
+const securityProvenanceBody = "**Provenance is mandatory for every security finding.** Each one carries " +
+	"either `kind: rule` plus the `rule_id` of the rule block that fired (for example " +
+	"`go-security/tls-insecure-skip-verify`), `kind: invariant` plus its `invariant_id`, or " +
+	"`kind: toolchain` plus its `tool` and `advisory`. A security finding you cannot give a " +
+	"provenance to must NOT be emitted — report it as a note instead. The rule-set version " +
+	"consulted is **%s**.\n\n"
 
 // securityNotApplicableBody is the no-go.mod outcome: visible, never blocking.
 const securityNotApplicableBody = "The reviewed worktree has **no `go.mod`**, so the dependency scan does " +
@@ -192,6 +209,10 @@ const citationDroppedBody = "Citation validation dropped **%d** finding(s) whose
 
 // renderSecuritySteer renders the injected dependency-scan section.
 func renderSecuritySteer(input SecurityInput) string {
+	version := input.RuleSetVersion
+	if version == "" {
+		version = "unknown"
+	}
 	var body string
 	switch input.Status {
 	case security.StatusNotApplicable:
@@ -200,7 +221,7 @@ func renderSecuritySteer(input SecurityInput) string {
 		body = fmt.Sprintf(securityFailedBody, input.Detail)
 	case security.StatusScanned:
 		if isNoFindings(input.FindingsJSON) {
-			body = securityCleanBody
+			body = fmt.Sprintf(securityCleanBody, version)
 		} else {
 			body = fmt.Sprintf(securityFindingsBody, input.Modules) +
 				"~~~json\n" + neutralizeFences(input.FindingsJSON) + "\n~~~"
@@ -210,6 +231,9 @@ func renderSecuritySteer(input SecurityInput) string {
 		// non-blocking body, and claiming it for a state we do not recognise
 		// would quietly downgrade a scan we failed to describe.
 		body = fmt.Sprintf(securityFailedBody, "unrecognised scan status")
+	}
+	if input.Status != security.StatusNotApplicable {
+		body = fmt.Sprintf(securityProvenanceBody, version) + body
 	}
 	if input.DroppedCount > 0 {
 		body += "\n\n" + fmt.Sprintf(citationDroppedBody, input.DroppedCount)
@@ -332,7 +356,7 @@ func BuildExecutionInstructions(
 			funnelFailDetail,
 		)
 	}
-	securitySteer, securityOn := renderOptionalSecurity(securityInput)
+	securitySteer, securityOn := renderOptionalSecurity(securityInput, claudeConfigDir)
 	return assembleExecutionInstructions(
 		ctx,
 		claudeConfigDir,
@@ -385,7 +409,7 @@ func BuildChunkExecutionInstructions(
 	if concurrency > 1 {
 		scope += renderSharedWorktreeNotice(concurrency)
 	}
-	securitySteer, securityOn := renderOptionalSecurity(securityInput)
+	securitySteer, securityOn := renderOptionalSecurity(securityInput, claudeConfigDir)
 	return assembleExecutionInstructions(
 		ctx,
 		claudeConfigDir,
@@ -402,11 +426,37 @@ func BuildChunkExecutionInstructions(
 // renderOptionalSecurity returns the rendered security section and whether the
 // security pass is active. The variadic caller form keeps every existing call
 // site — including the chunked path's tests — compiling unchanged.
-func renderOptionalSecurity(inputs []SecurityInput) (string, bool) {
+func renderOptionalSecurity(
+	inputs []SecurityInput,
+	claudeConfigDir claudelib.ClaudeConfigDir,
+) (string, bool) {
 	if len(inputs) == 0 {
 		return "", false
 	}
-	return renderSecuritySteer(inputs[0]), true
+	input := inputs[0]
+	if input.RuleSetVersion == "" {
+		input.RuleSetVersion = pluginVersion(claudeConfigDir)
+	}
+	return renderSecuritySteer(input), true
+}
+
+// pluginVersion reads the coding plugin's own version from its manifest. That is
+// the rule-set version a review consulted, because the plugin ships the rule
+// base. A missing or unreadable manifest yields "unknown" rather than failing the
+// review — the line still states a version, which is what the criterion needs.
+func pluginVersion(claudeConfigDir claudelib.ClaudeConfigDir) string {
+	path := filepath.Join(pluginRootDir(claudeConfigDir), ".claude-plugin", "plugin.json")
+	content, err := os.ReadFile(path) // #nosec G304 -- path built from the trusted config dir
+	if err != nil {
+		return "unknown"
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(content, &manifest); err != nil || manifest.Version == "" {
+		return "unknown"
+	}
+	return manifest.Version
 }
 
 // pluginRootDir returns the coding plugin's root directory beneath the trusted
