@@ -112,6 +112,17 @@ var _ = Describe("BuildExecutionInstructions security section", func() {
 		Expect(workflow).To(ContainSubstring("kind: toolchain"))
 	})
 
+	It("treats a null findings payload as a clean scan, not as vulnerable dependencies", func() {
+		workflow := build(prompts.SecurityInput{
+			Status:       security.StatusScanned,
+			FindingsJSON: "null",
+			Modules:      0,
+		})
+
+		Expect(workflow).To(ContainSubstring("no vulnerable dependencies"))
+		Expect(workflow).NotTo(ContainSubstring("found vulnerable dependencies"))
+	})
+
 	It("says findings were suppressed when citation validation dropped any", func() {
 		workflow := build(prompts.SecurityInput{
 			Status:       security.StatusScanned,

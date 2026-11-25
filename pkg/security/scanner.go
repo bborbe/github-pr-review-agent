@@ -19,6 +19,8 @@ package security
 
 import (
 	"context"
+	stderrors "errors"
+	"io/fs"
 	"os"
 	"time"
 )
@@ -105,20 +107,32 @@ type scanner struct {
 
 // Scan reads go.mod from the worktree, queries OSV for every required module and
 // returns the findings.
+//
+// Only a genuinely absent go.mod is `not-applicable`. Any other read failure — a
+// go.mod that exists but cannot be read, e.g. a symlink to an unreadable target —
+// is `failed`, because the prompt renders `not-applicable` as explicitly
+// non-blocking and a silently fail-open scan is the one outcome Step 7 forbids.
 func (s *scanner) Scan(ctx context.Context, worktreePath string) Result {
 	content, err := s.readFile(worktreePath + "/go.mod")
 	if err != nil {
+		if stderrors.Is(err, fs.ErrNotExist) {
+			return Result{
+				Status: StatusNotApplicable,
+				Detail: "dependency scan: not applicable (no go.mod)",
+			}
+		}
 		return Result{
-			Status: StatusNotApplicable,
-			Detail: "dependency scan: not applicable (no go.mod)",
+			Status: StatusFailed,
+			Detail: "read go.mod failed: " + err.Error(),
 		}
 	}
 	modules := ParseGoMod(content)
 	if len(modules) == 0 {
 		return Result{
-			Status:  StatusScanned,
-			Detail:  "go.mod declares no module requirements",
-			Modules: 0,
+			Status:   StatusScanned,
+			Detail:   "go.mod declares no module requirements",
+			Modules:  0,
+			Findings: []Finding{},
 		}
 	}
 	findings, err := s.client.Findings(ctx, modules)
@@ -127,6 +141,9 @@ func (s *scanner) Scan(ctx context.Context, worktreePath string) Result {
 			Status: StatusFailed,
 			Detail: err.Error(),
 		}
+	}
+	if findings == nil {
+		findings = []Finding{}
 	}
 	return Result{
 		Status:   StatusScanned,

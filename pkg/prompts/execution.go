@@ -186,9 +186,9 @@ const securityFindingsBody = "The scan found vulnerable dependencies in %d Go mo
 
 // citationDroppedBody reports suppressed findings. %d = count.
 const citationDroppedBody = "Citation validation dropped **%d** finding(s) whose provenance did not " +
-	"resolve against the rule set (see the drop list below). Do not report them. If " +
-	"your report ends up with no security findings, it must say these were suppressed " +
-	"rather than claiming the review was clean.\n\n"
+	"resolve against the rule set. Do not report them. If your report ends up with " +
+	"no security findings, it must say these were suppressed rather than claiming " +
+	"the review was clean.\n\n"
 
 // renderSecuritySteer renders the injected dependency-scan section.
 func renderSecuritySteer(input SecurityInput) string {
@@ -199,11 +199,11 @@ func renderSecuritySteer(input SecurityInput) string {
 	case security.StatusFailed:
 		body = fmt.Sprintf(securityFailedBody, input.Detail)
 	case security.StatusScanned:
-		if len(input.FindingsJSON) == 0 || input.FindingsJSON == "[]" {
+		if isNoFindings(input.FindingsJSON) {
 			body = securityCleanBody
 		} else {
 			body = fmt.Sprintf(securityFindingsBody, input.Modules) +
-				"```json\n" + input.FindingsJSON + "\n```"
+				"~~~json\n" + neutralizeFences(input.FindingsJSON) + "\n~~~"
 		}
 	default:
 		body = securityNotApplicableBody
@@ -212,6 +212,26 @@ func renderSecuritySteer(input SecurityInput) string {
 		body += "\n\n" + fmt.Sprintf(citationDroppedBody, input.DroppedCount)
 	}
 	return fmt.Sprintf(securitySteerTemplate, body)
+}
+
+// isNoFindings reports whether the findings payload carries nothing. A nil slice
+// marshals to `null`, not `[]`, so both spellings must read as clean — otherwise
+// a scanned go.mod with zero requirements is rendered as "found vulnerable
+// dependencies" over a null body.
+func isNoFindings(payload string) bool {
+	switch strings.TrimSpace(payload) {
+	case "", "[]", "null":
+		return true
+	default:
+		return false
+	}
+}
+
+// neutralizeFences keeps the injected payload from closing its own code fence.
+// The payload is agent-generated JSON but its message strings originate in OSV.
+func neutralizeFences(payload string) string {
+	payload = strings.ReplaceAll(payload, "`", "'")
+	return strings.ReplaceAll(payload, "~~~", "~ ~ ~")
 }
 
 const verdictTranslationFooter = "---\n\n" +

@@ -109,15 +109,21 @@ type validator struct {
 	invariantIDs map[string]struct{}
 }
 
-// Validate walks the document, keeps findings whose provenance resolves, and
-// returns the filtered document plus the drops.
+// Validate keeps findings whose provenance resolves and returns the filtered
+// document plus the drops.
+//
+// It filters ONLY the findings themselves — the owner-keyed `findings_by_owner`
+// lists, a `findings` list, or a top-level list. Every other key (`stats`,
+// `errors`, …) passes through untouched: the validator's job is findings, and
+// rewriting the whole container would silently drop the funnel's own error
+// report before the model ever sees it.
 func (v *validator) Validate(ctx context.Context, findings []byte) (Result, error) {
 	var root interface{}
 	if err := json.Unmarshal(findings, &root); err != nil {
 		return Result{}, errors.Wrapf(ctx, err, "unmarshal findings failed")
 	}
 	result := &Result{}
-	filtered := v.filter(root, "", result)
+	filtered := v.filterDocument(root, result)
 	encoded, err := json.Marshal(filtered)
 	if err != nil {
 		return Result{}, errors.Wrapf(ctx, err, "marshal filtered findings failed")
@@ -129,42 +135,54 @@ func (v *validator) Validate(ctx context.Context, findings []byte) (Result, erro
 	return *result, nil
 }
 
-// filter returns node with unprovenanced findings removed. owner carries the
-// enclosing key so a drop can name the group it came from.
-func (v *validator) filter(
-	node interface{},
-	owner string,
-	result *Result,
-) interface{} {
-	switch typed := node.(type) {
+// filterDocument locates the findings and filters them in place, leaving every
+// other part of the document as it was.
+func (v *validator) filterDocument(root interface{}, result *Result) interface{} {
+	switch typed := root.(type) {
 	case []interface{}:
-		out := make([]interface{}, 0, len(typed))
-		for _, item := range typed {
-			switch entry := item.(type) {
-			case map[string]interface{}:
-				if isFinding(entry) {
-					if v.keep(entry, owner, result) {
-						out = append(out, entry)
-					}
+		return v.filterFindings(typed, "", result)
+	case map[string]interface{}:
+		if byOwner, ok := typed["findings_by_owner"].(map[string]interface{}); ok {
+			filtered := make(map[string]interface{}, len(byOwner))
+			for owner, value := range byOwner {
+				items, ok := value.([]interface{})
+				if !ok {
+					filtered[owner] = value
 					continue
 				}
-				out = append(out, v.filter(entry, owner, result))
-			case []interface{}:
-				out = append(out, v.filter(entry, owner, result))
-			default:
-				out = append(out, item)
+				filtered[owner] = v.filterFindings(items, owner, result)
 			}
+			typed["findings_by_owner"] = filtered
+			return typed
 		}
-		return out
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(typed))
-		for key, value := range typed {
-			out[key] = v.filter(value, key, result)
+		if items, ok := typed["findings"].([]interface{}); ok {
+			typed["findings"] = v.filterFindings(items, "", result)
 		}
-		return out
+		return typed
 	default:
-		return node
+		return root
 	}
+}
+
+// filterFindings keeps only the entries whose provenance resolves. owner names
+// the group a dropped finding came from.
+func (v *validator) filterFindings(
+	items []interface{},
+	owner string,
+	result *Result,
+) []interface{} {
+	out := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		finding, ok := item.(map[string]interface{})
+		if !ok {
+			out = append(out, item)
+			continue
+		}
+		if v.keep(finding, owner, result) {
+			out = append(out, finding)
+		}
+	}
+	return out
 }
 
 // keep reports whether a finding has resolvable provenance, recording a drop when
@@ -200,25 +218,7 @@ func (v *validator) keep(
 	return false
 }
 
-// isFinding distinguishes a finding from a container. A dict carrying any
-// provenance key is a finding; a dict whose values are all scalars is a leaf and
-// therefore a finding too (the script's leaf-dict branch, which exists so an
-// unprovenanced leaf is counted rather than mistaken for a container).
-func isFinding(item map[string]interface{}) bool {
-	for _, key := range []string{"kind", "rule_id", "invariant_id"} {
-		if _, ok := item[key]; ok {
-			return true
-		}
-	}
-	for _, value := range item {
-		switch value.(type) {
-		case map[string]interface{}, []interface{}:
-			return false
-		}
-	}
-	return true
-}
-
+// loadRuleIDs reads the rule index and returns its ids.
 func loadRuleIDs(ctx context.Context, path string) (map[string]struct{}, error) {
 	content, err := os.ReadFile(path) // #nosec G304 -- path is the plugin's own rules index
 	if err != nil {

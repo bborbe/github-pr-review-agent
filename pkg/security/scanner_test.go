@@ -7,6 +7,7 @@ package security_test
 import (
 	"context"
 	stderrors "errors"
+	"io/fs"
 
 	"github.com/bborbe/github-pr-review-agent/pkg/security"
 	. "github.com/onsi/ginkgo/v2"
@@ -83,7 +84,7 @@ var _ = Describe("Scanner", func() {
 	It("reports not-applicable when the worktree has no go.mod", func() {
 		client := &fakeClient{}
 		scanner := security.NewScannerWithClient(client, func(string) (string, error) {
-			return "", stderrors.New("no such file")
+			return "", fs.ErrNotExist
 		})
 
 		result := scanner.Scan(ctx, "/worktree")
@@ -115,6 +116,18 @@ var _ = Describe("Scanner", func() {
 		Expect(client.got).To(Equal([]security.ModuleVersion{
 			{Path: "github.com/a/b", Version: "v1.2.3"},
 		}))
+	})
+
+	It("reports failed — never not-applicable — when go.mod exists but cannot be read", func() {
+		client := &fakeClient{}
+		scanner := security.NewScannerWithClient(client, func(string) (string, error) {
+			return "", stderrors.New("permission denied")
+		})
+
+		result := scanner.Scan(ctx, "/worktree")
+
+		Expect(result.Status).To(Equal(security.StatusFailed))
+		Expect(result.Detail).To(ContainSubstring("permission denied"))
 	})
 
 	It("reports failed when the client errors", func() {
