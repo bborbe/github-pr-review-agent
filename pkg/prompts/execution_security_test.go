@@ -90,8 +90,7 @@ var _ = Describe("BuildExecutionInstructions security section", func() {
 	})
 
 	// A review of a repo with no go.mod must still carry a security verdict:
-	// otherwise most bborbe PRs (nuke is YAML-only) ship with no verdict at all,
-	// which is what SC1 measures.
+	// otherwise most bborbe PRs (nuke is YAML-only) ship with no verdict at all.
 	It("requires the verdict line even when the scan does not apply", func() {
 		workflow := build(prompts.SecurityInput{
 			Status:         security.StatusNotApplicable,
