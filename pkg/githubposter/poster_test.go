@@ -51,6 +51,19 @@ func reviewJSON(id int64, login, commitID, state string) string {
 	)
 }
 
+// reviewJSONWithBody carries a body, which is what decides whether a review
+// really covered the head: GitHub rewrites commit_id to the PR's current head.
+func reviewJSONWithBody(id int64, login, commitID, state, body string) string {
+	return fmt.Sprintf(
+		`{"id":%d,"user":{"login":%q},"commit_id":%q,"state":%q,"body":%q}`,
+		id,
+		login,
+		commitID,
+		state,
+		body,
+	)
+}
+
 func reviewListJSON(reviews ...string) string {
 	if len(reviews) == 0 {
 		return "[]"
@@ -375,6 +388,36 @@ var _ = Describe("PrPoster", func() {
 			},
 			Entry("APPROVED", "APPROVED"),
 			Entry("CHANGES_REQUESTED", "CHANGES_REQUESTED"),
+		)
+
+		It(
+			"posts when an approval's commit_id floats to the head but its body reviewed an older commit",
+			func() {
+				// Regression, 2026-11-25 bborbe/pr-review-fixtures#31: GitHub reported a
+				// 13:06Z approval's commit_id as the 15:40Z head, so the poster skipped
+				// every later review of that PR forever. The body is authoritative.
+				writeYAML(true)
+				fakeClient.DoStub = seqStub([]callSpec{
+					{200, reviewListJSON(reviewJSONWithBody(
+						77, testBotLogin, testHeadSHA, "APPROVED",
+						"Result: clean.\n\nReviewed commit: "+testPriorSHA+"\n",
+					)), nil},
+					{201, postRespJSON(42), nil},
+					{200, reviewListJSON(reviewJSONWithBody(
+						42, testBotLogin, testHeadSHA, "APPROVED",
+						"Reviewed commit: "+testHeadSHA+"\n",
+					)), nil},
+				})
+
+				result := poster.Post(ctx, pkg.PostRequest{
+					PR: pr, HeadSHA: testHeadSHA, Verdict: pkg.VerdictApprove,
+					Summary: "ok", WorkDir: tmpDir,
+				})
+
+				Expect(result.FailureStep).NotTo(Equal("skip-existing-at-head"))
+				Expect(result.Outcome).To(Equal("success"))
+				Expect(fakeClient.DoCallCount()).To(BeNumerically(">=", 3))
+			},
 		)
 
 		It("still posts when the only head-SHA bot review is COMMENTED", func() {

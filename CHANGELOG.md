@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: **a new head is no longer treated as already reviewed when the previous bot review was an approval.** GitHub rewrites a review's `commit_id` to the PR's *current* head once that head moves, so the poster's "already at head" test compared a floating field: any PR whose last bot verdict was `APPROVED` was suppressed forever, and every later push silently got no review. Measured 2026-11-25 on `bborbe/pr-review-fixtures#31` — a review submitted at 13:06Z reported `commit_id` as the 15:40Z head — where three re-review attempts on the new image all ended `poster.go: skip-existing-at-head` with nothing posted. The poster now decides from the commit the review itself names in its `Reviewed commit:` line, falling back to `commit_id` only when the body carries no such line. A regression spec covers the approval case.
+
 ## v0.23.1
 
 - fix: **the security verdict must now carry its provenance and its rule-set version.** The seeded dev test showed the pass running correctly but failing its own evidence contract: a `tls.Config{InsecureSkipVerify: true}` fixture was caught yet reported without a `rule_id`, and the clean control's zero-findings line never named the rule-set version, so it could not be told apart from a review where the security pass never ran. The injected security section now states the provenance contract explicitly — every security finding carries `kind: rule` plus its `rule_id`, `kind: invariant` plus its `invariant_id`, or `kind: toolchain` plus `tool` and `advisory`, and a finding with no provenance must not be emitted — and the clean line must read `0 security findings — rule set <version>`. The version is read at runtime from the coding plugin's own `.claude-plugin/plugin.json`, which is the rule set the review consulted.
