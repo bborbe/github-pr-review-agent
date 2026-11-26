@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/IBM/sarama to v1.62.0, github.com/bborbe/agent to v0.148.3, github.com/bborbe/argument/v2 to v2.13.13, github.com/bborbe/cqrs to v0.6.17, github.com/bborbe/errors to v1.7.1, github.com/bborbe/http to v1.28.0, github.com/bborbe/kafka to v1.30.3, github.com/bborbe/log to v1.7.10, github.com/bborbe/maintainer to v0.52.1, github.com/bborbe/run to v1.13.0, github.com/bborbe/sentry to v1.11.1, github.com/bborbe/service to v1.12.2, github.com/bborbe/time to v1.27.29, github.com/bborbe/vault-cli to v0.200.6
+
 ## v0.23.3
 
 - fix: **a review of a repo with no `go.mod` now states a security verdict instead of only a skip note.** The not-applicable path injected the `dependency scan: not applicable (no go.mod)` sentence and nothing else, so the mandated `0 security findings — rule set <version>` line was never written for a non-Go repo — and `bborbe/nuke`, where most bborbe PRs land, has no `go.mod`. Measured 2026-11-25 on `bborbe/nuke#1639`, reviewed by the prod agent on v0.23.2: the whole security content of the review was the skip sentence, while `bborbe/attention-controller#346` (a Go repo) carried the verdict line from the same image. The not-applicable body now also requires the verdict line with the rule-set version, keeping the skip visible and explicitly non-blocking.
